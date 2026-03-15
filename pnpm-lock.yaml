@@ -9,10 +9,38 @@ importers:
   .: {}
 
   apps/judge:
+    dependencies:
+      '@prisma/client':
+        specifier: ^5.22.0
+        version: 5.22.0(prisma@5.22.0)
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      gray-matter:
+        specifier: ^4.0.3
+        version: 4.0.3
+      ioredis:
+        specifier: ^5.10.0
+        version: 5.10.0
+      js-yaml:
+        specifier: ^4.1.1
+        version: 4.1.1
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
     devDependencies:
+      '@types/js-yaml':
+        specifier: ^4.0.9
+        version: 4.0.9
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
+      prisma:
+        specifier: ^5.22.0
+        version: 5.22.0
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -1003,6 +1031,10 @@ packages:
 
   dompurify@3.2.7:
     resolution: {integrity: sha512-WhL/YuveyGXJaerVlMYGWhvQswa7myDG17P7Vu65EWC05o8vfeNbvNf4d/BOvH99+ZW+LlQsc1GDKMa1vNK6dw==}
+
+  dotenv@16.6.1:
+    resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
+    engines: {node: '>=12'}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -3041,6 +3073,8 @@ snapshots:
   dompurify@3.2.7:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
+
+  dotenv@16.6.1: {}
 
   dunder-proto@1.0.1:
     dependencies:

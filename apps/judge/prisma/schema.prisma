@@ -1,0 +1,193 @@
+// Copy of apps/web/prisma/schema.prisma — keep in sync.
+// The judge shares the same database as the web app.
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  CONTRIBUTOR
+  ADMIN
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum ProblemStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum ExecutionMode {
+  CPU_SIM
+  GPU_BASIC
+  GPU_PERF
+}
+
+enum SubmissionStatus {
+  PENDING
+  RUNNING
+  ACCEPTED
+  WRONG_ANSWER
+  RUNTIME_ERROR
+  TIME_LIMIT
+}
+
+enum NodeType {
+  CONCEPT
+  PROBLEM
+  QUIZ
+  ARTICLE
+}
+
+// ─── NextAuth adapter models ─────────────────────────────────────────────────
+// Required by @auth/prisma-adapter. Do not remove.
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Application models ──────────────────────────────────────────────────────
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  // NextAuth adapter fields
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  // Application fields
+  username      String?        @unique
+  avatarUrl     String?
+  role          Role           @default(USER)
+  xp            Int            @default(0)
+  streakDays    Int            @default(0)
+  lastActiveAt  DateTime?
+  createdAt     DateTime       @default(now())
+  submissions   Submission[]
+  progress      UserProgress[]
+  comments      Comment[]
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model Track {
+  id           String        @id @default(cuid())
+  slug         String        @unique
+  title        String
+  description  String
+  icon         String
+  color        String
+  order        Int
+  problems     Problem[]
+  roadmapNodes RoadmapNode[]
+}
+
+model Problem {
+  id            String         @id @default(cuid())
+  slug          String         @unique
+  title         String
+  difficulty    Difficulty
+  trackId       String
+  track         Track          @relation(fields: [trackId], references: [id])
+  tags          String[]
+  status        ProblemStatus  @default(DRAFT)
+  xpReward      Int            @default(100)
+  executionMode ExecutionMode  @default(CPU_SIM)
+  submissions   Submission[]
+  comments      Comment[]
+  progress      UserProgress[]
+}
+
+model Submission {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id])
+  problemId   String
+  problem     Problem          @relation(fields: [problemId], references: [id])
+  code        String
+  language    String           @default("cpp")
+  status      SubmissionStatus @default(PENDING)
+  runtimeMs   Int?
+  output      String?
+  errorMsg    String?
+  submittedAt DateTime         @default(now())
+}
+
+model UserProgress {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  problemId String
+  problem   Problem  @relation(fields: [problemId], references: [id])
+  trackId   String
+  solvedAt  DateTime @default(now())
+  attempts  Int      @default(1)
+
+  @@unique([userId, problemId])
+}
+
+model RoadmapNode {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  title         String
+  description   String
+  type          NodeType
+  trackId       String
+  track         Track    @relation(fields: [trackId], references: [id])
+  order         Int
+  prerequisites String[]
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  problemId String
+  problem   Problem  @relation(fields: [problemId], references: [id])
+  body      String
+  upvotes   Int      @default(0)
+  createdAt DateTime @default(now())
+}

@@ -265,11 +265,52 @@ xp: 100
 
 ---
 
+## Running the judge
+
+The judge worker processes submissions from the Redis queue, compiles and runs code in a Docker sandbox, and writes results back to Postgres.
+
+### Local dev (without Docker)
+
+If Docker is not available, the judge falls back to running `g++` directly as a child process. Ensure `g++` is installed.
+
+```bash
+cp apps/judge/.env.example apps/judge/.env
+# Edit apps/judge/.env and fill in DATABASE_URL and REDIS_URL
+
+pnpm --filter @leetscuda/judge dev
+```
+
+The worker logs `Judge worker ready` when connected to Redis and Postgres.
+
+### Production (Docker)
+
+The judge container runs sandbox containers via the host Docker socket.
+
+```bash
+# Build the judge image
+docker build -t leetscuda-judge apps/judge
+
+# Run it — mount the host Docker socket and the problems directory
+docker run \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $(pwd)/problems:/problems \
+  -e PROBLEMS_PATH=/problems \
+  --env-file apps/judge/.env \
+  leetscuda-judge
+```
+
+> **Note:** Mounting `/var/run/docker.sock` gives the judge container access to the host Docker daemon so it can spin up per-submission sandbox containers (`gcc:latest`). In production, restrict Docker socket access appropriately (e.g., via a dedicated `docker` group or a socket proxy).
+
+---
+
 ## Development commands
 
 ```bash
 # Run dev server
 pnpm dev
+
+# Run judge worker (separate terminal)
+pnpm --filter @leetscuda/judge dev
 
 # Database
 pnpm --filter @leetscuda/web db:migrate    # apply migrations
@@ -293,7 +334,7 @@ pnpm --filter @leetscuda/web build         # production build check
 | 3 | Done | Roadmap page with dependency graph |
 | 4 | Done | Problems listing page with filters |
 | 5 | Done | Problem detail page — Monaco editor, MDX rendering, submission flow |
-| 6 | Pending | Judge worker — Docker/Firejail sandbox, test case verification, XP award |
+| 6 | Done | Judge worker — Docker/fallback sandbox, test case verification, XP award |
 | 7 | Pending | User profile, XP leaderboard, streak tracking |
 | 8 | Pending | Comments system |
 | 9 | Pending | Contributor tooling — problem authoring workflow |
