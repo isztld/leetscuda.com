@@ -1,4 +1,4 @@
-import { PrismaClient, NodeType } from '@prisma/client'
+import { PrismaClient, NodeType, Difficulty, ProblemStatus, ExecutionMode } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
@@ -235,6 +235,132 @@ const NODES: {
   },
 ]
 
+const PROBLEMS: {
+  slug: string
+  title: string
+  difficulty: Difficulty
+  trackSlug: string
+  tags: string[]
+  xpReward: number
+  executionMode: ExecutionMode
+}[] = [
+  // ── CUDA track ───────────────────────────────────────────────────────────────
+  {
+    slug: 'vector-add',
+    title: 'Vector Addition',
+    difficulty: Difficulty.EASY,
+    trackSlug: 'cuda',
+    tags: ['memory', 'threads', 'indexing'],
+    xpReward: 100,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+  {
+    slug: 'matrix-transpose',
+    title: 'Matrix Transpose',
+    difficulty: Difficulty.MEDIUM,
+    trackSlug: 'cuda',
+    tags: ['memory', 'coalescing', 'shared-memory'],
+    xpReward: 200,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+  {
+    slug: 'reduce-sum',
+    title: 'Parallel Reduction Sum',
+    difficulty: Difficulty.HARD,
+    trackSlug: 'cuda',
+    tags: ['reduction', 'shared-memory', 'warp-primitives'],
+    xpReward: 400,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+
+  // ── ML Systems track ─────────────────────────────────────────────────────────
+  {
+    slug: 'kv-cache',
+    title: 'KV Cache Implementation',
+    difficulty: Difficulty.EASY,
+    trackSlug: 'ml-systems',
+    tags: ['transformers', 'inference', 'caching'],
+    xpReward: 100,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+  {
+    slug: 'batched-inference',
+    title: 'Continuous Batching Scheduler',
+    difficulty: Difficulty.MEDIUM,
+    trackSlug: 'ml-systems',
+    tags: ['serving', 'throughput', 'scheduling'],
+    xpReward: 250,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+  {
+    slug: 'flash-attention',
+    title: 'Flash Attention Forward Pass',
+    difficulty: Difficulty.HARD,
+    trackSlug: 'ml-systems',
+    tags: ['attention', 'memory-efficiency', 'io-aware'],
+    xpReward: 500,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+
+  // ── Kubernetes for AI track ───────────────────────────────────────────────────
+  {
+    slug: 'deploy-inference-server',
+    title: 'Deploy a vLLM Inference Server',
+    difficulty: Difficulty.EASY,
+    trackSlug: 'kubernetes-ai',
+    tags: ['deployment', 'vllm', 'resources'],
+    xpReward: 100,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+  {
+    slug: 'hpa-gpu',
+    title: 'Autoscale GPU Inference with HPA',
+    difficulty: Difficulty.MEDIUM,
+    trackSlug: 'kubernetes-ai',
+    tags: ['autoscaling', 'hpa', 'custom-metrics'],
+    xpReward: 200,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+  {
+    slug: 'multi-node-training',
+    title: 'Multi-Node Distributed Training Job',
+    difficulty: Difficulty.HARD,
+    trackSlug: 'kubernetes-ai',
+    tags: ['distributed', 'pytorch', 'mpi', 'networking'],
+    xpReward: 400,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+
+  // ── Foundations track ────────────────────────────────────────────────────────
+  {
+    slug: 'pcie-bandwidth',
+    title: 'Measure PCIe Transfer Bandwidth',
+    difficulty: Difficulty.EASY,
+    trackSlug: 'foundations',
+    tags: ['memory', 'bandwidth', 'profiling'],
+    xpReward: 100,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+  {
+    slug: 'roofline-model',
+    title: 'Roofline Model Analysis',
+    difficulty: Difficulty.MEDIUM,
+    trackSlug: 'foundations',
+    tags: ['performance', 'roofline', 'arithmetic-intensity'],
+    xpReward: 200,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+  {
+    slug: 'false-sharing',
+    title: 'Eliminate False Sharing',
+    difficulty: Difficulty.HARD,
+    trackSlug: 'foundations',
+    tags: ['cpu', 'cache', 'concurrency', 'false-sharing'],
+    xpReward: 300,
+    executionMode: ExecutionMode.CPU_SIM,
+  },
+]
+
 async function main() {
   console.log('Seeding tracks...')
   for (const track of TRACKS) {
@@ -260,7 +386,20 @@ async function main() {
     })
   }
 
-  console.log(`✅ Seeded ${TRACKS.length} tracks and ${NODES.length} roadmap nodes.`)
+  console.log('Seeding problems...')
+  for (const { trackSlug, ...problem } of PROBLEMS) {
+    const trackId = trackMap.get(trackSlug)
+    if (!trackId) throw new Error(`Unknown track slug: ${trackSlug}`)
+    await prisma.problem.upsert({
+      where: { slug: problem.slug },
+      update: { ...problem, trackId, status: ProblemStatus.PUBLISHED },
+      create: { ...problem, trackId, status: ProblemStatus.PUBLISHED },
+    })
+  }
+
+  console.log(
+    `✅ Seeded ${TRACKS.length} tracks, ${NODES.length} roadmap nodes, ${PROBLEMS.length} problems.`,
+  )
 }
 
 main()

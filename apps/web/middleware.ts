@@ -1,7 +1,7 @@
 import { auth } from '@/lib/auth'
 import { NextResponse } from 'next/server'
 
-const UNAUTHENTICATED_ALLOWED = new Set(['/', '/signin', '/roadmap'])
+const UNAUTHENTICATED_ALLOWED = new Set(['/', '/signin', '/roadmap', '/problems'])
 
 export default auth((req) => {
   const session = req.auth
@@ -9,7 +9,9 @@ export default auth((req) => {
 
   if (!session?.user) {
     const allowed =
-      UNAUTHENTICATED_ALLOWED.has(pathname) || pathname.startsWith('/roadmap/')
+      UNAUTHENTICATED_ALLOWED.has(pathname) ||
+      pathname.startsWith('/roadmap/') ||
+      pathname.startsWith('/problems/')
     if (!allowed) {
       return NextResponse.redirect(new URL('/signin', req.url))
     }
