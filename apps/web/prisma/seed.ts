@@ -96,12 +96,30 @@ const NODES: {
     prerequisites: ['cuda-memory', 'vector-add'],
   },
   {
+    slug: 'matrix-transpose',
+    title: 'Matrix Transpose',
+    description: 'Implement a coalesced tiled matrix transpose using shared memory to avoid the 32× slowdown of naïve column writes.',
+    type: NodeType.PROBLEM,
+    trackSlug: 'cuda',
+    order: 6,
+    prerequisites: ['cuda-memory'],
+  },
+  {
+    slug: 'reduce-sum',
+    title: 'Parallel Reduction Sum',
+    description: 'Implement an efficient parallel reduction that sums N floats using shared memory and warp-level primitives.',
+    type: NodeType.PROBLEM,
+    trackSlug: 'cuda',
+    order: 7,
+    prerequisites: ['cuda-memory'],
+  },
+  {
     slug: 'cuda-streams',
     title: 'CUDA Streams & Async Transfers',
     description: 'Overlap kernel execution with H2D/D2H transfers using CUDA streams and events.',
     type: NodeType.CONCEPT,
     trackSlug: 'cuda',
-    order: 6,
+    order: 8,
     prerequisites: ['matrix-multiply'],
   },
 
@@ -153,6 +171,15 @@ const NODES: {
   },
 
   // ── Kubernetes for AI track ───────────────────────────────────────────────────
+  {
+    slug: 'multi-node-training',
+    title: 'Multi-Node Distributed Training Job',
+    description: 'Launch a PyTorch DDP training job across multiple GPU nodes using a Kubernetes Job with MPI or torchrun.',
+    type: NodeType.PROBLEM,
+    trackSlug: 'kubernetes-ai',
+    order: 5,
+    prerequisites: ['hpa-gpu'],
+  },
   {
     slug: 'k8s-basics',
     title: 'Kubernetes Fundamentals',
@@ -236,6 +263,15 @@ const NODES: {
     order: 5,
     prerequisites: ['profiling-basics', 'simd-basics'],
   },
+  {
+    slug: 'false-sharing',
+    title: 'Eliminate False Sharing',
+    description: 'Identify and fix false sharing in a multithreaded accumulator by aligning per-thread data to cache line boundaries.',
+    type: NodeType.PROBLEM,
+    trackSlug: 'foundations',
+    order: 6,
+    prerequisites: ['memory-model'],
+  },
 ]
 
 const PROBLEMS: {
@@ -258,6 +294,18 @@ const PROBLEMS: {
     trackSlug: 'cuda',
     tags: ['memory', 'threads', 'indexing'],
     xpReward: 100,
+    executionRuntime: ExecutionRuntime.CUDA,
+    cppStandard: CppStandard.CPP17,
+    cudaVersion: CudaVersion.CUDA_12_6,
+    computeCap: ComputeCap.SM_120,
+  },
+  {
+    slug: 'matrix-multiply',
+    title: 'Tiled Matrix Multiplication',
+    difficulty: Difficulty.MEDIUM,
+    trackSlug: 'cuda',
+    tags: ['shared-memory', 'tiling', 'gemm', 'coalescing'],
+    xpReward: 250,
     executionRuntime: ExecutionRuntime.CUDA,
     cppStandard: CppStandard.CPP17,
     cudaVersion: CudaVersion.CUDA_12_6,

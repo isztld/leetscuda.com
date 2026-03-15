@@ -1,0 +1,131 @@
+---
+slug: matrix-multiply
+title: Tiled Matrix Multiplication
+difficulty: MEDIUM
+track: cuda
+tags:
+  - shared-memory
+  - tiling
+  - gemm
+  - coalescing
+execution: CPU_SIM
+status: PUBLISHED
+xp: 250
+runtime: cuda
+cpp_standard: "17"
+cuda_version: "12.6"
+compute_cap: "sm_120"
+---
+
+## Background
+
+Naïve matrix multiplication assigns one output element `C[row][col]` per thread. Each thread independently loads an entire row of A and column of B from global memory — O(N) reads per thread, O(N³) total global memory traffic. Because global memory bandwidth is the bottleneck (~3 TB/s on H100 vs ~300 TFLOP/s peak), the naïve approach achieves well under 1% of peak arithmetic throughput.
+
+**Tiling** (also called *blocking*) fixes this. The key observation: threads in the same block compute output elements in the same tile of C, so they all read from the same tile of A and the same tile of B. By loading each input tile into **shared memory** once and reusing it for all threads in the block, the number of global memory reads drops from O(N³) to O(N³ / TILE) — a TILE× reduction in global memory traffic.
+
+## What to Implement
+
+Implement `matmul`, a tiled CUDA kernel that computes `C = A × B` for square N×N matrices of 32-bit floats stored in row-major order.
+
+**Algorithm** (one block handles one TILE×TILE tile of C):
+
+1. Each thread accumulates a local dot-product `acc = 0`
+2. Loop over tiles of the shared dimension in steps of TILE:
+   - Load one element of A and one element of B into shared memory tiles `sA[ty][tx]` and `sB[ty][tx]`
+   - `__syncthreads()` — wait for all threads to finish loading
+   - Inner loop: `acc += sA[ty][k] * sB[k][tx]` for k = 0..TILE-1
+   - `__syncthreads()` — wait before overwriting shared memory in the next outer iteration
+3. Write `acc` to `C[row * N + col]`
+
+Thread mapping: `row = blockIdx.y * TILE + threadIdx.y`, `col = blockIdx.x * TILE + threadIdx.x`.
+
+## Constraints
+
+- `N` is a multiple of `TILE` (use `TILE = 16`)
+- `1 ≤ N ≤ 2048`
+- All matrices are stored in **row-major** order
+- Do not modify the host code in `solve()`
+
+## Example
+
+**Input:** N=2, A = `[[1, 2], [3, 4]]`, B = `[[5, 6], [7, 8]]`
+
+**Output:** C = `[[19, 22], [43, 50]]`
+
+Because: C[0][0] = 1×5 + 2×7 = 19, C[0][1] = 1×6 + 2×8 = 22, etc.
+
+---starter-code---
+#include <cuda_runtime.h>
+
+#define TILE 16
+
+// TODO: Implement tiled matrix multiplication.
+// C = A * B, all matrices are N×N, stored row-major.
+__global__ void matmul(const float* A, const float* B, float* C, int N) {
+    __shared__ float sA[TILE][TILE];
+    __shared__ float sB[TILE][TILE];
+
+    int row = blockIdx.y * TILE + threadIdx.y;
+    int col = blockIdx.x * TILE + threadIdx.x;
+    float acc = 0.0f;
+
+    // Your code here
+}
+
+// Do NOT modify below this line.
+void solve(const float* h_A, const float* h_B, float* h_C, int N) {
+    float *d_A, *d_B, *d_C;
+    size_t bytes = (size_t)N * N * sizeof(float);
+    cudaMalloc(&d_A, bytes);
+    cudaMalloc(&d_B, bytes);
+    cudaMalloc(&d_C, bytes);
+
+    cudaMemcpy(d_A, h_A, bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B, bytes, cudaMemcpyHostToDevice);
+
+    dim3 block(TILE, TILE);
+    dim3 grid(N / TILE, N / TILE);
+    matmul<<<grid, block>>>(d_A, d_B, d_C, N);
+
+    cudaMemcpy(h_C, d_C, bytes, cudaMemcpyDeviceToHost);
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+}
+
+---test-cases---
+- name: "2×2 matrices"
+  input: "N=2\nA=[[1,2],[3,4]]\nB=[[5,6],[7,8]]"
+  expected: "[[19,22],[43,50]]"
+- name: "Identity × matrix"
+  input: "N=16\nA=identity\nB=sequential"
+  expected: "sequential (B unchanged)"
+- name: "16×16 random"
+  input: "N=16\nA=random\nB=random"
+  expected: "matches reference CPU result"
+- name: "512×512"
+  input: "N=512\nA=ones\nB=ones"
+  expected: "all elements equal 512.0"
+
+---solution---
+__global__ void matmul(const float* A, const float* B, float* C, int N) {
+    __shared__ float sA[TILE][TILE];
+    __shared__ float sB[TILE][TILE];
+
+    int row = blockIdx.y * TILE + threadIdx.y;
+    int col = blockIdx.x * TILE + threadIdx.x;
+    float acc = 0.0f;
+
+    for (int t = 0; t < N / TILE; t++) {
+        sA[threadIdx.y][threadIdx.x] = A[row * N + t * TILE + threadIdx.x];
+        sB[threadIdx.y][threadIdx.x] = B[(t * TILE + threadIdx.y) * N + col];
+        __syncthreads();
+
+        for (int k = 0; k < TILE; k++) {
+            acc += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+        }
+        __syncthreads();
+    }
+
+    C[row * N + col] = acc;
+}
