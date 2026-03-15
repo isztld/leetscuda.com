@@ -15,7 +15,7 @@ LeetsCUDA is a LeetCode-style platform where every problem involves something yo
 - Writing Kubernetes manifests for GPU workloads (vLLM deployments, HPA with custom metrics)
 - Systems analysis (roofline model, PCIe bandwidth, false sharing)
 
-Problems are written in MDX, compiled server-side, and presented in a split-pane editor powered by Monaco (the VS Code engine).
+Problems are written in MDX, compiled and executed on distributed judge nodes, and presented in a split-pane editor powered by Monaco (the VS Code engine).
 
 ---
 
@@ -23,8 +23,8 @@ Problems are written in MDX, compiled server-side, and presented in a split-pane
 
 ### Prerequisites
 
-- Node.js >= 18.17.0
-- pnpm >= 8.0.0
+- Node.js >= 20
+- pnpm >= 8
 - PostgreSQL (local or Docker)
 - Redis (local or Docker)
 
@@ -60,7 +60,7 @@ REDIS_URL=redis://localhost:6379
 
 > The `.env` file lives at the repo root. `apps/web/.env` is a symlink to it — create the symlink if it doesn't exist: `ln -s ../../.env apps/web/.env`
 
-### 3. Start Postgres and Redis (Docker)
+### 3. Start Postgres and Redis
 
 ```bash
 docker run -d --name leetscuda-pg \
@@ -111,21 +111,27 @@ App runs at http://localhost:3000.
 ```
 leetscuda/
 ├── apps/
-│   ├── web/                    Next.js 14 app (App Router)
+│   ├── web/                    Next.js 16 app (App Router)
 │   │   ├── app/
 │   │   │   ├── (auth)/         Sign-in, username setup pages
-│   │   │   └── (platform)/     Roadmap, problems list, problem detail
-│   │   ├── components/         React components
-│   │   ├── lib/                Prisma client, tRPC client, problems content loader
+│   │   │   ├── (platform)/     Roadmap, problems list, problem detail
+│   │   │   └── api/judge/      Judge HTTP API (poll + result endpoints)
+│   │   ├── lib/                Prisma client, Redis, auth, runtime maps, streak
+│   │   ├── scripts/            CLI scripts (create-judge-token)
 │   │   ├── server/
-│   │   │   └── routers/        tRPC routers (user, roadmap, problems, submission)
+│   │   │   └── routers/        tRPC routers (user, roadmap, problems, submissions)
 │   │   └── prisma/
 │   │       ├── schema.prisma
-│   │       └── seed.ts
-│   └── judge/                  Standalone judge worker (Phase 6 — not yet built)
-├── packages/
-│   ├── ui/                     Shared component library (stub)
-│   └── types/                  Shared TypeScript types (stub)
+│   │       ├── seed.ts
+│   │       └── migrations/
+│   └── judge/                  Standalone judge worker (HTTP client, no DB/Redis)
+│       └── src/
+│           ├── worker.ts       Main poll loop
+│           ├── api-client.ts   HTTP client for poll + result endpoints
+│           ├── sandbox.ts      Docker-based code execution
+│           ├── verifier.ts     Output comparison with float tolerance
+│           ├── env.ts          Environment validation
+│           └── types.ts        Shared types and Zod schemas
 └── problems/                   Problem content (MDX files)
     ├── cuda/
     │   ├── vector-add/index.mdx
@@ -151,39 +157,55 @@ leetscuda/
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 14 (App Router) |
+| Frontend | Next.js 16 (App Router), React 19 |
 | Language | TypeScript |
-| Styling | Tailwind CSS + @tailwindcss/typography |
+| Styling | Tailwind CSS v4 |
 | API | tRPC v11 |
 | Auth | NextAuth.js v5 (GitHub + Google OAuth) |
-| ORM | Prisma 5 |
+| ORM | Prisma 7 |
 | Database | PostgreSQL |
-| Cache / Queue | Redis (ioredis) |
-| Code Editor | Monaco Editor (@monaco-editor/react) |
+| Queue | Redis (ioredis) |
+| Code editor | Monaco Editor |
 | Markdown | marked + highlight.js |
-| Judge | Docker + Firejail (Phase 6) |
+| Judge sandbox | Docker — `gcc:14` (C++), `nvidia/cuda:12.6.0-devel-ubuntu22.04` (CUDA) |
 
 ---
 
 ## Architecture
 
-### Request flow
+### Submission flow
 
 ```
-Browser → Next.js App Router (Server Components)
-                ↓ Prisma (direct DB queries for server pages)
-                ↓ tRPC (client-side mutations and queries)
-                      ↓ protectedProcedure (NextAuth session check)
-                      ↓ Prisma (DB reads/writes)
-                      ↓ Redis rpush (job queue for judge)
+Browser
+  └─ trpc.submission.create
+       └─ Creates Submission (PENDING) in Postgres
+       └─ Pushes job to Redis queue
+            ├─ judge:queue:cpp        (C++ problems)
+            └─ judge:queue:cuda:12.6  (CUDA problems)
+
+Judge worker (HTTP poll loop)
+  └─ GET /api/judge/poll  →  job + test cases
+  └─ Compiles + runs code in Docker sandbox
+  └─ POST /api/judge/result  →  status, runtimeMs, output
+       └─ Web API updates Submission in Postgres
+       └─ Awards XP + updates streak on first ACCEPTED solve
+
+Browser
+  └─ Polls trpc.submission.getStatus every 1.5s until terminal status
 ```
+
+### Judge architecture
+
+Judge nodes are stateless HTTP clients. Each node declares its capabilities (e.g. `cpp` or `cpp,cuda:12.6`) when its token is created. The web API uses those capabilities to determine which queues to offer during polling — CPU judges only receive C++ jobs, GPU judges receive both.
+
+Judges have no direct access to the database or Redis. All state transitions happen through the web API.
 
 ### Authentication
 
-NextAuth.js v5 with GitHub and Google providers. Sessions are JWTs stored in httpOnly cookies. On first sign-in, users are redirected to `/setup-username` before reaching any platform page. The middleware at `apps/web/middleware.ts` enforces this.
+NextAuth.js v5 with GitHub and Google providers. Sessions are JWTs stored in httpOnly cookies. On first sign-in, users are redirected to `/setup-username` before reaching any platform page.
 
-Public routes (no auth required): `/`, `/signin`, `/roadmap`, `/problems`, `/problems/*`
-Protected: everything else, plus tRPC mutations that use `protectedProcedure`
+Public routes: `/`, `/signin`, `/roadmap`, `/problems`, `/problems/*`
+Protected: everything else, plus tRPC mutations using `protectedProcedure`
 
 ### tRPC routers
 
@@ -192,41 +214,36 @@ Protected: everything else, plus tRPC mutations that use `protectedProcedure`
 | `user` | `me`, `setUsername` |
 | `roadmap` | `getTracks`, `getUserProgress` |
 | `problems` | `list`, `getBySlug` |
-| `submission` | `create`, `getStatus` |
+| `submissions` | `create`, `getStatus` |
+| `profile` | `getByUsername` |
 
-### Database schema (key models)
+### Database schema
 
 ```
 User           id, email, username, xp, streakDays, role
 Track          id, slug, title, color, order
-Problem        id, slug, title, difficulty, trackId, tags[], xpReward, executionMode
-Submission     id, userId, problemId, code, language, status, runtimeMs, output, errorMsg
+Problem        id, slug, title, difficulty, trackId, tags[], xpReward,
+               executionRuntime, cppStandard, cudaVersion, computeCap
+Submission     id, userId, problemId, code, language, status,
+               runtimeMs, output, errorMsg,
+               cppStandard, cudaVersion, computeCap
 UserProgress   userId, problemId, trackId, solvedAt, attempts
 RoadmapNode    id, slug, title, type, trackId, prerequisites[]
 Comment        id, userId, problemId, body, upvotes
+JudgeToken     id, name, token (SHA-256), capabilities[], isActive, lastSeenAt
 ```
 
-`SubmissionStatus` enum: `PENDING | RUNNING | ACCEPTED | WRONG_ANSWER | RUNTIME_ERROR | TIME_LIMIT`
-
-### Submission flow
-
-1. User clicks **Submit** → `trpc.submission.create` mutation
-2. Server writes a `PENDING` submission to Postgres and pushes a job to Redis (`judge:queue`)
-3. Client polls `trpc.submission.getStatus` every 1500 ms
-4. Judge worker (Phase 6) pops the job, compiles and runs the code in a Docker/Firejail sandbox, writes result back to Postgres
-5. Client detects terminal status and stops polling
-
-While the judge is not yet running, submissions sit as `PENDING` indefinitely. The UI handles this with a spinner and "Waiting for judge…" message.
+Key enums: `ExecutionRuntime { CPP CUDA }` · `CppStandard { CPP14 CPP17 CPP20 CPP23 }` · `CudaVersion { CUDA_12_6 }` · `ComputeCap { SM_86 SM_120 }` · `SubmissionStatus { PENDING RUNNING ACCEPTED WRONG_ANSWER RUNTIME_ERROR TIME_LIMIT }`
 
 ---
 
 ## Problem format (MDX)
 
-Every problem lives at `problems/{track}/{slug}/index.mdx`. The file has four sections:
+Every problem lives at `problems/{track}/{slug}/index.mdx` with four sections:
 
 ```
 ---
-[YAML frontmatter — must match DB seed exactly]
+[YAML frontmatter]
 ---
 
 [Markdown description — rendered to HTML with syntax highlighting]
@@ -238,7 +255,7 @@ Every problem lives at `problems/{track}/{slug}/index.mdx`. The file has four se
 [YAML array of {name, input, expected} test cases]
 
 ---solution---
-[Reference solution — never sent to the client, used by judge only]
+[Reference solution — never sent to the client]
 ```
 
 ### Frontmatter fields
@@ -251,25 +268,34 @@ track: cuda                # cuda | ml-systems | kubernetes-ai | foundations
 tags:
   - memory
   - threads
-execution: CPU_SIM         # CPU_SIM | GPU_BASIC | GPU_PERF
 status: PUBLISHED
 xp: 100
+
+# Execution runtime (determines which judge queue receives this problem)
+runtime: cuda              # cpp | cuda
+cpp_standard: "17"         # "14" | "17" | "20" | "23"
+cuda_version: "12.6"       # cuda only
+compute_cap: "sm_120"      # cuda only
 ```
+
+For C++ problems omit `cuda_version` and `compute_cap`.
 
 ### Adding a new problem
 
 1. Create `problems/{track}/{slug}/index.mdx` following the format above
-2. Add a matching entry to `PROBLEMS` in `apps/web/prisma/seed.ts`
-3. Re-run `pnpm --filter @leetscuda/web db:seed`
+2. Add a matching entry to `PROBLEMS` in `apps/web/prisma/seed.ts` with the correct `executionRuntime`, `cppStandard`, and (for CUDA) `cudaVersion` + `computeCap` enum values
+3. Run `pnpm --filter @leetscuda/web db:seed`
 4. The problem will appear at `/problems/{slug}`
 
 ---
 
 ## Judge node setup
 
-Judge nodes are standalone HTTP clients. They poll the web API for jobs, compile and run code in a Docker sandbox, and POST results back. They have **zero** direct database or Redis access.
+Judge nodes are standalone processes that poll the web API for jobs, compile and run code in an isolated Docker sandbox, and POST results back. They have **zero** direct database or Redis access.
 
-### Generate a token
+### 1. Generate a token
+
+Run from the repo root (requires `DATABASE_URL` in your environment):
 
 ```bash
 # CPU-only judge
@@ -279,22 +305,41 @@ pnpm --filter @leetscuda/web judge:token --name "cpu-worker-1" --capabilities "c
 pnpm --filter @leetscuda/web judge:token --name "gpu-helsinki" --capabilities "cpp,cuda:12.6"
 ```
 
-The token is printed **once** and never retrievable again.
+The token is printed **once** to stdout and never retrievable again. Store it in a secret manager immediately.
 
-### Configure and run
+### 2. Configure the judge
 
 ```bash
 cp apps/judge/.env.example apps/judge/.env
-# Fill in: JUDGE_API_URL, JUDGE_API_TOKEN, JUDGE_CAPABILITIES
+```
 
-# Pre-pull sandbox images (once per judge machine)
+```
+JUDGE_API_URL=https://leetscuda.com
+JUDGE_API_TOKEN=jt_...
+JUDGE_CAPABILITIES=cpp,cuda:12.6
+```
+
+### 3. Pre-pull sandbox images (once per machine)
+
+```bash
 docker pull gcc:14
 docker pull nvidia/cuda:12.6.0-devel-ubuntu22.04
+```
 
-# Local dev
+### 4. Run
+
+```bash
+# Local dev (CPU only)
 pnpm --filter @leetscuda/judge dev
 
-# Production (GPU node)
+# Production — CPU judge
+docker build -t leetscuda-judge apps/judge
+docker run \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --env-file apps/judge/.env \
+  leetscuda-judge
+
+# Production — GPU judge
 docker build -t leetscuda-judge apps/judge
 docker run \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -303,42 +348,81 @@ docker run \
   leetscuda-judge
 ```
 
-GPU hosts additionally require: NVIDIA drivers + CUDA 12.6, `nvidia-container-toolkit`.
+GPU hosts additionally require NVIDIA drivers with CUDA 12.6 and `nvidia-container-toolkit`.
 
 ### Job routing
 
-| Problem runtime | Queue |
+| Problem `executionRuntime` | Redis queue |
 |---|---|
-| C++ (`executionRuntime: "cpp"`) | `judge:queue:cpp` |
-| CUDA 12.6 (`executionRuntime: "cuda"`) | `judge:queue:cuda:12.6` |
+| `CPP` | `judge:queue:cpp` |
+| `CUDA` (version 12.6) | `judge:queue:cuda:12.6` |
 
-CPU judges receive only `judge:queue:cpp`. GPU judges receive both.
+CPU judges (capabilities: `cpp`) only dequeue from `judge:queue:cpp`.
+GPU judges (capabilities: `cpp,cuda:12.6`) dequeue from both.
+
+### Sandbox behaviour
+
+| Runtime | Docker image | Compile command |
+|---|---|---|
+| C++ | `gcc:14` | `g++ -std=c++{N} -O2 -o solution solution.cpp` |
+| CUDA | `nvidia/cuda:12.6.0-devel-ubuntu22.04` | `nvcc -std=c++{N} -arch={cap} -O2 -o solution solution.cu` |
+
+C++ containers: `--memory 256m --cpus 0.5 --ulimit nproc=64 --network none`
+CUDA containers: `--memory 512m --gpus device=0 --ulimit nproc=128 --network none`
 
 ### Revoke a judge node
 
-Set `isActive = false` on the `JudgeToken` row in the database.
+Set `isActive = false` on the `JudgeToken` row in the database. The next poll attempt returns 401 and the process exits.
 
 ---
 
 ## Development commands
 
 ```bash
-# Run dev server
-pnpm dev
+# Web app
+pnpm dev                                    # start Next.js dev server
+pnpm --filter @leetscuda/web lint
+pnpm --filter @leetscuda/web build
 
-# Run judge worker (separate terminal)
-pnpm --filter @leetscuda/judge dev
+# Judge worker
+pnpm --filter @leetscuda/judge dev          # watch mode
 
 # Database
-pnpm --filter @leetscuda/web db:migrate    # apply migrations
-pnpm --filter @leetscuda/web db:generate   # regenerate Prisma client after schema changes
-pnpm --filter @leetscuda/web db:seed       # seed tracks + problems
-pnpm --filter @leetscuda/web db:studio     # open Prisma Studio (GUI)
+pnpm --filter @leetscuda/web db:migrate     # apply pending migrations
+pnpm --filter @leetscuda/web db:generate    # regenerate Prisma client after schema changes
+pnpm --filter @leetscuda/web db:seed        # seed tracks, roadmap nodes, 12 problems
+pnpm --filter @leetscuda/web db:studio      # open Prisma Studio
 
-# Code quality
-pnpm --filter @leetscuda/web lint
-pnpm --filter @leetscuda/web build         # production build check
+# Token management
+pnpm --filter @leetscuda/web judge:token --name <name> --capabilities <csv>
 ```
+
+---
+
+## Environment variables
+
+### Web app (`apps/web/.env`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXTAUTH_SECRET` | Yes | JWT signing secret — `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | Yes | Full public URL, e.g. `http://localhost:3000` |
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `REDIS_URL` | Yes | Redis connection string |
+| `GITHUB_CLIENT_ID` | Yes* | GitHub OAuth app client ID |
+| `GITHUB_CLIENT_SECRET` | Yes* | GitHub OAuth app client secret |
+| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
+
+\* At least one OAuth provider must be configured.
+
+### Judge (`apps/judge/.env`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `JUDGE_API_URL` | Yes | Base URL of the web app, e.g. `https://leetscuda.com` |
+| `JUDGE_API_TOKEN` | Yes | Token generated by `judge:token` (starts with `jt_`) |
+| `JUDGE_CAPABILITIES` | Yes | Comma-separated list, e.g. `cpp` or `cpp,cuda:12.6` |
 
 ---
 
@@ -348,27 +432,11 @@ pnpm --filter @leetscuda/web build         # production build check
 |---|---|---|
 | 1 | Done | Monorepo scaffold, Prisma schema, NextAuth, tRPC, middleware |
 | 2 | Done | Sign-in page, username setup, session management |
-| 3 | Done | Roadmap page with dependency graph |
-| 4 | Done | Problems listing page with filters |
-| 5 | Done | Problem detail page — Monaco editor, MDX rendering, submission flow |
-| 6 | Done | Judge worker — Docker/fallback sandbox, test case verification, XP award |
-| 7 | Pending | User profile, XP leaderboard, streak tracking |
-| 8 | Pending | Comments system |
-| 9 | Pending | Contributor tooling — problem authoring workflow |
-
----
-
-## Environment variables reference
-
-| Variable | Required | Description |
-|---|---|---|
-| `NEXTAUTH_SECRET` | Yes | Random secret for JWT signing. Generate: `openssl rand -base64 32` |
-| `NEXTAUTH_URL` | Yes | Full URL of the app, e.g. `http://localhost:3000` |
-| `GITHUB_CLIENT_ID` | Yes* | GitHub OAuth app client ID |
-| `GITHUB_CLIENT_SECRET` | Yes* | GitHub OAuth app client secret |
-| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `REDIS_URL` | Yes | Redis connection string |
-
-*At least one OAuth provider must be configured.
+| 3 | Done | Roadmap page with prerequisite graph |
+| 4 | Done | Problems listing with track/difficulty/tag filters |
+| 5 | Done | Problem detail — Monaco editor, MDX rendering, submission polling |
+| 6 | Done | Judge worker — Docker sandbox, test case verification, XP + streak |
+| 6.5 | Done | Error boundaries, skeletons, submission hardening, env validation, observability |
+| 7 | Done | Profile page, tRPC profile router, streak logic |
+| 9 | Done | Mobile layout, metadata, favicon, copy-code button, submit spinner |
+| 10 | Done | Distributed judge — HTTP API, capability-aware queue routing, JudgeToken, runtime enums |

@@ -1,8 +1,10 @@
 import { z } from 'zod'
 import { TRPCError } from '@trpc/server'
+import { ExecutionRuntime } from '@prisma/client'
 import { router, protectedProcedure } from '../trpc'
 import { prisma } from '@/lib/prisma'
 import { getRedis } from '@/lib/redis'
+import { CPP_STANDARD, CUDA_VERSION, COMPUTE_CAP } from '@/lib/runtime-maps'
 
 export const submissionsRouter = router({
   create: protectedProcedure
@@ -39,10 +41,9 @@ export const submissionsRouter = router({
       )
 
       // Enqueue job to the correct queue based on execution runtime
-      const queueName =
-        problem.executionRuntime === 'cuda'
-          ? `judge:queue:cuda:${problem.cudaVersion ?? '12.6'}`
-          : 'judge:queue:cpp'
+      const isCuda = problem.executionRuntime === ExecutionRuntime.CUDA
+      const cudaVerStr = problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : '12.6'
+      const queueName = isCuda ? `judge:queue:cuda:${cudaVerStr}` : 'judge:queue:cpp'
 
       const redis = getRedis()
       if (redis) {
@@ -54,10 +55,10 @@ export const submissionsRouter = router({
               problemSlug: input.problemSlug,
               code: input.code,
               language: input.language,
-              runtime: problem.executionRuntime,
-              cppStandard: problem.cppStandard,
-              cudaVersion: problem.cudaVersion,
-              computeCap: problem.computeCap,
+              runtime: isCuda ? 'cuda' : 'cpp',
+              cppStandard: CPP_STANDARD[problem.cppStandard],
+              cudaVersion: problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : undefined,
+              computeCap: problem.computeCap ? COMPUTE_CAP[problem.computeCap] : undefined,
             }),
           )
         } catch (err) {

@@ -27,10 +27,25 @@ enum ProblemStatus {
   PUBLISHED
 }
 
-enum ExecutionMode {
-  CPU_SIM
-  GPU_BASIC
-  GPU_PERF
+enum ExecutionRuntime {
+  CPP
+  CUDA
+}
+
+enum CppStandard {
+  CPP14
+  CPP17
+  CPP20
+  CPP23
+}
+
+enum CudaVersion {
+  CUDA_12_6
+}
+
+enum ComputeCap {
+  SM_86
+  SM_120
 }
 
 enum SubmissionStatus {
@@ -131,12 +146,11 @@ model Problem {
   track            Track          @relation(fields: [trackId], references: [id])
   tags             String[]
   status           ProblemStatus  @default(DRAFT)
-  xpReward         Int            @default(100)
-  executionMode    ExecutionMode  @default(CPU_SIM)
-  executionRuntime String         @default("cpp")
-  cppStandard      String         @default("17")
-  cudaVersion      String?
-  computeCap       String?
+  xpReward         Int              @default(100)
+  executionRuntime ExecutionRuntime @default(CPP)
+  cppStandard      CppStandard      @default(CPP17)
+  cudaVersion      CudaVersion?
+  computeCap       ComputeCap?
   submissions      Submission[]
   comments         Comment[]
   progress         UserProgress[]
@@ -155,9 +169,9 @@ model Submission {
   output      String?
   errorMsg    String?
   submittedAt DateTime         @default(now())
-  cppStandard String?
-  cudaVersion String?
-  computeCap  String?
+  cppStandard CppStandard?
+  cudaVersion CudaVersion?
+  computeCap  ComputeCap?
 }
 
 model UserProgress {

@@ -1,4 +1,4 @@
-import { PrismaClient, NodeType, Difficulty, ProblemStatus, ExecutionMode } from '@prisma/client'
+import { PrismaClient, NodeType, Difficulty, ProblemStatus, ExecutionRuntime, CppStandard, CudaVersion, ComputeCap } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
@@ -242,11 +242,10 @@ const PROBLEMS: {
   trackSlug: string
   tags: string[]
   xpReward: number
-  executionMode: ExecutionMode
-  executionRuntime: string
-  cppStandard: string
-  cudaVersion?: string
-  computeCap?: string
+  executionRuntime: ExecutionRuntime
+  cppStandard: CppStandard
+  cudaVersion?: CudaVersion
+  computeCap?: ComputeCap
 }[] = [
   // ── CUDA track ───────────────────────────────────────────────────────────────
   {
@@ -256,11 +255,10 @@ const PROBLEMS: {
     trackSlug: 'cuda',
     tags: ['memory', 'threads', 'indexing'],
     xpReward: 100,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cuda',
-    cppStandard: '17',
-    cudaVersion: '12.6',
-    computeCap: 'sm_120',
+    executionRuntime: ExecutionRuntime.CUDA,
+    cppStandard: CppStandard.CPP17,
+    cudaVersion: CudaVersion.CUDA_12_6,
+    computeCap: ComputeCap.SM_120,
   },
   {
     slug: 'matrix-transpose',
@@ -269,11 +267,10 @@ const PROBLEMS: {
     trackSlug: 'cuda',
     tags: ['memory', 'coalescing', 'shared-memory'],
     xpReward: 200,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cuda',
-    cppStandard: '17',
-    cudaVersion: '12.6',
-    computeCap: 'sm_120',
+    executionRuntime: ExecutionRuntime.CUDA,
+    cppStandard: CppStandard.CPP17,
+    cudaVersion: CudaVersion.CUDA_12_6,
+    computeCap: ComputeCap.SM_120,
   },
   {
     slug: 'reduce-sum',
@@ -282,11 +279,10 @@ const PROBLEMS: {
     trackSlug: 'cuda',
     tags: ['reduction', 'shared-memory', 'warp-primitives'],
     xpReward: 400,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cuda',
-    cppStandard: '17',
-    cudaVersion: '12.6',
-    computeCap: 'sm_120',
+    executionRuntime: ExecutionRuntime.CUDA,
+    cppStandard: CppStandard.CPP17,
+    cudaVersion: CudaVersion.CUDA_12_6,
+    computeCap: ComputeCap.SM_120,
   },
 
   // ── ML Systems track ─────────────────────────────────────────────────────────
@@ -297,9 +293,8 @@ const PROBLEMS: {
     trackSlug: 'ml-systems',
     tags: ['transformers', 'inference', 'caching'],
     xpReward: 100,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
   {
     slug: 'batched-inference',
@@ -308,9 +303,8 @@ const PROBLEMS: {
     trackSlug: 'ml-systems',
     tags: ['serving', 'throughput', 'scheduling'],
     xpReward: 250,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
   {
     slug: 'flash-attention',
@@ -319,9 +313,8 @@ const PROBLEMS: {
     trackSlug: 'ml-systems',
     tags: ['attention', 'memory-efficiency', 'io-aware'],
     xpReward: 500,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
 
   // ── Kubernetes for AI track ───────────────────────────────────────────────────
@@ -332,9 +325,8 @@ const PROBLEMS: {
     trackSlug: 'kubernetes-ai',
     tags: ['deployment', 'vllm', 'resources'],
     xpReward: 100,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
   {
     slug: 'hpa-gpu',
@@ -343,9 +335,8 @@ const PROBLEMS: {
     trackSlug: 'kubernetes-ai',
     tags: ['autoscaling', 'hpa', 'custom-metrics'],
     xpReward: 200,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
   {
     slug: 'multi-node-training',
@@ -354,9 +345,8 @@ const PROBLEMS: {
     trackSlug: 'kubernetes-ai',
     tags: ['distributed', 'pytorch', 'mpi', 'networking'],
     xpReward: 400,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
 
   // ── Foundations track ────────────────────────────────────────────────────────
@@ -367,9 +357,8 @@ const PROBLEMS: {
     trackSlug: 'foundations',
     tags: ['memory', 'bandwidth', 'profiling'],
     xpReward: 100,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
   {
     slug: 'roofline-model',
@@ -378,9 +367,8 @@ const PROBLEMS: {
     trackSlug: 'foundations',
     tags: ['performance', 'roofline', 'arithmetic-intensity'],
     xpReward: 200,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
   {
     slug: 'false-sharing',
@@ -389,9 +377,8 @@ const PROBLEMS: {
     trackSlug: 'foundations',
     tags: ['cpu', 'cache', 'concurrency', 'false-sharing'],
     xpReward: 300,
-    executionMode: ExecutionMode.CPU_SIM,
-    executionRuntime: 'cpp',
-    cppStandard: '17',
+    executionRuntime: ExecutionRuntime.CPP,
+    cppStandard: CppStandard.CPP17,
   },
 ]
 

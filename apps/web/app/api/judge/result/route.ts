@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { authenticateJudge } from '@/lib/judge-auth'
 import { prisma } from '@/lib/prisma'
 import { updateStreak } from '@/lib/streak'
+import { toCppStandard, toCudaVersion, toComputeCap } from '@/lib/runtime-maps'
 
 const ResultSchema = z.object({
   submissionId: z.string(),
@@ -37,7 +38,8 @@ export async function POST(req: NextRequest) {
 
   const result = parsed.data
 
-  // 3. Update submission with runtime metadata recorded from what the judge actually used
+  // 3. Update submission with runtime metadata recorded from what the judge actually used.
+  // Convert the judge's plain strings back to DB enum values.
   await prisma.submission.update({
     where: { id: result.submissionId },
     data: {
@@ -45,9 +47,9 @@ export async function POST(req: NextRequest) {
       runtimeMs: result.runtimeMs,
       output: result.output ?? null,
       errorMsg: result.errorMsg ?? null,
-      cppStandard: result.cppStandard,
-      cudaVersion: result.cudaVersion,
-      computeCap: result.computeCap,
+      cppStandard: toCppStandard(result.cppStandard),
+      cudaVersion: toCudaVersion(result.cudaVersion),
+      computeCap: toComputeCap(result.computeCap),
     },
   })
 
