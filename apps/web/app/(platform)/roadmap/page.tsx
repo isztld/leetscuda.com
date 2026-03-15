@@ -3,8 +3,9 @@ import { RoadmapClient } from '@/components/RoadmapClient'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export const metadata = {
-  title: 'Roadmap — LeetsCUDA',
-  description: 'From CUDA fundamentals to production inference systems.',
+  title: 'Roadmap — leetscuda.com',
+  description:
+    'Master CUDA, ML systems, and Kubernetes for AI. The interview prep platform for AI infrastructure engineers.',
 }
 
 export default async function RoadmapPage() {

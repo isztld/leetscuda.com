@@ -2,15 +2,15 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
+import {
+  DIFFICULTY_COLORS,
+  DIFFICULTY_LABELS,
+  SUBMISSION_STATUS_COLORS,
+  SUBMISSION_STATUS_LABELS,
+} from '@/lib/constants'
 
-type Difficulty = 'EASY' | 'MEDIUM' | 'HARD'
-type SubmissionStatus =
-  | 'PENDING'
-  | 'RUNNING'
-  | 'ACCEPTED'
-  | 'WRONG_ANSWER'
-  | 'RUNTIME_ERROR'
-  | 'TIME_LIMIT'
+type Difficulty = keyof typeof DIFFICULTY_COLORS
+type SubmissionStatus = keyof typeof SUBMISSION_STATUS_COLORS
 
 export interface ProfileData {
   user: {
@@ -66,50 +66,24 @@ function avatarBg(username: string): string {
   return INITIAL_COLORS[username.charCodeAt(0) % INITIAL_COLORS.length]
 }
 
-function difficultyStyle(difficulty: string) {
-  switch (difficulty) {
-    case 'EASY':
-      return 'bg-emerald-500/20 text-emerald-400'
-    case 'MEDIUM':
-      return 'bg-yellow-500/20 text-yellow-400'
-    case 'HARD':
-      return 'bg-red-500/20 text-red-400'
-    default:
-      return 'bg-zinc-500/20 text-zinc-400'
-  }
+function difficultyClass(difficulty: string) {
+  const d = difficulty as Difficulty
+  const c = DIFFICULTY_COLORS[d]
+  return c ? `${c.bg} ${c.text}` : 'bg-zinc-500/15 text-zinc-400'
 }
 
-function statusStyle(status: string) {
-  switch (status as SubmissionStatus) {
-    case 'ACCEPTED':
-      return 'bg-emerald-500/20 text-emerald-400'
-    case 'WRONG_ANSWER':
-    case 'RUNTIME_ERROR':
-      return 'bg-red-500/20 text-red-400'
-    case 'TIME_LIMIT':
-      return 'bg-orange-500/20 text-orange-400'
-    default:
-      return 'bg-zinc-500/20 text-zinc-400'
-  }
+function difficultyLabel(difficulty: string): string {
+  return DIFFICULTY_LABELS[difficulty as Difficulty] ?? difficulty
 }
 
-function statusLabel(status: string) {
-  switch (status) {
-    case 'ACCEPTED':
-      return 'Accepted'
-    case 'WRONG_ANSWER':
-      return 'Wrong Answer'
-    case 'RUNTIME_ERROR':
-      return 'Runtime Error'
-    case 'TIME_LIMIT':
-      return 'Time Limit'
-    case 'RUNNING':
-      return 'Running'
-    case 'PENDING':
-      return 'Pending'
-    default:
-      return status
-  }
+function statusClass(status: string) {
+  const s = status as SubmissionStatus
+  const c = SUBMISSION_STATUS_COLORS[s]
+  return c ? `${c.bg} ${c.text}` : 'bg-zinc-500/15 text-zinc-400'
+}
+
+function statusLabel(status: string): string {
+  return SUBMISSION_STATUS_LABELS[status as SubmissionStatus] ?? status
 }
 
 function formatDate(iso: string) {
@@ -159,12 +133,12 @@ export function ProfileClient({ data }: { data: ProfileData }) {
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <h1 className="text-2xl font-bold text-white truncate">{user.username}</h1>
               {user.role === 'CONTRIBUTOR' && (
-                <span className="bg-blue-500/20 text-blue-400 text-xs font-semibold px-2 py-0.5 rounded-full">
+                <span className="bg-blue-500/15 text-blue-400 text-xs font-semibold px-2 py-0.5 rounded-full">
                   Contributor
                 </span>
               )}
               {user.role === 'ADMIN' && (
-                <span className="bg-violet-500/20 text-violet-400 text-xs font-semibold px-2 py-0.5 rounded-full">
+                <span className="bg-violet-500/15 text-violet-400 text-xs font-semibold px-2 py-0.5 rounded-full">
                   Admin
                 </span>
               )}
@@ -216,18 +190,18 @@ export function ProfileClient({ data }: { data: ProfileData }) {
             Difficulty Breakdown
           </h2>
           <div className="flex flex-wrap gap-3">
-            <span className="flex items-center gap-2 bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-full text-sm font-medium">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
+            <span className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${DIFFICULTY_COLORS.EASY.bg} ${DIFFICULTY_COLORS.EASY.text}`}>
+              <span className={`w-2 h-2 rounded-full inline-block bg-emerald-400`} />
               Easy &nbsp;
               <span className="font-bold">{stats.solvedByDifficulty.easy}</span>
             </span>
-            <span className="flex items-center gap-2 bg-yellow-500/10 text-yellow-400 px-3 py-1.5 rounded-full text-sm font-medium">
-              <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
+            <span className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${DIFFICULTY_COLORS.MEDIUM.bg} ${DIFFICULTY_COLORS.MEDIUM.text}`}>
+              <span className={`w-2 h-2 rounded-full inline-block bg-yellow-400`} />
               Medium &nbsp;
               <span className="font-bold">{stats.solvedByDifficulty.medium}</span>
             </span>
-            <span className="flex items-center gap-2 bg-red-500/10 text-red-400 px-3 py-1.5 rounded-full text-sm font-medium">
-              <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
+            <span className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${DIFFICULTY_COLORS.HARD.bg} ${DIFFICULTY_COLORS.HARD.text}`}>
+              <span className={`w-2 h-2 rounded-full inline-block bg-red-400`} />
               Hard &nbsp;
               <span className="font-bold">{stats.solvedByDifficulty.hard}</span>
             </span>
@@ -299,7 +273,7 @@ export function ProfileClient({ data }: { data: ProfileData }) {
                       </td>
                       <td className="py-2.5 pr-4">
                         <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusStyle(sub.status)}`}
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusClass(sub.status)}`}
                         >
                           {statusLabel(sub.status)}
                         </span>
@@ -343,12 +317,12 @@ export function ProfileClient({ data }: { data: ProfileData }) {
                   </span>
                   <div className="flex flex-wrap gap-1.5 mt-auto pt-1">
                     <span
-                      className={`text-xs font-medium px-2 py-0.5 rounded-full ${difficultyStyle(problem.difficulty)}`}
+                      className={`text-xs font-medium px-2 py-0.5 rounded-full ${difficultyClass(problem.difficulty)}`}
                     >
-                      {problem.difficulty.charAt(0) + problem.difficulty.slice(1).toLowerCase()}
+                      {difficultyLabel(problem.difficulty)}
                     </span>
                     <span
-                      className="text-xs font-medium px-2 py-0.5 rounded-full text-zinc-400"
+                      className="text-xs font-medium px-2 py-0.5 rounded-full"
                       style={{
                         backgroundColor: `${problem.trackColor}20`,
                         color: problem.trackColor,

@@ -5,8 +5,9 @@ import { ProblemsClient } from '@/components/ProblemsClient'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export const metadata = {
-  title: 'Problems — LeetsCUDA',
-  description: 'Solve your way to an AI infrastructure role.',
+  title: 'Problems — leetscuda.com',
+  description:
+    'Master CUDA, ML systems, and Kubernetes for AI. The interview prep platform for AI infrastructure engineers.',
 }
 
 const DIFFICULTY_VALUES = new Set<string>(['EASY', 'MEDIUM', 'HARD'])

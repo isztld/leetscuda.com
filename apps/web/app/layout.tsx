@@ -6,8 +6,9 @@ import { TRPCProvider } from '@/components/providers/TRPCProvider'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'leetscuda.com',
-  description: 'AI Infrastructure Interview Prep Platform',
+  title: 'leetscuda.com — AI Infrastructure Interview Prep',
+  description:
+    'Master CUDA, ML systems, and Kubernetes for AI. The interview prep platform for AI infrastructure engineers.',
 }
 
 export default function RootLayout({

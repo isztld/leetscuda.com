@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { Difficulty, Track, Problem } from '@prisma/client'
+import { DIFFICULTY_COLORS, DIFFICULTY_LABELS } from '@/lib/constants'
 
 type ProblemWithTrack = Problem & { track: Track }
 
@@ -16,18 +17,6 @@ type Props = {
 }
 
 const DIFFICULTIES: Difficulty[] = ['EASY', 'MEDIUM', 'HARD']
-
-const DIFF_LABEL: Record<Difficulty, string> = {
-  EASY: 'Easy',
-  MEDIUM: 'Medium',
-  HARD: 'Hard',
-}
-
-const DIFF_STYLE: Record<Difficulty, string> = {
-  EASY: 'text-green-400 bg-green-950/60',
-  MEDIUM: 'text-yellow-400 bg-yellow-950/60',
-  HARD: 'text-red-400 bg-red-950/60',
-}
 
 export function ProblemsClient({
   problems,
@@ -46,12 +35,19 @@ export function ProblemsClient({
     ? problems.filter((p) => p.title.toLowerCase().includes(search.toLowerCase()))
     : problems
 
+  const hasActiveFilter = activeTrack !== null || activeDifficulty !== null || search !== ''
+
   function pushFilter(track: string | null, difficulty: Difficulty | null) {
     const params = new URLSearchParams()
     if (track) params.set('track', track)
     if (difficulty) params.set('difficulty', difficulty)
     const qs = params.toString()
     router.push(`/problems${qs ? `?${qs}` : ''}`)
+  }
+
+  function clearFilters() {
+    setSearch('')
+    pushFilter(null, null)
   }
 
   return (
@@ -95,8 +91,8 @@ export function ProblemsClient({
               active={activeDifficulty === d}
               onClick={() => pushFilter(activeTrack, d)}
             >
-              <span className={`font-medium ${DIFF_STYLE[d].split(' ')[0]}`}>
-                {DIFF_LABEL[d]}
+              <span className={`font-medium ${DIFFICULTY_COLORS[d].text}`}>
+                {DIFFICULTY_LABELS[d]}
               </span>
             </FilterPill>
           ))}
@@ -113,7 +109,17 @@ export function ProblemsClient({
 
       {/* ── Problem table ──────────────────────────────────────────────────── */}
       {filtered.length === 0 ? (
-        <p className="text-zinc-500 text-sm py-12 text-center">No problems match these filters.</p>
+        <div className="py-16 text-center">
+          <p className="text-zinc-400 text-sm mb-4">No problems match these filters.</p>
+          {hasActiveFilter && (
+            <button
+              onClick={clearFilters}
+              className="text-sm text-violet-400 hover:text-violet-300 transition-colors underline underline-offset-2"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
       ) : (
         <div className="rounded-xl border border-zinc-800 overflow-hidden">
           <table className="w-full text-sm">
@@ -132,10 +138,11 @@ export function ProblemsClient({
             <tbody className="divide-y divide-zinc-800/60">
               {filtered.map((problem) => {
                 const solved = solvedSet.has(problem.id)
+                const diff = problem.difficulty as keyof typeof DIFFICULTY_COLORS
                 return (
                   <tr
                     key={problem.id}
-                    className="hover:bg-zinc-900/40 transition-colors"
+                    className="hover:bg-zinc-900/60 transition-colors"
                   >
                     {/* Status */}
                     <td className="py-3.5 px-4">
@@ -158,18 +165,18 @@ export function ProblemsClient({
                       </Link>
                       {/* Show difficulty inline on mobile */}
                       <span
-                        className={`ml-2 inline-block sm:hidden px-1.5 py-0.5 rounded text-[10px] font-semibold ${DIFF_STYLE[problem.difficulty]}`}
+                        className={`ml-2 inline-block sm:hidden px-1.5 py-0.5 rounded text-[10px] font-semibold ${DIFFICULTY_COLORS[diff].bg} ${DIFFICULTY_COLORS[diff].text}`}
                       >
-                        {DIFF_LABEL[problem.difficulty]}
+                        {DIFFICULTY_LABELS[diff]}
                       </span>
                     </td>
 
                     {/* Difficulty */}
                     <td className="py-3.5 px-4 hidden sm:table-cell">
                       <span
-                        className={`px-2 py-0.5 rounded text-xs font-semibold ${DIFF_STYLE[problem.difficulty]}`}
+                        className={`px-2 py-0.5 rounded text-xs font-semibold ${DIFFICULTY_COLORS[diff].bg} ${DIFFICULTY_COLORS[diff].text}`}
                       >
-                        {DIFF_LABEL[problem.difficulty]}
+                        {DIFFICULTY_LABELS[diff]}
                       </span>
                     </td>
 
@@ -242,7 +249,14 @@ function FilterPill({
 
 function CheckCircle() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-label="Solved">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      fill="none"
+      aria-label="Solved"
+      className="animate-check-in"
+    >
       <circle cx="9" cy="9" r="9" fill="#166534" fillOpacity="0.4" />
       <path
         d="M5.5 9.5l2.5 2.5 4.5-5"

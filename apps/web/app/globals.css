@@ -4,6 +4,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Solved checkmark scale-in animation */
+@keyframes check-in {
+  0% { transform: scale(0.4); opacity: 0; }
+  70% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-check-in {
+  animation: check-in 0.3s ease-out;
+}
+
 /* Prose code block padding (highlight.js already styles .hljs) */
 .prose pre {
   padding: 0 !important;

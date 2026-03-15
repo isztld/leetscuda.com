@@ -7,6 +7,12 @@ import { trpc } from '@/lib/trpc/client'
 import { MonacoEditor } from './MonacoEditor'
 import { ErrorBoundary } from './ErrorBoundary'
 import type { TestCase } from '@/lib/problems-content'
+import {
+  DIFFICULTY_COLORS,
+  DIFFICULTY_LABELS,
+  SUBMISSION_STATUS_COLORS,
+  SUBMISSION_STATUS_LABELS,
+} from '@/lib/constants'
 
 interface Problem {
   id: string
@@ -28,25 +34,54 @@ interface Props {
   testCases: TestCase[]
 }
 
-const DIFFICULTY_STYLES: Record<string, string> = {
-  EASY: 'text-emerald-400 bg-emerald-400/10',
-  MEDIUM: 'text-amber-400 bg-amber-400/10',
-  HARD: 'text-red-400 bg-red-400/10',
-}
-
-const STATUS_CONFIG = {
-  PENDING: { label: 'Waiting for judge…', color: 'text-zinc-400', bg: 'bg-zinc-800' },
-  RUNNING: { label: 'Running…', color: 'text-blue-400', bg: 'bg-blue-950' },
-  ACCEPTED: { label: 'Accepted', color: 'text-emerald-400', bg: 'bg-emerald-950' },
-  WRONG_ANSWER: { label: 'Wrong Answer', color: 'text-red-400', bg: 'bg-red-950' },
-  RUNTIME_ERROR: { label: 'Runtime Error', color: 'text-red-400', bg: 'bg-red-950' },
-  TIME_LIMIT: { label: 'Time Limit Exceeded', color: 'text-orange-400', bg: 'bg-orange-950' },
-} as const
-
 type Tab = 'description' | 'discuss' | 'editorial'
 
 const POLL_MAX_MS = 60_000
 const POLL_MAX_FAILURES = 3
+
+function CopyCodeDescription({ html }: { html: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.querySelectorAll('pre').forEach((pre) => {
+      if (pre.dataset.copyAdded) return
+      pre.dataset.copyAdded = '1'
+      pre.style.position = 'relative'
+
+      const btn = document.createElement('button')
+      btn.textContent = 'Copy'
+      btn.className =
+        'absolute top-2 right-2 text-[10px] font-medium text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded px-2 py-0.5 transition-colors leading-none'
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        const code = pre.querySelector('code')?.textContent ?? pre.textContent ?? ''
+        navigator.clipboard.writeText(code.trim()).catch(() => {})
+        btn.textContent = 'Copied!'
+        setTimeout(() => {
+          btn.textContent = 'Copy'
+        }, 1500)
+      })
+      pre.appendChild(btn)
+    })
+  })
+
+  return (
+    <div
+      ref={ref}
+      className="px-5 py-4 prose prose-invert prose-sm max-w-none
+        prose-headings:text-zinc-100
+        prose-p:text-zinc-300
+        prose-li:text-zinc-300
+        prose-strong:text-zinc-100
+        prose-code:text-violet-300 prose-code:bg-zinc-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
+        prose-pre:bg-zinc-900 prose-pre:rounded-lg prose-pre:border prose-pre:border-zinc-700 prose-pre:p-0
+        prose-pre:overflow-x-auto"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+}
 
 export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases }: Props) {
   const { data: session } = useSession()
@@ -131,38 +166,47 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
     createMutation.mutate({ problemSlug: problem.slug, code, language: 'cpp' })
   }
 
-  const statusCfg = submissionStatus
-    ? STATUS_CONFIG[submissionStatus.status]
-    : STATUS_CONFIG.PENDING
+  const currentStatus = submissionStatus?.status as keyof typeof SUBMISSION_STATUS_COLORS | undefined
+  const statusCfg = currentStatus
+    ? SUBMISSION_STATUS_COLORS[currentStatus]
+    : SUBMISSION_STATUS_COLORS.PENDING
+  const statusLabel = currentStatus
+    ? SUBMISSION_STATUS_LABELS[currentStatus]
+    : SUBMISSION_STATUS_LABELS.PENDING
 
   const isPending =
     !submissionStatus ||
     submissionStatus.status === 'PENDING' ||
     submissionStatus.status === 'RUNNING'
 
+  const isSubmitting = createMutation.isPending || isPolling
+
+  const diff = problem.difficulty as keyof typeof DIFFICULTY_COLORS
+
   return (
-    <div className="flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
+    /* Mobile: flex-col, scrollable. Desktop: fixed-height flex-col */
+    <div className="flex flex-col min-h-[calc(100vh-56px)] md:h-[calc(100vh-56px)] md:overflow-hidden">
       {/* Main split pane */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* ── Left panel (40%) ───────────────────────────────── */}
+      <div className="flex flex-col md:flex-row flex-1 md:min-h-0 md:overflow-hidden">
+        {/* ── Left panel ───────────────────────────────── */}
         <ErrorBoundary
           fallback={
-            <div className="w-2/5 flex items-center justify-center border-r border-zinc-800">
+            <div className="w-full md:w-2/5 flex items-center justify-center border-b md:border-b-0 md:border-r border-zinc-800 py-12 md:py-0">
               <p className="text-zinc-400 text-sm px-4 text-center">
                 Failed to load problem description. Please refresh.
               </p>
             </div>
           }
         >
-          <div className="w-2/5 flex flex-col border-r border-zinc-800 min-h-0">
+          <div className="w-full md:w-2/5 flex flex-col border-b border-zinc-800 md:border-b-0 md:border-r md:min-h-0">
             {/* Problem header */}
             <div className="px-5 py-4 border-b border-zinc-800 shrink-0">
               <h1 className="text-lg font-semibold text-white mb-2">{problem.title}</h1>
               <div className="flex items-center gap-2 flex-wrap">
                 <span
-                  className={`text-xs font-medium px-2 py-0.5 rounded-full ${DIFFICULTY_STYLES[problem.difficulty]}`}
+                  className={`text-xs font-medium px-2 py-0.5 rounded-full ${DIFFICULTY_COLORS[diff].bg} ${DIFFICULTY_COLORS[diff].text}`}
                 >
-                  {problem.difficulty}
+                  {DIFFICULTY_LABELS[diff]}
                 </span>
                 <span
                   className="text-xs font-medium px-2 py-0.5 rounded-full text-zinc-300 bg-zinc-800"
@@ -198,19 +242,9 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
             </div>
 
             {/* Tab content */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto md:min-h-0">
               {activeTab === 'description' && (
-                <div
-                  className="px-5 py-4 prose prose-invert prose-sm max-w-none
-                    prose-headings:text-zinc-100
-                    prose-p:text-zinc-300
-                    prose-li:text-zinc-300
-                    prose-strong:text-zinc-100
-                    prose-code:text-violet-300 prose-code:bg-zinc-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
-                    prose-pre:bg-zinc-900 prose-pre:rounded-lg prose-pre:border prose-pre:border-zinc-700 prose-pre:p-0
-                    prose-pre:overflow-x-auto"
-                  dangerouslySetInnerHTML={{ __html: descriptionHtml }}
-                />
+                <CopyCodeDescription html={descriptionHtml} />
               )}
               {activeTab === 'discuss' && (
                 <div className="px-5 py-8 text-center text-zinc-500 text-sm">
@@ -229,8 +263,8 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
           </div>
         </ErrorBoundary>
 
-        {/* ── Right panel (60%) ─────────────────────────────── */}
-        <div className="w-3/5 flex flex-col min-h-0">
+        {/* ── Right panel ─────────────────────────────── */}
+        <div className="w-full md:w-3/5 flex flex-col md:min-h-0">
           {/* Editor toolbar */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-950 shrink-0">
             <div className="flex items-center gap-2">
@@ -245,16 +279,33 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSubmit}
-                disabled={createMutation.isPending}
-                className="px-4 py-1.5 text-sm rounded font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isSubmitting}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {createMutation.isPending ? 'Submitting…' : 'Submit'}
+                {isSubmitting && (
+                  <svg className="animate-spin h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v8H4z"
+                    />
+                  </svg>
+                )}
+                {isSubmitting ? 'Running…' : 'Submit'}
               </button>
             </div>
           </div>
 
-          {/* Monaco editor fills remaining height */}
-          <div className="flex-1 min-h-0">
+          {/* Monaco editor: fixed height on mobile, flexible on desktop */}
+          <div className="h-[55vh] md:h-auto md:flex-1 md:min-h-0">
             <ErrorBoundary
               fallback={
                 <div className="flex h-full items-center justify-center bg-zinc-900">
@@ -281,7 +332,7 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
             {/* Drawer header */}
             <div
               className={`flex items-center justify-between px-4 py-2 border-b border-zinc-800 ${
-                submitError || pollError ? 'bg-red-950' : statusCfg.bg
+                submitError || pollError ? 'bg-red-950' : statusCfg.panelBg
               }`}
             >
               <div className="flex items-center gap-2">
@@ -304,14 +355,14 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
                 )}
                 <span
                   className={`text-sm font-semibold ${
-                    submitError || pollError ? 'text-red-400' : statusCfg.color
+                    submitError || pollError ? 'text-red-400' : statusCfg.text
                   }`}
                 >
                   {submitError
                     ? 'Submission Error'
                     : pollError
                       ? 'Connection Lost'
-                      : statusCfg.label}
+                      : statusLabel}
                 </span>
                 {submissionStatus?.runtimeMs != null && (
                   <span className="text-xs text-zinc-500 ml-2">

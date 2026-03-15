@@ -4,7 +4,9 @@ import { ProfileClient, type ProfileData } from '@/components/ProfileClient'
 
 export async function generateMetadata({ params }: { params: { username: string } }) {
   return {
-    title: `${params.username} — LeetsCUDA`,
+    title: `${params.username}'s Profile — leetscuda.com`,
+    description:
+      'Master CUDA, ML systems, and Kubernetes for AI. The interview prep platform for AI infrastructure engineers.',
   }
 }
 

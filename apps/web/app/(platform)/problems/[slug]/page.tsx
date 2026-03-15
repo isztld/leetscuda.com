@@ -49,5 +49,9 @@ export async function generateMetadata({ params }: Props) {
     select: { title: true, difficulty: true },
   })
   if (!problem) return {}
-  return { title: `${problem.title} — leetscuda` }
+  return {
+    title: `${problem.title} — leetscuda.com`,
+    description:
+      'Master CUDA, ML systems, and Kubernetes for AI. The interview prep platform for AI infrastructure engineers.',
+  }
 }
