@@ -26,3 +26,11 @@ body {
   background-color: #f1f5f9; /* slate-100 */
   color: #0f172a;             /* slate-900 */
 }
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
