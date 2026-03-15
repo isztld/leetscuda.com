@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 
 const UNAUTHENTICATED_ALLOWED = new Set(['/', '/signin', '/roadmap', '/problems'])
 
-export default auth((req) => {
+export const proxy = auth((req) => {
   const session = req.auth
   const { pathname } = req.nextUrl
 

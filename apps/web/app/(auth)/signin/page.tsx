@@ -1,12 +1,13 @@
 import { signIn } from '@/lib/auth'
 
 interface Props {
-  searchParams: { callbackUrl?: string }
+  searchParams: Promise<{ callbackUrl?: string }>
 }
 
-export default function SignInPage({ searchParams }: Props) {
+export default async function SignInPage({ searchParams }: Props) {
+  const { callbackUrl: rawParam } = await searchParams
   // Only allow relative paths to prevent open-redirect attacks
-  const raw = searchParams.callbackUrl ?? ''
+  const raw = rawParam ?? ''
   const callbackUrl = raw.startsWith('/') ? raw : '/roadmap'
 
   async function signInWithGitHub() {

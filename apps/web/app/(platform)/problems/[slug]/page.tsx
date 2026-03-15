@@ -4,12 +4,14 @@ import { loadProblemContent } from '@/lib/problems-content'
 import { ProblemDetail } from '@/components/ProblemDetail'
 
 interface Props {
-  params: { slug: string }
+  params: Promise<{ slug: string }>
 }
 
 export default async function ProblemPage({ params }: Props) {
+  const { slug } = await params
+
   const problem = await prisma.problem.findUnique({
-    where: { slug: params.slug },
+    where: { slug },
     include: { track: true },
   })
 
@@ -44,8 +46,9 @@ export default async function ProblemPage({ params }: Props) {
 }
 
 export async function generateMetadata({ params }: Props) {
+  const { slug } = await params
   const problem = await prisma.problem.findUnique({
-    where: { slug: params.slug },
+    where: { slug },
     select: { title: true, difficulty: true },
   })
   if (!problem) return {}

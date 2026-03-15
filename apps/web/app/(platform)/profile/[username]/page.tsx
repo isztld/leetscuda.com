@@ -2,16 +2,17 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { ProfileClient, type ProfileData } from '@/components/ProfileClient'
 
-export async function generateMetadata({ params }: { params: { username: string } }) {
+export async function generateMetadata({ params }: { params: Promise<{ username: string }> }) {
+  const { username } = await params
   return {
-    title: `${params.username}'s Profile — leetscuda.com`,
+    title: `${username}'s Profile — leetscuda.com`,
     description:
       'Master CUDA, ML systems, and Kubernetes for AI. The interview prep platform for AI infrastructure engineers.',
   }
 }
 
-export default async function ProfilePage({ params }: { params: { username: string } }) {
-  const { username } = params
+export default async function ProfilePage({ params }: { params: Promise<{ username: string }> }) {
+  const { username } = await params
 
   const user = await prisma.user.findUnique({
     where: { username },

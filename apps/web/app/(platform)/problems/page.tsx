@@ -15,12 +15,14 @@ const DIFFICULTY_VALUES = new Set<string>(['EASY', 'MEDIUM', 'HARD'])
 export default async function ProblemsPage({
   searchParams,
 }: {
-  searchParams: { track?: string; difficulty?: string }
+  searchParams: Promise<{ track?: string; difficulty?: string }>
 }) {
-  const activeTrack = searchParams.track ?? null
+  const { track, difficulty } = await searchParams
+
+  const activeTrack = track ?? null
   const activeDifficulty =
-    searchParams.difficulty && DIFFICULTY_VALUES.has(searchParams.difficulty)
-      ? (searchParams.difficulty as Difficulty)
+    difficulty && DIFFICULTY_VALUES.has(difficulty)
+      ? (difficulty as Difficulty)
       : null
 
   const [tracks, problems, session] = await Promise.all([
