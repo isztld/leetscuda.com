@@ -42,8 +42,17 @@ export default function HomePage() {
       <Navbar />
 
       {/* Hero */}
-      <section className="bg-white border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-20">
+      <section className="relative bg-white border-b border-slate-200 overflow-hidden">
+        {/* Subtle background decoration */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(ellipse 80% 60% at 70% -10%, rgba(219,234,254,0.55) 0%, transparent 70%)',
+          }}
+        />
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-20">
           <div className="max-w-3xl">
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight text-slate-900">
               The interview prep platform for AI infrastructure engineers
@@ -55,30 +64,30 @@ export default function HomePage() {
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
                 href="/problems"
-                className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+                className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm hover:shadow-md transition-all duration-150"
               >
                 Start practicing
               </Link>
               <Link
                 href="/roadmap"
-                className="px-5 py-2.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium transition-colors"
+                className="px-5 py-2.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 hover:border-slate-400 font-medium shadow-sm transition-all duration-150"
               >
                 View roadmap
               </Link>
             </div>
-            <div className="mt-10 flex flex-wrap gap-6">
+            <div className="mt-12 flex flex-wrap gap-8">
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-slate-900">12</span>
+                <span className="text-3xl font-bold text-slate-900 tabular-nums">12</span>
                 <span className="text-sm text-slate-500 mt-0.5">problems</span>
               </div>
               <div className="w-px bg-slate-200 hidden sm:block" />
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-slate-900">4</span>
+                <span className="text-3xl font-bold text-slate-900 tabular-nums">4</span>
                 <span className="text-sm text-slate-500 mt-0.5">tracks</span>
               </div>
               <div className="w-px bg-slate-200 hidden sm:block" />
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-slate-900">Principal-level</span>
+                <span className="text-3xl font-bold text-slate-900">Principal-level</span>
                 <span className="text-sm text-slate-500 mt-0.5">interview depth</span>
               </div>
             </div>
@@ -93,7 +102,7 @@ export default function HomePage() {
             <h2 className="text-3xl font-bold tracking-tight text-slate-900">
               LeetCode won&apos;t get you this job
             </h2>
-            <div className="mt-6 space-y-4 text-slate-700 leading-relaxed">
+            <div className="mt-6 space-y-4 text-slate-700 leading-relaxed border-l-2 border-slate-300 pl-5">
               <p>
                 Companies like Nebius, Groq, and Lambda Labs are now interviewing for AI
                 infrastructure roles that go well beyond two-sum and system design. They want
@@ -128,7 +137,7 @@ export default function HomePage() {
             {tracks.map((track) => (
               <div
                 key={track.slug}
-                className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col gap-3"
+                className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col gap-3 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
                 style={{ borderLeft: `3px solid ${track.color}` }}
               >
                 <div className="flex items-start justify-between gap-4">
@@ -142,9 +151,9 @@ export default function HomePage() {
                 <p className="text-sm text-slate-600 leading-relaxed">{track.description}</p>
                 <Link
                   href={`/problems?track=${track.slug}`}
-                  className="text-sm text-blue-600 hover:text-blue-700 transition-colors mt-auto"
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors mt-auto group"
                 >
-                  Explore →
+                  Explore <span className="inline-block transition-transform duration-150 group-hover:translate-x-0.5">→</span>
                 </Link>
               </div>
             ))}
@@ -153,7 +162,7 @@ export default function HomePage() {
       </section>
 
       {/* How it works */}
-      <section className="bg-white border-b border-slate-200">
+      <section className="bg-slate-50 border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
           <h2 className="text-3xl font-bold tracking-tight text-slate-900">How it works</h2>
           <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
@@ -175,7 +184,7 @@ export default function HomePage() {
               },
             ].map((step) => (
               <div key={step.n} className="flex flex-col gap-3">
-                <span className="w-8 h-8 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center">
+                <span className="w-9 h-9 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center ring-4 ring-blue-100 shadow-sm">
                   {step.n}
                 </span>
                 <h3 className="text-lg font-semibold text-slate-900">{step.title}</h3>
@@ -187,18 +196,22 @@ export default function HomePage() {
       </section>
 
       {/* CTA */}
-      <section className="bg-slate-900">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+      <section
+        style={{
+          background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+        }}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
           <div className="text-center max-w-2xl mx-auto">
             <h2 className="text-3xl font-bold tracking-tight text-white">
               Ready to actually prepare?
             </h2>
-            <p className="mt-4 text-slate-300">
+            <p className="mt-4 text-slate-400">
               Free to use. No credit card. Just sign in with GitHub or Google.
             </p>
             <Link
               href="/api/auth/signin"
-              className="mt-8 inline-block px-6 py-3 rounded-lg bg-white text-slate-900 hover:bg-slate-100 font-medium transition-colors"
+              className="mt-8 inline-block px-6 py-3 rounded-lg bg-white text-slate-900 hover:bg-slate-100 font-medium shadow-lg hover:shadow-xl transition-all duration-150"
             >
               Get started
             </Link>
