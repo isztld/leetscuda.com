@@ -19,11 +19,25 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   session: {
     strategy: 'jwt',
   },
+  pages: {
+    signIn: '/signin',
+  },
   callbacks: {
+    jwt({ token, user, trigger, session }) {
+      if (user) {
+        // Runs once at sign-in; user comes from the DB via PrismaAdapter
+        token.username = (user as { username?: string | null }).username ?? null
+      }
+      if (trigger === 'update' && session?.username !== undefined) {
+        token.username = session.username as string | null
+      }
+      return token
+    },
     session({ session, token }) {
       if (token.sub && session.user) {
         session.user.id = token.sub
       }
+      session.user.username = (token.username as string | null) ?? null
       return session
     },
   },

@@ -1,7 +1,8 @@
 import { router } from '../trpc'
+import { userRouter } from './user'
 
 export const appRouter = router({
-  // Routers for problems, submissions, users, etc. are added in Phase 2+
+  user: userRouter,
 })
 
 export type AppRouter = typeof appRouter
