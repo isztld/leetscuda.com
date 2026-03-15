@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 
-// Parse CLI args: --name "x" --capabilities "cpp,cuda:12.6"
+// Parse CLI args: --name "x" --capabilities "cpp,cuda:13.0"
 function parseArgs(): { name: string; capabilities: string[] } {
   const args = process.argv.slice(2)
   let name = ''
@@ -19,11 +19,11 @@ function parseArgs(): { name: string; capabilities: string[] } {
 
   if (!name) {
     console.error('Usage: tsx scripts/create-judge-token.ts --name <name> --capabilities <csv>')
-    console.error('Example: tsx scripts/create-judge-token.ts --name gpu-helsinki --capabilities "cpp,cuda:12.6"')
+    console.error('Example: tsx scripts/create-judge-token.ts --name gpu-helsinki --capabilities "cpp,cuda:13.0"')
     process.exit(1)
   }
   if (!capabilitiesRaw) {
-    console.error('--capabilities is required (e.g. "cpp" or "cpp,cuda:12.6")')
+    console.error('--capabilities is required (e.g. "cpp" or "cpp,cuda:13.0")')
     process.exit(1)
   }
 

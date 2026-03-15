@@ -167,7 +167,7 @@ leetscuda/
 | Queue | Redis (ioredis) |
 | Code editor | Monaco Editor |
 | Markdown | marked + highlight.js |
-| Judge sandbox | Docker — `gcc:14` (C++), `nvidia/cuda:12.6.0-devel-ubuntu22.04` (CUDA) |
+| Judge sandbox | Docker — `gcc:14` (C++), `nvidia/cuda:13.0.0-devel-ubuntu24.04` (CUDA) |
 
 ---
 
@@ -181,7 +181,7 @@ Browser
        └─ Creates Submission (PENDING) in Postgres
        └─ Pushes job to Redis queue
             ├─ judge:queue:cpp        (C++ problems)
-            └─ judge:queue:cuda:12.6  (CUDA problems)
+            └─ judge:queue:cuda:13.0  (CUDA problems)
 
 Judge worker (HTTP poll loop)
   └─ GET /api/judge/poll  →  job + test cases
@@ -196,7 +196,7 @@ Browser
 
 ### Judge architecture
 
-Judge nodes are stateless HTTP clients. Each node declares its capabilities (e.g. `cpp` or `cpp,cuda:12.6`) when its token is created. The web API uses those capabilities to determine which queues to offer during polling — CPU judges only receive C++ jobs, GPU judges receive both.
+Judge nodes are stateless HTTP clients. Each node declares its capabilities (e.g. `cpp` or `cpp,cuda:13.0`) when its token is created. The web API uses those capabilities to determine which queues to offer during polling — CPU judges only receive C++ jobs, GPU judges receive both.
 
 Judges have no direct access to the database or Redis. All state transitions happen through the web API.
 
@@ -233,7 +233,7 @@ Comment        id, userId, problemId, body, upvotes
 JudgeToken     id, name, token (SHA-256), capabilities[], isActive, lastSeenAt
 ```
 
-Key enums: `ExecutionRuntime { CPP CUDA }` · `CppStandard { CPP14 CPP17 CPP20 CPP23 }` · `CudaVersion { CUDA_12_6 }` · `ComputeCap { SM_86 SM_120 }` · `SubmissionStatus { PENDING RUNNING ACCEPTED WRONG_ANSWER RUNTIME_ERROR TIME_LIMIT }`
+Key enums: `ExecutionRuntime { CPP CUDA }` · `CppStandard { CPP14 CPP17 CPP20 CPP23 }` · `CudaVersion { CUDA_13_0 }` · `ComputeCap { SM_86 SM_120 }` · `SubmissionStatus { PENDING RUNNING ACCEPTED WRONG_ANSWER RUNTIME_ERROR TIME_LIMIT }`
 
 ---
 
@@ -274,7 +274,7 @@ xp: 100
 # Execution runtime (determines which judge queue receives this problem)
 runtime: cuda              # cpp | cuda
 cpp_standard: "17"         # "14" | "17" | "20" | "23"
-cuda_version: "12.6"       # cuda only
+cuda_version: "13.0"       # cuda only
 compute_cap: "sm_120"      # cuda only
 ```
 
@@ -357,8 +357,8 @@ Run from the repo root (requires `DATABASE_URL` in your environment):
 # CPU-only judge
 pnpm --filter @leetscuda/web judge:token --name "cpu-worker-1" --capabilities "cpp"
 
-# GPU judge (CUDA 12.6)
-pnpm --filter @leetscuda/web judge:token --name "gpu-helsinki" --capabilities "cpp,cuda:12.6"
+# GPU judge (CUDA 13.0)
+pnpm --filter @leetscuda/web judge:token --name "gpu-helsinki" --capabilities "cpp,cuda:13.0"
 ```
 
 The token is printed **once** to stdout and never retrievable again. Store it in a secret manager immediately.
@@ -372,14 +372,14 @@ cp apps/judge/.env.example apps/judge/.env
 ```
 JUDGE_API_URL=https://leetscuda.com
 JUDGE_API_TOKEN=jt_...
-JUDGE_CAPABILITIES=cpp,cuda:12.6
+JUDGE_CAPABILITIES=cpp,cuda:13.0
 ```
 
 ### 3. Pre-pull sandbox images (once per machine)
 
 ```bash
 docker pull gcc:14
-docker pull nvidia/cuda:12.6.0-devel-ubuntu22.04
+docker pull nvidia/cuda:13.0.0-devel-ubuntu24.04
 ```
 
 ### 4. Run
@@ -396,7 +396,7 @@ docker run \
   leetscuda-judge
 
 # Production — GPU judge
-docker build -t leetscuda-judge apps/judge
+docker build -t leetscuda-judge -f apps/judge/Dockerfile .
 docker run \
   -v /var/run/docker.sock:/var/run/docker.sock \
   --gpus all \
@@ -404,24 +404,24 @@ docker run \
   leetscuda-judge
 ```
 
-GPU hosts additionally require NVIDIA drivers with CUDA 12.6 and `nvidia-container-toolkit`.
+GPU hosts additionally require NVIDIA drivers with CUDA 13.0 and `nvidia-container-toolkit`.
 
 ### Job routing
 
 | Problem `executionRuntime` | Redis queue |
 |---|---|
 | `CPP` | `judge:queue:cpp` |
-| `CUDA` (version 12.6) | `judge:queue:cuda:12.6` |
+| `CUDA` (version 13.0) | `judge:queue:cuda:13.0` |
 
 CPU judges (capabilities: `cpp`) only dequeue from `judge:queue:cpp`.
-GPU judges (capabilities: `cpp,cuda:12.6`) dequeue from both.
+GPU judges (capabilities: `cpp,cuda:13.0`) dequeue from both.
 
 ### Sandbox behaviour
 
 | Runtime | Docker image | Compile command |
 |---|---|---|
 | C++ | `gcc:14` | `g++ -std=c++{N} -O2 -o solution solution.cpp` |
-| CUDA | `nvidia/cuda:12.6.0-devel-ubuntu22.04` | `nvcc -std=c++{N} -arch={cap} -O2 -o solution solution.cu` |
+| CUDA | `nvidia/cuda:13.0.0-devel-ubuntu24.04` | `nvcc -std=c++{N} -arch={cap} -O2 -o solution solution.cu` |
 
 C++ containers: `--memory 256m --cpus 0.5 --ulimit nproc=64 --network none`
 CUDA containers: `--memory 512m --gpus device=0 --ulimit nproc=128 --network none`
@@ -478,7 +478,7 @@ pnpm --filter @leetscuda/web judge:token --name <name> --capabilities <csv>
 |---|---|---|
 | `JUDGE_API_URL` | Yes | Base URL of the web app, e.g. `https://leetscuda.com` |
 | `JUDGE_API_TOKEN` | Yes | Token generated by `judge:token` (starts with `jt_`) |
-| `JUDGE_CAPABILITIES` | Yes | Comma-separated list, e.g. `cpp` or `cpp,cuda:12.6` |
+| `JUDGE_CAPABILITIES` | Yes | Comma-separated list, e.g. `cpp` or `cpp,cuda:13.0` |
 
 ---
 

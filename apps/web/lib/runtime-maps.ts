@@ -11,6 +11,7 @@ export const CPP_STANDARD: Record<CppStandard, string> = {
 /** Maps CudaVersion enum → version string, e.g. CUDA_12_6 → "12.6" */
 export const CUDA_VERSION: Record<CudaVersion, string> = {
   CUDA_12_6: '12.6',
+  CUDA_13_0: '13.0',
 }
 
 /** Maps ComputeCap enum → arch flag value, e.g. SM_120 → "sm_120" */

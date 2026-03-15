@@ -24,7 +24,7 @@ export interface SandboxResult {
 
 const DOCKER_IMAGES: Record<string, string> = {
   cpp: 'gcc:14',
-  'cuda:12.6': 'nvidia/cuda:12.6.0-devel-ubuntu22.04',
+  'cuda:13.0': 'nvidia/cuda:13.0.0-devel-ubuntu24.04',
 }
 
 // Detect if Docker is available (cached after first check)
@@ -79,7 +79,7 @@ async function runDocker(
   opts: SandboxOptions,
 ): Promise<SandboxResult> {
   const isCuda = opts.runtime === 'cuda'
-  const imageKey = isCuda ? `cuda:${opts.cudaVersion ?? '12.6'}` : 'cpp'
+  const imageKey = isCuda ? `cuda:${opts.cudaVersion ?? '13.0'}` : 'cpp'
   const image = DOCKER_IMAGES[imageKey] ?? DOCKER_IMAGES['cpp']
   const srcFile = isCuda ? 'solution.cu' : 'solution.cpp'
   const computeArch = opts.computeCap ?? 'sm_86'

@@ -17,6 +17,6 @@ if (!parsed.success) {
 
 export const env = {
   ...parsed.data,
-  // Parse comma-separated capabilities, e.g. "cpp,cuda:12.6" → ["cpp", "cuda:12.6"]
+  // Parse comma-separated capabilities, e.g. "cpp,cuda:13.0" → ["cpp", "cuda:13.0"]
   capabilities: parsed.data.JUDGE_CAPABILITIES.split(',').map((c) => c.trim()).filter(Boolean),
 }

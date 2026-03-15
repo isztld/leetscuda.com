@@ -42,7 +42,7 @@ export const submissionsRouter = router({
 
       // Enqueue job to the correct queue based on execution runtime
       const isCuda = problem.executionRuntime === ExecutionRuntime.CUDA
-      const cudaVerStr = problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : '12.6'
+      const cudaVerStr = problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : '13.0'
       const queueName = isCuda ? `judge:queue:cuda:${cudaVerStr}` : 'judge:queue:cpp'
 
       const redis = getRedis()

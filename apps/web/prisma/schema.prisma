@@ -41,6 +41,7 @@ enum CppStandard {
 
 enum CudaVersion {
   CUDA_12_6
+  CUDA_13_0
 }
 
 enum ComputeCap {

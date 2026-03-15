@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     if (cap === 'cpp') {
       queues.push('judge:queue:cpp')
     } else if (cap.startsWith('cuda:')) {
-      const version = cap.slice(5) // e.g. "12.6"
+      const version = cap.slice(5) // e.g. "13.0"
       queues.push(`judge:queue:cuda:${version}`)
     }
   }

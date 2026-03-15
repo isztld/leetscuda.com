@@ -296,7 +296,7 @@ const PROBLEMS: {
     xpReward: 100,
     executionRuntime: ExecutionRuntime.CUDA,
     cppStandard: CppStandard.CPP17,
-    cudaVersion: CudaVersion.CUDA_12_6,
+    cudaVersion: CudaVersion.CUDA_13_0,
     computeCap: ComputeCap.SM_120,
   },
   {
@@ -308,7 +308,7 @@ const PROBLEMS: {
     xpReward: 250,
     executionRuntime: ExecutionRuntime.CUDA,
     cppStandard: CppStandard.CPP17,
-    cudaVersion: CudaVersion.CUDA_12_6,
+    cudaVersion: CudaVersion.CUDA_13_0,
     computeCap: ComputeCap.SM_120,
   },
   {
@@ -320,7 +320,7 @@ const PROBLEMS: {
     xpReward: 200,
     executionRuntime: ExecutionRuntime.CUDA,
     cppStandard: CppStandard.CPP17,
-    cudaVersion: CudaVersion.CUDA_12_6,
+    cudaVersion: CudaVersion.CUDA_13_0,
     computeCap: ComputeCap.SM_120,
   },
   {
@@ -332,7 +332,7 @@ const PROBLEMS: {
     xpReward: 400,
     executionRuntime: ExecutionRuntime.CUDA,
     cppStandard: CppStandard.CPP17,
-    cudaVersion: CudaVersion.CUDA_12_6,
+    cudaVersion: CudaVersion.CUDA_13_0,
     computeCap: ComputeCap.SM_120,
   },
 

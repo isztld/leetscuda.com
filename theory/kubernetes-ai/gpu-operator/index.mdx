@@ -101,7 +101,7 @@ spec:
   restartPolicy: Never
   containers:
   - name: cuda-container
-    image: nvidia/cuda:12.6.0-base-ubuntu22.04
+    image: nvidia/cuda:13.0.0-base-ubuntu22.04
     command: ["nvidia-smi"]
     resources:
       limits:
@@ -112,7 +112,7 @@ spec:
 kubectl apply -f cuda-test.yaml
 kubectl logs cuda-test
 # +-----------------------------------------------------------------------------------------+
-# | NVIDIA-SMI 560.35.03              Driver Version: 560.35.03      CUDA Version: 12.6     |
+# | NVIDIA-SMI 560.35.03              Driver Version: 560.35.03      CUDA Version: 13.0     |
 # ...
 ```
 
