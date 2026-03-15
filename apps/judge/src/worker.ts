@@ -10,6 +10,7 @@ import { getPrisma } from './db.js'
 import { JudgeJobSchema } from './types.js'
 import { runInSandbox } from './sandbox.js'
 import { verify } from './verifier.js'
+import { updateStreak } from './streak.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -215,6 +216,10 @@ async function processJob(rawPayload: string): Promise<void> {
           })
           console.log(`[judge] Awarded ${problem.xpReward} XP to user ${userId}`)
         }
+
+        // Update streak on every accepted submission
+        await updateStreak(userId)
+        console.log(`[judge] Updated streak for user ${userId}`)
       }
     }
   } catch (err) {

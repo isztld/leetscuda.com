@@ -62,7 +62,7 @@ export function Navbar() {
               {open && (
                 <div className="absolute right-0 mt-2 w-44 bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg py-1 z-50">
                   <Link
-                    href="/profile"
+                    href={user.username ? `/profile/${user.username}` : '/profile'}
                     className="block px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors"
                     onClick={() => setOpen(false)}
                   >
