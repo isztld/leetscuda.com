@@ -1,0 +1,167 @@
+---
+slug: simd-basics
+title: SIMD & Vectorisation
+track: foundations
+type: concept
+tags:
+  - simd
+  - avx2
+  - sse
+  - vectorisation
+  - cpu
+  - intrinsics
+status: published
+author: team
+---
+
+# SIMD & Vectorisation
+
+SIMD (Single Instruction, Multiple Data) is a CPU architecture feature that applies one instruction to multiple data elements simultaneously. Modern CPUs can process 8 float32 values, 16 int16 values, or 4 float64 values with a single instruction via AVX2. Understanding SIMD is essential for writing high-performance CPU code and for understanding why GPU programming is designed the way it is — CUDA's warp model is essentially SIMD taken to its logical extreme.
+
+## SIMD Registers and Instruction Sets
+
+x86 CPUs have a hierarchy of SIMD instruction sets:
+
+| ISA | Register width | Float32 lanes | Year |
+|-----|---------------|--------------|------|
+| SSE2 | 128-bit (XMM) | 4 | 2001 |
+| AVX | 256-bit (YMM) | 8 | 2011 |
+| AVX2 | 256-bit (YMM) | 8 | 2013 |
+| AVX-512 | 512-bit (ZMM) | 16 | 2017 |
+
+AVX2 is the baseline for modern AI/ML CPU code. AVX-512 doubles the lane count but is not universally supported (absent from AMD Zen 3, some Intel consumer chips).
+
+A 256-bit YMM register holds 8 × 32-bit floats. An AVX2 addition operates on all 8 simultaneously:
+
+```
+ymm0: [a0, a1, a2, a3, a4, a5, a6, a7]
+ymm1: [b0, b1, b2, b3, b4, b5, b6, b7]
+       ↓
+vaddps ymm2, ymm0, ymm1   ; ymm2 = [a0+b0, a1+b1, ..., a7+b7]
+```
+
+## Auto-Vectorisation
+
+The simplest path to SIMD is letting the compiler do it. Modern compilers (GCC, Clang, MSVC) automatically vectorise simple loops when:
+- The loop body is simple (no complex control flow)
+- Loop iterations are independent (no loop-carried dependencies)
+- The compiler can prove aliasing does not occur (pointers don't overlap)
+
+```cpp
+// This loop auto-vectorises with -O2 -mavx2
+void add_arrays(float* __restrict__ c,
+                const float* __restrict__ a,
+                const float* __restrict__ b,
+                int n) {
+    for (int i = 0; i < n; i++) {
+        c[i] = a[i] + b[i];
+    }
+}
+```
+
+`__restrict__` tells the compiler that `c`, `a`, and `b` do not alias — without this, the compiler must assume writes to `c` may affect reads from `a` or `b`, preventing vectorisation.
+
+Check whether a loop was vectorised with:
+```bash
+# GCC
+g++ -O2 -mavx2 -fopt-info-vec myfile.cpp
+# Clang
+clang++ -O2 -mavx2 -Rpass=loop-vectorize myfile.cpp
+# Also: inspect assembly with gcc -S or objdump -d
+```
+
+## Intel Intrinsics (Manual SIMD)
+
+When auto-vectorisation fails or you need precise control, use **intrinsics** — C functions that map 1:1 to SIMD instructions:
+
+```cpp
+#include <immintrin.h>   // AVX/AVX2 intrinsics
+
+void dot_product_avx2(const float* a, const float* b, int n, float* result) {
+    __m256 sum = _mm256_setzero_ps();          // ymm: [0,0,0,0,0,0,0,0]
+
+    int i = 0;
+    for (; i <= n - 8; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);    // load 8 floats unaligned
+        __m256 vb = _mm256_loadu_ps(b + i);
+        sum = _mm256_fmadd_ps(va, vb, sum);    // sum += va * vb (fused multiply-add)
+    }
+
+    // Horizontal sum: reduce 8 lanes to 1 scalar
+    __m128 lo = _mm256_castps256_ps128(sum);
+    __m128 hi = _mm256_extractf128_ps(sum, 1);
+    __m128 s  = _mm_add_ps(lo, hi);
+    s = _mm_hadd_ps(s, s);
+    s = _mm_hadd_ps(s, s);
+    *result = _mm_cvtss_f32(s);
+
+    // Handle remaining elements (tail loop)
+    for (; i < n; i++) *result += a[i] * b[i];
+}
+```
+
+Intrinsic naming convention: `_mm256_<op>_<type>` where `ps` = packed single (float32), `pd` = packed double (float64), `epi32` = packed 32-bit integer.
+
+## FMA (Fused Multiply-Add)
+
+FMA computes `a * b + c` in a single instruction with one rounding step instead of two. This:
+- Increases arithmetic density (2 FLOPs per instruction instead of 1)
+- Improves numerical accuracy (single rounding)
+- Enables reaching peak FLOP/s: peak_flops = cores × frequency × FMA_units × 2 × SIMD_width
+
+For AVX2 FMA on a single core at 3 GHz: `1 core × 3 GHz × 2 FMA units × 2 FLOPs/FMA × 8 lanes = 96 GFLOP/s`. This is the "roofline" compute peak per core.
+
+## SIMD and Control Flow
+
+SIMD cannot natively branch per lane. Conditional operations use **masking**:
+
+```cpp
+// Scalar: if (a[i] > 0) c[i] = a[i]; else c[i] = 0;
+
+// SIMD equivalent using blend
+__m256 va    = _mm256_loadu_ps(a + i);
+__m256 zero  = _mm256_setzero_ps();
+__m256 mask  = _mm256_cmp_ps(va, zero, _CMP_GT_OQ);  // mask where a > 0
+__m256 vc    = _mm256_blendv_ps(zero, va, mask);      // select va or 0 per lane
+_mm256_storeu_ps(c + i, vc);
+```
+
+This is exactly analogous to CUDA warp divergence: all lanes execute both branches, and the mask selects the result. Avoid complex branching in hot SIMD loops.
+
+## Memory Alignment
+
+SIMD loads and stores are fastest when the address is aligned to the SIMD register width:
+- 128-bit (SSE): 16-byte aligned
+- 256-bit (AVX): 32-byte aligned
+- 512-bit (AVX-512): 64-byte aligned
+
+Use `_mm256_load_ps` for 32-byte aligned data (faults if misaligned) and `_mm256_loadu_ps` for unaligned data (slightly slower). Allocate aligned memory with:
+
+```cpp
+float* buf = (float*)aligned_alloc(32, n * sizeof(float));
+// or
+alignas(32) float buf[1024];
+```
+
+## Practical Impact
+
+AVX2 provides up to 8× throughput for float32 operations vs scalar code. Real-world speedup is often 4–6× due to memory bandwidth limits, loop overhead, and imperfect vectorisation. Combined with multithreading (OpenMP, std::thread), AVX2 + 96 cores can deliver ~10 TFLOP/s on a dual-socket server — within 2–5× of a data-centre GPU for specific workloads.
+
+Understanding SIMD helps you read profiler output, understand why loops don't vectorise, and appreciate the design trade-offs behind GPU warp execution.
+
+## Key Concepts
+
+- **SIMD**: one instruction operates on multiple data lanes simultaneously; AVX2 provides 8 float32 lanes per instruction.
+- **Auto-vectorisation**: compiler transforms scalar loops to SIMD automatically; requires independent iterations and `__restrict__`.
+- **Intrinsics**: C functions that map to SIMD instructions; use when auto-vectorisation fails or precision control is needed.
+- **FMA**: fused multiply-add; computes `a*b+c` in one instruction with one rounding; doubles FLOP/s per instruction.
+- **Masking**: conditional SIMD via blend operations; all lanes compute both branches, mask selects result.
+- **Alignment**: AVX2 loads are fastest when addresses are 32-byte aligned.
+
+## Further Reading
+
+- [Intel Intrinsics Guide](https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html)
+- [Agner Fog — Optimizing software in C++](https://www.agner.org/optimize/optimizing_cpp.pdf)
+- [GCC Auto-Vectorization](https://gcc.gnu.org/projects/tree-ssa/vectorization.html)
+- [godbolt.org — Compiler Explorer (inspect SIMD assembly)](https://godbolt.org)
+- [SIMD Everywhere (SIMDe) — portable SIMD](https://github.com/simd-everywhere/simde)

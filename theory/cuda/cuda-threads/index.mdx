@@ -1,0 +1,145 @@
+---
+slug: cuda-threads
+title: Threads, Blocks & Grids
+track: cuda
+type: concept
+tags:
+  - threads
+  - blocks
+  - grids
+  - indexing
+  - occupancy
+status: published
+author: team
+---
+
+# Threads, Blocks & Grids
+
+CUDA's execution model organises parallel work into a three-level hierarchy: **threads**, **blocks**, and **grids**. Understanding this hierarchy — and how to map it onto your data — is the single most important skill for writing correct, performant CUDA kernels.
+
+## Threads
+
+A **thread** is the finest unit of execution in CUDA. Every thread runs an instance of the kernel function and has:
+
+- A unique ID within its block: `threadIdx.x`, `threadIdx.y`, `threadIdx.z`
+- Its own set of registers (private, not shared with other threads)
+- Access to shared memory within its block and global device memory
+
+Threads within the same block execute concurrently on the same SM and can synchronise with `__syncthreads()`.
+
+## Warps
+
+The GPU does not schedule individual threads — it schedules **warps** of 32 threads. All 32 threads in a warp execute the same instruction in the same cycle (SIMD). If two threads in the same warp take different branches, both paths are serialised — this is called **warp divergence** and reduces effective throughput.
+
+The warp index within a block is `threadIdx.x / 32` (for 1D blocks). Threads 0–31 form warp 0, threads 32–63 form warp 1, and so on. Keeping related work in the same warp — and ensuring all threads in a warp follow the same control flow — is a key optimisation principle.
+
+## Blocks
+
+A **block** (thread block) is a group of up to 1024 threads that:
+
+- Are assigned to the **same SM** for the lifetime of the block
+- Share an **on-chip SRAM** region called *shared memory* (up to 228 KB on H100)
+- Can synchronise with `__syncthreads()` to implement barrier synchronisation
+
+Blocks are identified by `blockIdx.x`, `blockIdx.y`, `blockIdx.z`. Once assigned, a block runs on its SM until completion — blocks never migrate.
+
+The maximum block size is 1024 threads, but choose power-of-two sizes (128, 256, 512) aligned to warp boundaries for best occupancy.
+
+## Grids
+
+A **grid** is the complete collection of blocks launched by one kernel call. The grid is described by `gridDim` (a `dim3`). Blocks in a grid are independent — they may execute in any order, on any SM, and there is no synchronisation between blocks within a single kernel launch.
+
+The CUDA runtime distributes blocks across SMs. If you launch more blocks than the GPU can run concurrently, the extra blocks wait in a hardware queue and are dispatched as SMs become free.
+
+## 1D Indexing
+
+For a 1D array of N elements, the standard pattern is:
+
+```cpp
+__global__ void kernel_1d(float* data, int N) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        data[i] = process(data[i]);
+    }
+}
+
+// Launch with enough blocks to cover N elements
+int blockSize = 256;
+int gridSize  = (N + blockSize - 1) / blockSize;
+kernel_1d<<<gridSize, blockSize>>>(data, N);
+```
+
+The formula `blockIdx.x * blockDim.x + threadIdx.x` maps each thread to a unique array index. The `if (i < N)` guard handles the case where N is not a multiple of blockSize — the last block may have threads with indices beyond the array.
+
+## 2D Indexing
+
+For a 2D matrix of shape (rows, cols):
+
+```cpp
+__global__ void kernel_2d(float* A, int rows, int cols) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    if (row < rows && col < cols) {
+        int idx = row * cols + col; // row-major index
+        A[idx] = process(A[idx]);
+    }
+}
+
+dim3 blockDim(16, 16);   // 256 threads per block, 2D layout
+dim3 gridDim(
+    (cols + 15) / 16,
+    (rows + 15) / 16
+);
+kernel_2d<<<gridDim, blockDim>>>(A, rows, cols);
+```
+
+Using 2D thread blocks makes index calculations more natural for matrix problems. The hardware flattens the 2D block into a 1D sequence of warps: warp 0 = threads (0,0)–(31,0), warp 1 = threads (0,1)–(31,1), etc. For efficient memory coalescing, adjacent `threadIdx.x` values should access adjacent memory addresses — hence the column mapped to `threadIdx.x`.
+
+## Occupancy
+
+**Occupancy** is the ratio of active warps to the maximum warps an SM can support. Higher occupancy means more warps available to hide latency, which usually improves throughput — but the relationship is not linear. There are three resources that limit how many blocks fit on an SM simultaneously:
+
+1. **Registers**: each thread consumes registers from the SM's 256 KB register file. More registers per thread → fewer threads fit.
+2. **Shared memory**: each block consumes shared memory. Larger allocations → fewer blocks per SM.
+3. **Block count**: each SM has a hardware limit on concurrent blocks (16–32 depending on architecture).
+
+Use the CUDA Occupancy Calculator or `cudaOccupancyMaxActiveBlocksPerMultiprocessor` to measure occupancy programmatically:
+
+```cpp
+int numBlocks;
+cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    &numBlocks, kernel, blockSize, sharedMemBytes);
+float occupancy = (numBlocks * blockSize) /
+                  float(prop.maxThreadsPerMultiProcessor);
+printf("Occupancy: %.1f%%\n", occupancy * 100);
+```
+
+A common rule of thumb: aim for ≥ 50% occupancy. Beyond that, other bottlenecks (memory bandwidth, instruction throughput) usually dominate.
+
+## Choosing Block Size
+
+Practical guidelines:
+
+- Use multiples of 32 (warp size) — never have a non-multiple block size
+- Common choices: 128, 256, 512 threads per block
+- 256 is a safe default for most kernels
+- If the kernel uses much shared memory or many registers, use a smaller block size to allow more blocks per SM
+- For 2D kernels, 16×16 = 256 or 32×8 = 256 are common choices
+
+## Key Concepts
+
+- **Thread**: the finest execution unit; has private registers and a unique `threadIdx`.
+- **Warp**: 32 threads that execute in lock-step; warp divergence serialises divergent paths.
+- **Block**: up to 1024 threads on one SM; share shared memory and can synchronise with `__syncthreads()`.
+- **Grid**: all blocks of one kernel launch; blocks are independent and may execute in any order.
+- **Global index**: `blockIdx.x * blockDim.x + threadIdx.x` — maps a thread to its data element.
+- **Occupancy**: fraction of max warps that are resident on an SM; limited by registers, shared memory, and block count.
+
+## Further Reading
+
+- [CUDA C++ Programming Guide — Thread Hierarchy](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#thread-hierarchy)
+- [CUDA Occupancy Calculator](https://docs.nvidia.com/cuda/cuda-occupancy-calculator/index.html)
+- [CUDA Best Practices Guide — Execution Configuration](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#execution-configuration)
+- [Nsight Compute Roofline Tutorial](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html)
+
+> Content adapted from the [Modal GPU Glossary](https://github.com/modal-labs/gpu-glossary) under MIT license.

@@ -1,0 +1,197 @@
+---
+slug: gpu-operator
+title: NVIDIA GPU Operator
+track: kubernetes-ai
+type: concept
+tags:
+  - gpu
+  - nvidia
+  - operator
+  - drivers
+  - device-plugin
+  - kubernetes
+status: published
+author: team
+---
+
+# NVIDIA GPU Operator
+
+Running GPU workloads on Kubernetes requires several system-level components: GPU drivers, the CUDA runtime, the container toolkit, and a device plugin that exposes GPUs as Kubernetes resources. Managing these components manually across a fleet of nodes is error-prone and operationally expensive. The **NVIDIA GPU Operator** automates this entire stack using the Kubernetes Operator pattern.
+
+## The Problem: GPU Software Stack Complexity
+
+A GPU node needs the following software layers in the correct versions:
+
+1. **NVIDIA Driver** (kernel module) — exposes `/dev/nvidia*` devices
+2. **NVIDIA Container Toolkit** (formerly `nvidia-docker2`) — allows containers to access GPUs via the OCI hook
+3. **CUDA Runtime** — usually bundled in the container image
+4. **Kubernetes Device Plugin** (`nvidia-device-plugin`) — advertises `nvidia.com/gpu` as a schedulable resource
+5. **DCGM Exporter** (optional) — exports GPU metrics to Prometheus
+6. **MIG Manager** (optional) — manages Multi-Instance GPU partitioning on A100/H100
+
+Historically, each node had to be configured manually or via node-specific scripts. Driver version mismatches between nodes, container toolkit updates breaking GPU passthrough, and MIG configuration drift were constant headaches.
+
+## The Operator Pattern
+
+A **Kubernetes Operator** is a controller that encodes operational knowledge as software. It watches custom resources (CRDs) and reconciles the cluster state to match the desired spec. The GPU Operator deploys and manages all GPU software components as DaemonSets — ensuring every GPU node runs the correct stack.
+
+## Architecture
+
+The GPU Operator deploys the following DaemonSets on each GPU node:
+
+```
+GPU Node
+├── nvidia-driver-daemonset         # Installs kernel driver via container
+├── nvidia-container-toolkit-ds     # Configures containerd/CRI-O for GPU access
+├── nvidia-device-plugin-daemonset  # Registers nvidia.com/gpu resource
+├── gpu-feature-discovery           # Labels nodes with GPU model, VRAM, compute cap
+└── dcgm-exporter                   # Prometheus metrics (memory usage, utilization, temp)
+```
+
+Importantly, the **driver is deployed as a container** — the `nvidia-driver-daemonset` builds and installs the kernel module from within a privileged container, eliminating the need to bake the driver into node OS images. This means driver upgrades are a container image update rather than a node reimaging.
+
+## Installation
+
+```bash
+# Add the NVIDIA Helm repository
+helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
+helm repo update
+
+# Install the GPU Operator in the gpu-operator namespace
+helm install gpu-operator nvidia/gpu-operator \
+  --namespace gpu-operator \
+  --create-namespace \
+  --set driver.enabled=true \
+  --set toolkit.enabled=true \
+  --set devicePlugin.enabled=true \
+  --set dcgmExporter.enabled=true
+```
+
+After installation, watch the pods come up:
+
+```bash
+kubectl get pods -n gpu-operator -w
+# NAME                                       READY   STATUS
+# gpu-operator-...                           1/1     Running
+# nvidia-driver-daemonset-xxxxx              1/1     Running
+# nvidia-device-plugin-daemonset-xxxxx       1/1     Running
+# dcgm-exporter-xxxxx                        1/1     Running
+```
+
+Once running, verify GPU resources are visible:
+
+```bash
+kubectl describe node gpu-node-0 | grep nvidia
+# Capacity:
+#   nvidia.com/gpu: 8
+# Allocatable:
+#   nvidia.com/gpu: 8
+```
+
+## Using GPUs in Pods
+
+Once the device plugin registers GPUs, request them in pod specs with `nvidia.com/gpu`:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cuda-test
+spec:
+  restartPolicy: Never
+  containers:
+  - name: cuda-container
+    image: nvidia/cuda:12.6.0-base-ubuntu22.04
+    command: ["nvidia-smi"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1        # Request one full GPU
+```
+
+```bash
+kubectl apply -f cuda-test.yaml
+kubectl logs cuda-test
+# +-----------------------------------------------------------------------------------------+
+# | NVIDIA-SMI 560.35.03              Driver Version: 560.35.03      CUDA Version: 12.6     |
+# ...
+```
+
+## Node Feature Discovery and GPU Labels
+
+The GPU Operator includes **GPU Feature Discovery** (GFD), which labels nodes with GPU-specific metadata:
+
+```
+nvidia.com/gpu.product=NVIDIA-A100-SXM4-80GB
+nvidia.com/gpu.memory=81920
+nvidia.com/gpu.count=8
+nvidia.com/cuda.driver.major=560
+nvidia.com/cuda.runtime.major=12
+nvidia.com/mig.capable=true
+```
+
+These labels enable GPU-model-specific scheduling:
+
+```yaml
+nodeSelector:
+  nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3   # Schedule only on H100 nodes
+```
+
+## Multi-Instance GPU (MIG)
+
+On A100 and H100 GPUs, NVIDIA MIG partitions a single physical GPU into up to 7 isolated **MIG instances**, each with dedicated memory, SM count, and HBM bandwidth. The GPU Operator's MIG Manager configures MIG profiles across the fleet.
+
+Supported profiles on A100 80GB:
+- `1g.10gb` — 1/7 GPU, 10 GB (up to 7 instances)
+- `2g.20gb` — 2/7 GPU, 20 GB (up to 3 instances)
+- `3g.40gb` — 3/7 GPU, 40 GB (up to 2 instances)
+- `7g.80gb` — full GPU, 80 GB (1 instance)
+
+```yaml
+# Request a MIG instance via extended resource
+resources:
+  limits:
+    nvidia.com/mig-1g.10gb: 1    # Request a 1/7 A100 MIG slice
+```
+
+MIG is ideal for right-sizing inference workloads — a Llama-3 8B model needs only ~16 GB, so a single A100 can host 4 independent serving instances.
+
+## GPU Metrics with DCGM
+
+DCGM Exporter exposes Prometheus metrics for each GPU:
+
+```promql
+# GPU utilization (compute)
+DCGM_FI_DEV_GPU_UTIL
+
+# GPU memory used (bytes)
+DCGM_FI_DEV_FB_USED
+
+# GPU temperature (°C)
+DCGM_FI_DEV_GPU_TEMP
+
+# GPU power draw (watts)
+DCGM_FI_DEV_POWER_USAGE
+
+# PCIe TX/RX bandwidth
+DCGM_FI_DEV_PCIE_TX_THROUGHPUT
+DCGM_FI_DEV_PCIE_RX_THROUGHPUT
+```
+
+These metrics are essential for autoscaling (HPA based on GPU utilization), capacity planning, and detecting thermal throttling.
+
+## Key Concepts
+
+- **GPU Operator**: Kubernetes Operator that manages the entire NVIDIA GPU software stack as DaemonSets.
+- **nvidia-device-plugin**: exposes `nvidia.com/gpu` as a schedulable resource; part of the GPU Operator stack.
+- **Container-based driver**: the GPU Operator installs the kernel driver from within a privileged container, enabling driver upgrades without node reimaging.
+- **GPU Feature Discovery**: labels nodes with GPU model, VRAM, compute capability for affinity scheduling.
+- **MIG Manager**: configures Multi-Instance GPU partitioning for right-sizing inference workloads.
+- **DCGM Exporter**: Prometheus metrics for GPU utilization, memory, temperature, and power.
+
+## Further Reading
+
+- [NVIDIA GPU Operator Documentation](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html)
+- [NVIDIA Device Plugin for Kubernetes](https://github.com/NVIDIA/k8s-device-plugin)
+- [Multi-Instance GPU User Guide](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/)
+- [DCGM Exporter GitHub](https://github.com/NVIDIA/dcgm-exporter)
+- [GPU Feature Discovery GitHub](https://github.com/NVIDIA/gpu-feature-discovery)

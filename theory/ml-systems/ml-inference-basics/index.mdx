@@ -1,0 +1,93 @@
+---
+slug: ml-inference-basics
+title: Inference Fundamentals
+track: ml-systems
+type: concept
+tags:
+  - inference
+  - latency
+  - throughput
+  - llm
+  - serving
+status: published
+author: team
+---
+
+# Inference Fundamentals
+
+Running a trained model to generate predictions is called **inference**. While training is typically a batch process tolerant of high latency, inference must often meet strict latency SLOs (service level objectives) while serving many concurrent users. Understanding the inference pipeline from model loading to first token is the foundation for all ML systems engineering work.
+
+## The Two Regimes: Latency vs Throughput
+
+Inference optimization lives in constant tension between two goals:
+
+- **Latency** (ms / request): the time from receiving a request to returning the response. Critical for real-time applications (chatbots, code completion, autonomous driving). Measured as P50, P95, P99 latency.
+- **Throughput** (tokens / second, requests / second): how many inferences the system can complete per unit time. Determines cost per query and maximum concurrent users.
+
+These goals conflict. Batching many requests together improves throughput by amortising GPU kernel launch overhead and increasing arithmetic intensity, but it increases latency for each individual request (it must wait for the batch to fill). The core challenge of ML serving is finding the right operating point on this curve for a given SLO.
+
+## The LLM Inference Pipeline
+
+For large language models (transformers), inference has two distinct phases:
+
+### 1. Prefill (Prompt Processing)
+
+The model processes the entire input prompt in parallel. All input tokens are available at once, so attention can be computed across the full sequence simultaneously. This phase is **compute-bound** — arithmetic intensity is high because the batch processes many tokens through the same weight matrices.
+
+Prefill latency scales roughly linearly with prompt length. For a prompt of length P with a model of D-dimensional hidden states, the attention computation is O(P² × D) per layer.
+
+### 2. Decode (Token Generation)
+
+After prefill, the model generates tokens one at a time in an autoregressive loop. At each step, one new token is generated given all previous tokens. Because only one new token is processed per step, the batch size for the linear layers is effectively 1 per sequence, making this phase **memory-bandwidth-bound**.
+
+The key insight: during decode, the GPU spends most of its time reading model weights from HBM (high bandwidth memory) but doing very little arithmetic per byte read. The arithmetic intensity (FLOPs / byte) of a matrix-vector multiply (batch=1) is much lower than a matrix-matrix multiply (batch=N), so the roofline model predicts memory bandwidth, not compute, as the bottleneck.
+
+### KV Cache
+
+Computing attention at decode step t requires the key and value projections for all t-1 previous tokens. Recomputing these from scratch at every step would be O(t²) per generation. Instead, the **KV cache** stores the key and value tensors for all generated tokens and reuses them. At step t, only the new token's Q, K, V projections are computed; the stored K and V are appended to the cache and the full cached K, V are used for attention.
+
+The KV cache grows linearly with sequence length: for a model with H attention heads, D head dimension, L layers, and batch size B, the cache requires `2 × B × L × H × D × seq_len × sizeof(float16)` bytes. For Llama-3 70B with batch=1 and seq=4096: ~18 GB.
+
+## Model Loading
+
+Before serving, the model weights must be loaded from storage (NVMe SSD or network filesystem) into GPU HBM. Modern LLMs are large:
+
+| Model | Parameters | FP16 size |
+|-------|-----------|-----------|
+| Llama-3 8B | 8B | ~16 GB |
+| Llama-3 70B | 70B | ~140 GB |
+| Llama-3 405B | 405B | ~810 GB |
+
+Models larger than a single GPU's memory require **tensor parallelism** (splitting weight matrices across GPUs) or **pipeline parallelism** (assigning different layers to different GPUs). Frameworks like vLLM and TensorRT-LLM handle this automatically via configuration.
+
+Cold-start latency (time to load weights before serving the first request) is typically 30–120 seconds for large models. Production systems keep models warm and use techniques like memory-mapped files to reduce reload time.
+
+## Key Metrics
+
+- **Time to First Token (TTFT)**: latency until the first generated token arrives. Dominated by prefill. Target: < 200 ms for interactive use.
+- **Inter-Token Latency (ITL)**: average time between consecutive generated tokens. Dominated by decode speed. Target: < 50 ms for real-time streaming.
+- **Throughput (tok/s)**: total tokens generated per second across all concurrent requests. Scales with batch size.
+- **GPU MFU (Model FLOP Utilization)**: fraction of peak FLOP/s achieved. A well-optimized transformer should reach 40–60% MFU.
+
+## Frameworks and Tools
+
+- **vLLM**: the dominant open-source LLM serving engine; implements PagedAttention for efficient KV cache management.
+- **TensorRT-LLM**: NVIDIA's production serving framework; compiles models to fused CUDA kernels.
+- **Triton Inference Server**: model-agnostic serving layer for batching, versioning, and health checks.
+- **SGLang**: structured generation framework optimized for multi-turn and branching workloads.
+
+## Key Concepts
+
+- **Prefill**: compute-bound prompt processing; all input tokens processed in parallel.
+- **Decode**: memory-bandwidth-bound autoregressive token generation; one token per step.
+- **KV cache**: stored key/value projections that avoid recomputation during decode; primary memory consumer.
+- **TTFT / ITL**: time to first token and inter-token latency; the two latency SLOs for streaming LLM APIs.
+- **Arithmetic intensity**: FLOPs per byte of memory bandwidth; predicts whether a workload is compute-bound or memory-bound.
+
+## Further Reading
+
+- [Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., 2023)](https://arxiv.org/abs/2309.06180)
+- [FlashAttention: Fast and Memory-Efficient Exact Attention (Dao et al., 2022)](https://arxiv.org/abs/2205.14135)
+- [Orca: A Distributed Serving System for Transformer-Based Language Models (Yu et al., 2022)](https://www.usenix.org/conference/osdi22/presentation/yu)
+- [vLLM documentation](https://docs.vllm.ai)
+- [Roofline Model on Wikipedia](https://en.wikipedia.org/wiki/Roofline_model)

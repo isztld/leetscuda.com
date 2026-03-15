@@ -1,0 +1,132 @@
+---
+slug: memory-model
+title: CPU Memory Hierarchy
+track: foundations
+type: concept
+tags:
+  - memory
+  - cache
+  - numa
+  - bandwidth
+  - latency
+status: published
+author: team
+---
+
+# CPU Memory Hierarchy
+
+Before reasoning about GPU performance, you must understand how CPUs handle memory — because GPU programs constantly interact with the host system's memory hierarchy through PCIe transfers, and many systems concepts (caches, latency hiding, bandwidth bounds) have direct GPU analogues.
+
+## Why Memory Hierarchies Exist
+
+Processor cores operate at ~3–5 GHz, executing instructions in ~0.3 ns. DRAM access latency is ~60–100 ns — roughly 200–300 cycles of idle time while the core waits for data. If every memory access went to DRAM, the CPU would spend most of its time waiting.
+
+The solution is a hierarchy of progressively smaller, faster, more expensive caches between the core and main memory:
+
+```
+Registers  →  L1  →  L2  →  L3  →  DRAM  →  NVMe SSD
+~0.3 ns       ~1 ns   ~5 ns   ~15 ns  ~60 ns    ~100 μs
+```
+
+Cache hits serve data orders of magnitude faster than DRAM. The CPU exploits **temporal locality** (recently accessed data is likely to be accessed again) and **spatial locality** (data near recently accessed addresses is likely to be accessed soon).
+
+## Cache Lines
+
+Caches operate on **cache lines** — fixed-size blocks of contiguous memory (64 bytes on all modern x86 processors). When you read a single byte from DRAM, the cache loads the entire 64-byte aligned block containing that byte.
+
+This has two important implications:
+
+1. **Spatial locality pays off**: if you access `arr[0]`, loading the cache line brings `arr[0]` through `arr[15]` (for int32). Accessing them sequentially is essentially free after the first miss.
+2. **False sharing is dangerous**: if two cores write to different variables that happen to share a cache line, every write invalidates the other core's cached copy — causing cache coherence traffic that degrades performance even though the cores are accessing logically different data.
+
+## Cache Hierarchy on Modern CPUs
+
+A typical server CPU (AMD EPYC 9654, 96 cores):
+
+| Level | Size | Associativity | Latency | Sharing |
+|-------|------|--------------|---------|---------|
+| L1d (data) | 32 KB | 8-way | ~4 cycles | Per-core |
+| L1i (instruction) | 32 KB | 8-way | ~4 cycles | Per-core |
+| L2 | 1 MB | 8-way | ~12 cycles | Per-core |
+| L3 | 384 MB | 16-way | ~40 cycles | Shared |
+
+The L3 (Last Level Cache, LLC) is shared among all cores on a socket. Cross-core data sharing goes through L3, not DRAM — this is why parallel programs benefit from sharing data that fits in L3.
+
+## TLBs (Translation Lookaside Buffers)
+
+Virtual addresses (used by programs) must be translated to physical addresses (used by DRAM) via page tables. A full page table walk takes 4–5 memory accesses (for 4-level paging on x86-64). The **TLB** caches recent address translations to avoid this overhead.
+
+TLB misses are expensive (~50–100 cycles) and become significant when working sets are large. The solution is **huge pages** (2 MB on Linux vs default 4 KB), which reduce the number of TLB entries needed by 512×. Transparent Huge Pages (THP) can help automatically; for memory-critical code, use `mmap` with `MAP_HUGETLB` or NUMA-aware allocators.
+
+## NUMA (Non-Uniform Memory Access)
+
+Multi-socket servers have multiple NUMA nodes — groups of cores with local DRAM. Accessing memory attached to a different socket (remote NUMA access) is 1.5–3× slower than local access.
+
+```
+Socket 0 ──── DRAM 0 (local)
+   │
+ QPI/UPI interconnect (~100 ns)
+   │
+Socket 1 ──── DRAM 1 (local, but remote to Socket 0)
+```
+
+GPU nodes often have PCIe switches that make GPU memory access NUMA-aware. An H100 attached to Socket 0's PCIe root complex has lower transfer latency from cores on Socket 0 than from Socket 1.
+
+Key NUMA tools:
+```bash
+numactl --hardware          # Show NUMA topology
+numactl --cpunodebind=0 \
+        --membind=0 ./app   # Bind process to NUMA node 0
+numastat -p <pid>           # Show NUMA memory stats for process
+```
+
+## Bandwidth vs Latency
+
+Two distinct metrics govern memory performance:
+
+- **Latency**: time for one request to complete. Depends on cache hit/miss, NUMA locality. Optimise with data layout, prefetching.
+- **Bandwidth**: sustained data rate for streaming accesses (GB/s). Depends on DRAM channels, memory bus width, access patterns. A 4-channel DDR5-4800 system delivers ~150 GB/s peak.
+
+Sequential access patterns (streaming) saturate bandwidth — the prefetcher detects the pattern and pre-fetches cache lines ahead of time. Random access patterns are latency-bound — each cache miss incurs the full DRAM latency.
+
+The CPU analogy to the GPU roofline model: if your algorithm's arithmetic intensity (FLOPs / byte read) is below `peak_FLOPs / peak_bandwidth`, it is memory-bandwidth-bound.
+
+## Memory Access Optimisation Techniques
+
+**Structure of Arrays (SoA) vs Array of Structures (AoS)**
+
+```cpp
+// Array of Structures (AoS) — poor cache utilization when accessing one field
+struct Particle { float x, y, z, mass; };
+Particle particles[N];
+
+// Structure of Arrays (SoA) — cache-friendly when processing all x values
+struct Particles { float x[N], y[N], z[N], mass[N]; };
+```
+
+If a loop only accesses `x` values, AoS loads 16 bytes of cache line but uses only 4. SoA loads 16 bytes and uses all 16 — 4× better effective bandwidth.
+
+**Software Prefetching**
+
+```cpp
+for (int i = 0; i < N; i++) {
+    __builtin_prefetch(&data[i + 16], 0, 1); // prefetch 16 ahead
+    process(data[i]);
+}
+```
+
+## Key Concepts
+
+- **Cache line**: 64-byte block; the unit of data transfer between cache levels and DRAM.
+- **Spatial locality**: accessing nearby addresses benefits from the same cache line load.
+- **False sharing**: two cores writing to different variables on the same cache line cause coherence traffic.
+- **TLB**: translation lookaside buffer; caches virtual-to-physical page table lookups; huge pages reduce TLB pressure.
+- **NUMA**: memory access is faster to local DRAM; GPU placement matters for PCIe latency.
+- **Bandwidth-bound vs latency-bound**: sequential streaming saturates bandwidth; random access exposes latency.
+
+## Further Reading
+
+- [What Every Programmer Should Know About Memory (Drepper, 2007)](https://people.freebsd.org/~lstewart/articles/cpumemory.pdf)
+- [Intel 64 and IA-32 Architectures Optimization Reference Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+- [Linux `numactl` man page](https://linux.die.net/man/8/numactl)
+- [Agner Fog's CPU Optimization Guides](https://www.agner.org/optimize/)

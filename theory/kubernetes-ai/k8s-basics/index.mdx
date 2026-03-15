@@ -1,0 +1,206 @@
+---
+slug: k8s-basics
+title: Kubernetes Fundamentals
+track: kubernetes-ai
+type: concept
+tags:
+  - kubernetes
+  - pods
+  - deployments
+  - services
+  - namespaces
+status: published
+author: team
+---
+
+# Kubernetes Fundamentals
+
+Kubernetes (K8s) is the standard orchestration platform for containerised workloads. It automates deployment, scaling, and management of containers across a cluster of nodes. For AI infrastructure engineers, Kubernetes is the operating system for running GPU workloads at scale — understanding its primitives is a prerequisite for deploying inference servers, training jobs, and ML pipelines in production.
+
+## Core Concepts
+
+### Pods
+
+A **Pod** is the smallest deployable unit in Kubernetes. It wraps one or more containers that share:
+- The same network namespace (same IP address, same ports)
+- The same storage volumes
+- The same lifecycle (start and stop together)
+
+Most pods contain a single container. Sidecar patterns (e.g., adding a logging agent or a service mesh proxy) use multi-container pods.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-server
+  namespace: inference
+spec:
+  containers:
+  - name: vllm
+    image: vllm/vllm-openai:latest
+    resources:
+      limits:
+        nvidia.com/gpu: 1        # Request one GPU
+        memory: "32Gi"
+      requests:
+        nvidia.com/gpu: 1
+        memory: "32Gi"
+    ports:
+    - containerPort: 8000
+```
+
+Pods are **ephemeral** — if a pod crashes, Kubernetes does not restart it. Higher-level controllers (Deployments, StatefulSets) manage pod restarts.
+
+### Deployments
+
+A **Deployment** manages a set of identical pods (called a *ReplicaSet*). It ensures a specified number of replicas are always running and handles rolling updates:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:latest
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+```
+
+Deployments support `kubectl rollout` for zero-downtime updates: Kubernetes starts new pods with the updated image, waits for them to pass health checks, then terminates old pods.
+
+### Services
+
+A **Service** provides a stable network endpoint (DNS name and ClusterIP) that routes traffic to the pods selected by a label selector. Because pod IPs change when pods restart, services decouple consumers from pod lifecycles:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+spec:
+  selector:
+    app: vllm                  # Routes to pods with this label
+  ports:
+  - port: 80
+    targetPort: 8000
+  type: ClusterIP              # Internal-only; use LoadBalancer for external
+```
+
+Service types:
+- `ClusterIP`: accessible only within the cluster (default)
+- `NodePort`: exposes on each node's IP at a static port
+- `LoadBalancer`: provisions a cloud load balancer (GKE, EKS, AKS)
+- `ExternalName`: maps to an external DNS name
+
+### ConfigMaps and Secrets
+
+**ConfigMaps** store non-sensitive configuration data (environment variables, config files) separately from container images:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-config
+data:
+  MODEL_NAME: "meta-llama/Llama-3-8B-Instruct"
+  MAX_BATCH_SIZE: "32"
+  TENSOR_PARALLEL_SIZE: "1"
+```
+
+**Secrets** store sensitive data (API keys, passwords) base64-encoded. Use external secret managers (AWS Secrets Manager, HashiCorp Vault) in production rather than raw Kubernetes Secrets.
+
+### Namespaces
+
+**Namespaces** partition a cluster into virtual sub-clusters. They provide:
+- Resource isolation (quotas per namespace)
+- RBAC boundaries (permissions scoped to namespace)
+- Name uniqueness within a namespace (e.g., two teams can each have a service named `inference`)
+
+Common patterns:
+- `default` — dev/test workloads
+- `inference` — production serving
+- `training` — GPU training jobs
+- `monitoring` — Prometheus, Grafana
+
+## The Control Plane
+
+Kubernetes has a **control plane** (master nodes) that manages cluster state:
+
+- **API Server** (`kube-apiserver`): the RESTful frontend; all `kubectl` commands and controllers talk to it
+- **etcd**: distributed key-value store that holds all cluster state
+- **Scheduler** (`kube-scheduler`): assigns pods to nodes based on resource requests and node capacity
+- **Controller Manager** (`kube-controller-manager`): runs reconciliation loops (Deployment controller, ReplicaSet controller, etc.)
+
+**Node components** on each worker node:
+- **kubelet**: agent that ensures containers defined in pod specs are running
+- **kube-proxy**: manages network rules for Service routing
+- **Container runtime** (containerd, CRI-O): runs containers
+
+## Health Checks
+
+Kubernetes monitors pod health with probes:
+
+```yaml
+livenessProbe:         # Restart pod if this fails
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 60   # Wait 60s after start (model loading time)
+  periodSeconds: 10
+
+readinessProbe:        # Remove from Service if this fails
+  httpGet:
+    path: /ready
+    port: 8000
+  initialDelaySeconds: 30
+  periodSeconds: 5
+```
+
+For GPU inference servers, `initialDelaySeconds` must account for model weight loading time (30–120s for large models).
+
+## Resource Requests and Limits
+
+Every container should declare CPU and memory **requests** (what the scheduler uses for bin-packing) and **limits** (hard cap enforced at runtime):
+
+```yaml
+resources:
+  requests:
+    cpu: "4"
+    memory: "16Gi"
+  limits:
+    cpu: "8"
+    memory: "32Gi"
+    nvidia.com/gpu: 1    # GPU limits must equal requests
+```
+
+For GPUs, requests must equal limits — Kubernetes does not support fractional GPU allocation natively (see MIG and time-slicing for alternatives).
+
+## Key Concepts
+
+- **Pod**: atomic unit of deployment; one or more containers sharing network and storage.
+- **Deployment**: manages a ReplicaSet of identical pods; handles rolling updates and restarts.
+- **Service**: stable DNS/IP endpoint that load-balances across matching pods.
+- **ConfigMap / Secret**: externalised configuration, decoupled from container images.
+- **Namespace**: virtual partition of a cluster for resource isolation and RBAC.
+- **Liveness / Readiness probes**: health checks that control pod restarts and Service membership.
+- **Resource requests/limits**: scheduling hints and runtime caps for CPU, memory, and GPU.
+
+## Further Reading
+
+- [Kubernetes Documentation — Concepts](https://kubernetes.io/docs/concepts/)
+- [Kubernetes Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+- [Managing Resources for Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
+- [NVIDIA GPU Operator on Kubernetes](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html)

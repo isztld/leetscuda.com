@@ -47,6 +47,12 @@ export function Navbar() {
           >
             Roadmap
           </Link>
+          <Link
+            href="/learn"
+            className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+          >
+            Learn
+          </Link>
         </div>
 
         {/* Auth */}

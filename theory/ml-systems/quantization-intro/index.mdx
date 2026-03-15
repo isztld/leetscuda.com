@@ -1,0 +1,133 @@
+---
+slug: quantization-intro
+title: Model Quantization
+track: ml-systems
+type: concept
+tags:
+  - quantization
+  - int8
+  - fp16
+  - bf16
+  - memory
+  - throughput
+status: published
+author: team
+---
+
+# Model Quantization
+
+Quantization reduces the numerical precision of model weights (and optionally activations) from high-precision floats (FP32, FP16) to lower-precision integers (INT8, INT4, NF4). This shrinks model size, increases throughput, and reduces memory bandwidth pressure — all critical for production LLM serving.
+
+## Why Quantize?
+
+Modern LLMs are memory-bandwidth-bound during decode (batch=1 per sequence). The GPU spends most of its time reading weight matrices from HBM. If weights are stored in FP16 (2 bytes), an A100 with 2 TB/s HBM bandwidth can read ~1 TB of weights per second. Storing weights in INT8 (1 byte) doubles the effective bandwidth to 2 TB/s — halving decode latency for free, with minimal accuracy loss.
+
+Secondary benefits:
+- **Memory footprint**: INT8 cuts model size by 2× vs FP16, enabling larger models on fewer GPUs.
+- **Throughput**: larger batch sizes fit in HBM when each weight is half the size.
+- **Tensor Core utilization**: NVIDIA GPUs have INT8 and INT4 Tensor Cores that operate at 2× and 4× the FLOP/s of FP16 Tensor Cores.
+
+## Floating-Point Formats
+
+Before discussing quantization, it helps to understand the precision formats in play:
+
+| Format | Bits | Sign | Exponent | Mantissa | Range |
+|--------|------|------|----------|----------|-------|
+| FP32 | 32 | 1 | 8 | 23 | ±3.4×10³⁸ |
+| FP16 | 16 | 1 | 5 | 10 | ±65,504 |
+| BF16 | 16 | 1 | 8 | 7 | ±3.4×10³⁸ |
+| FP8 (E4M3) | 8 | 1 | 4 | 3 | ±448 |
+| INT8 | 8 | 1 | — | 7 | −128 to 127 |
+| INT4 | 4 | 1 | — | 3 | −8 to 7 |
+
+**BF16** (Brain Float 16) has become the standard training format because it has the same exponent range as FP32 (reducing overflow/underflow) while halving memory usage. **FP8** is the new frontier for training and inference at H100 scale.
+
+## Post-Training Quantization (PTQ)
+
+PTQ applies quantization to a fully trained FP16/BF16 model without retraining. It is the most practical approach for production serving.
+
+### Weight-Only Quantization (W8A16, W4A16)
+
+The simplest scheme: quantize weights to INT8 or INT4 but keep activations in FP16. At runtime, weights are dequantized back to FP16 before each matrix multiply, so computation happens in FP16.
+
+This is sometimes called "quantize-store, dequantize-compute." It reduces memory traffic (the bottleneck for decode) at the cost of a small dequantization overhead per layer.
+
+**GPTQ** (Frantar et al., 2023) is the dominant PTQ algorithm for W4A16. It uses second-order gradient information (the Hessian) to minimize quantization error for each weight row:
+
+```python
+# Conceptual GPTQ quantization
+for layer in model.layers:
+    W = layer.weight  # [out_features, in_features]
+    H = compute_hessian(W, calibration_data)
+    W_quantized = gptq_quantize(W, H, bits=4)
+    layer.weight = W_quantized
+```
+
+### Weight-and-Activation Quantization (W8A8)
+
+Both weights and activations are quantized to INT8. GEMM (matrix multiply) runs entirely in INT8 using the GPU's INT8 Tensor Cores, accumulating into INT32. This achieves maximum throughput but requires careful handling of outliers in activation distributions.
+
+**LLM.int8()** (Dettmers et al., 2022) observed that transformer activations contain a small fraction of large-magnitude outliers that cause significant quantization error. Their solution: decompose the matrix multiply into two parts:
+- Large-magnitude columns (outliers): computed in FP16
+- Remaining columns: computed in INT8
+
+This mixed-precision approach achieves near-zero accuracy degradation with 8-bit weights.
+
+## Calibration
+
+PTQ requires a small calibration dataset (typically 128–512 samples from the training distribution) to determine the optimal quantization scale and zero-point for each weight matrix and activation tensor. The calibration determines the mapping:
+
+```
+x_quantized = round(x / scale) + zero_point
+x_dequantized = (x_quantized - zero_point) * scale
+```
+
+The scale maps the floating-point range [x_min, x_max] to the integer range [−128, 127] (INT8). Choosing the scale is critical — too wide a range wastes bits on rarely-used values; too narrow clips outliers and introduces large errors.
+
+## Quantization Formats in Production
+
+| Format | Where used | Accuracy loss | Speedup vs FP16 |
+|--------|-----------|--------------|----------------|
+| BF16 | Training, high-accuracy serving | None | 1× (baseline) |
+| FP16 | Standard inference | Negligible | 1× |
+| W8A16 | Memory-constrained serving | < 0.1% | 1.5–2× (decode) |
+| W8A8 | Maximum throughput | < 0.5% | 2–3× |
+| W4A16 (GPTQ) | Very large models | 0.5–2% | 2–4× (decode) |
+| W4A4 | Research frontier | 2–5% | 4–6× |
+
+## Inference with Quantized Models
+
+Popular serving frameworks support quantized models natively:
+
+```python
+# vLLM with GPTQ 4-bit model
+from vllm import LLM, SamplingParams
+
+llm = LLM(
+    model="TheBloke/Llama-2-70B-GPTQ",
+    quantization="gptq",
+    dtype="float16",
+)
+
+outputs = llm.generate(
+    ["Explain CUDA quantization in one paragraph."],
+    SamplingParams(max_tokens=200),
+)
+```
+
+## Key Concepts
+
+- **Quantization**: mapping high-precision floats to low-precision integers to reduce memory footprint and bandwidth.
+- **Post-training quantization (PTQ)**: applied after training; no retraining required; fast to apply.
+- **Weight-only (W8A16, W4A16)**: weights quantized, activations in FP16; best for decode-latency reduction.
+- **Weight+activation (W8A8)**: full INT8 GEMM; maximum throughput gain; requires outlier handling.
+- **GPTQ**: Hessian-based PTQ algorithm; achieves 4-bit quantization with minimal accuracy loss.
+- **Calibration**: a small dataset used to compute optimal quantization scales per tensor.
+
+## Further Reading
+
+- [GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (Frantar et al., 2023)](https://arxiv.org/abs/2210.17323)
+- [LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale (Dettmers et al., 2022)](https://arxiv.org/abs/2208.07339)
+- [SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models (Xiao et al., 2023)](https://arxiv.org/abs/2211.10438)
+- [FP8 Formats for Deep Learning (Micikevicius et al., 2022)](https://arxiv.org/abs/2209.05433)
+- [Hugging Face Quantization docs](https://huggingface.co/docs/transformers/quantization)

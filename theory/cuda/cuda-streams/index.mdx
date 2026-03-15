@@ -1,0 +1,176 @@
+---
+slug: cuda-streams
+title: CUDA Streams & Async Transfers
+track: cuda
+type: concept
+tags:
+  - streams
+  - async
+  - concurrency
+  - overlap
+  - events
+status: published
+author: team
+---
+
+# CUDA Streams & Async Transfers
+
+CUDA streams enable concurrent execution of kernels and memory transfers — a critical technique for hiding PCIe transfer latency and achieving higher GPU utilisation. A **stream** is an ordered queue of GPU operations that execute in issue order but may overlap with operations in other streams.
+
+## Why Streams Matter
+
+Without streams, a typical CUDA program serialises:
+1. Copy H→D (host-to-device)
+2. Run kernel
+3. Copy D→H (device-to-host)
+
+Each stage must complete before the next begins. On a system with an H100 connected via PCIe Gen5 x16 (64 GB/s bidirectional), copying 1 GB takes ~15 ms. If your kernel also takes 15 ms, the total is 45 ms — but with async overlap, it could be as low as 20 ms.
+
+Modern GPUs have separate engines for kernel execution, H2D DMA, and D2H DMA. These engines can run **simultaneously** — a kernel can execute while the DMA engine transfers data for the next batch.
+
+## The Default Stream
+
+Every CUDA operation you issue without specifying a stream goes into the **default stream** (stream 0). Operations in the default stream are synchronising: they block until all preceding operations on the device complete, and subsequent operations wait for the default stream operation to finish. This makes the default stream safe but eliminates all overlap opportunity.
+
+## Creating and Using Streams
+
+```cpp
+cudaStream_t stream1, stream2;
+cudaStreamCreate(&stream1);
+cudaStreamCreate(&stream2);
+
+// Issue work into specific streams
+cudaMemcpyAsync(d_a, h_a, bytes, cudaMemcpyHostToDevice, stream1);
+kernel<<<grid, block, 0, stream1>>>(d_a, N);
+cudaMemcpyAsync(h_out, d_a, bytes, cudaMemcpyDeviceToHost, stream1);
+
+// Destroy when done
+cudaStreamDestroy(stream1);
+cudaStreamDestroy(stream2);
+```
+
+`cudaMemcpyAsync` requires the host buffer to be **pinned memory** (allocated with `cudaMallocHost` or `cudaHostAlloc`) — pageable memory cannot be transferred asynchronously because the OS may swap it out.
+
+```cpp
+float* h_pinned;
+cudaMallocHost(&h_pinned, bytes); // pinned (page-locked) host memory
+```
+
+## Pipelining with Multiple Streams
+
+The classic pipelining pattern divides data into chunks and interleaves H2D, compute, and D2H across multiple streams:
+
+```cpp
+const int NSTREAMS = 4;
+const int chunkSize = N / NSTREAMS;
+cudaStream_t streams[NSTREAMS];
+for (int i = 0; i < NSTREAMS; i++) cudaStreamCreate(&streams[i]);
+
+for (int i = 0; i < NSTREAMS; i++) {
+    int offset = i * chunkSize;
+    // H2D for chunk i
+    cudaMemcpyAsync(d_in + offset, h_in + offset,
+                    chunkSize * sizeof(float),
+                    cudaMemcpyHostToDevice, streams[i]);
+    // Compute on chunk i
+    process_kernel<<<gridChunk, block, 0, streams[i]>>>(
+        d_in + offset, d_out + offset, chunkSize);
+    // D2H for chunk i
+    cudaMemcpyAsync(h_out + offset, d_out + offset,
+                    chunkSize * sizeof(float),
+                    cudaMemcpyDeviceToHost, streams[i]);
+}
+
+// Wait for all streams to complete
+cudaDeviceSynchronize();
+for (int i = 0; i < NSTREAMS; i++) cudaStreamDestroy(streams[i]);
+```
+
+With enough chunks, the GPU pipeline looks like:
+
+```
+Time →
+Stream 0: [H2D_0][Kernel_0][D2H_0]
+Stream 1:         [H2D_1][Kernel_1][D2H_1]
+Stream 2:                 [H2D_2][Kernel_2][D2H_2]
+Stream 3:                         [H2D_3][Kernel_3][D2H_3]
+```
+
+The DMA engines and compute engines overlap, reducing idle time.
+
+## CUDA Events
+
+**Events** are synchronisation markers that can be inserted into a stream and queried or waited on:
+
+```cpp
+cudaEvent_t start, stop;
+cudaEventCreate(&start);
+cudaEventCreate(&stop);
+
+cudaEventRecord(start, stream1); // record into stream
+kernel<<<grid, block, 0, stream1>>>(args...);
+cudaEventRecord(stop, stream1);
+
+cudaEventSynchronize(stop); // block host until stop event fires
+float ms;
+cudaEventElapsedTime(&ms, start, stop);
+printf("Kernel time: %.3f ms\n", ms);
+
+cudaEventDestroy(start);
+cudaEventDestroy(stop);
+```
+
+Events are also used for **cross-stream synchronisation**:
+
+```cpp
+cudaEvent_t dataReady;
+cudaEventCreate(&dataReady);
+
+// Stream 1 produces data
+produce_kernel<<<grid, block, 0, stream1>>>(d_data);
+cudaEventRecord(dataReady, stream1);
+
+// Stream 2 waits for stream 1's event before consuming
+cudaStreamWaitEvent(stream2, dataReady, 0);
+consume_kernel<<<grid, block, 0, stream2>>>(d_data);
+```
+
+`cudaStreamWaitEvent` inserts a dependency in the stream's hardware queue without blocking the host thread.
+
+## Concurrency Limits
+
+Even with multiple streams, concurrent execution is constrained by hardware resources:
+
+- **Kernel concurrency**: modern GPUs support up to 128 concurrent kernels (GPU Multi-Process Service aside). Small kernels that don't saturate the SM benefit most from concurrent execution.
+- **DMA concurrency**: there is typically one H2D DMA engine and one D2H DMA engine, so you can overlap one H2D and one D2H transfer simultaneously.
+- **PCIe bandwidth**: all streams share the PCIe bus; issuing many H2D transfers simultaneously does not increase total bandwidth.
+
+Verify overlap with Nsight Systems (`nsys profile`), which shows streams as rows in the GPU timeline.
+
+## Synchronisation Options
+
+| Call | Blocks | Scope |
+|------|--------|-------|
+| `cudaDeviceSynchronize()` | Host | All operations on all streams |
+| `cudaStreamSynchronize(s)` | Host | All operations in stream `s` |
+| `cudaEventSynchronize(e)` | Host | Until event `e` fires |
+| `cudaStreamWaitEvent(s,e)` | GPU stream | Stream `s` waits for event `e` |
+| `__threadfence()` | GPU thread | Memory visibility within device |
+
+## Key Concepts
+
+- **Stream**: an ordered queue of GPU operations; operations in different streams may overlap.
+- **Default stream**: serialises all operations; safe but eliminates concurrency.
+- **Pinned memory**: page-locked host memory required for `cudaMemcpyAsync`; allocated with `cudaMallocHost`.
+- **Pipelining**: divide data into chunks, interleave H2D/compute/D2H across streams to overlap engines.
+- **CUDA Event**: a timestamp that can be recorded in a stream, queried for elapsed time, or used for cross-stream synchronisation.
+- **`cudaStreamWaitEvent`**: GPU-side dependency (no host block); preferred for producer-consumer patterns.
+
+## Further Reading
+
+- [CUDA C++ Programming Guide — Streams](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#streams)
+- [CUDA Best Practices Guide — Asynchronous Transfers](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#asynchronous-transfers-and-overlapping-transfers-with-computation)
+- [Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html)
+- [CUDA Sample: simpleStreams](https://github.com/NVIDIA/cuda-samples/tree/master/Samples/0_Introduction/simpleStreams)
+
+> Content adapted from the [Modal GPU Glossary](https://github.com/modal-labs/gpu-glossary) under MIT license.

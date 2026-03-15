@@ -289,6 +289,62 @@ For C++ problems omit `cuda_version` and `compute_cap`.
 
 ---
 
+## Adding theory content
+
+Theory pages live at `/learn/{slug}` and are powered by MDX files in `theory/` at the monorepo root.
+
+### Directory structure
+
+```
+theory/
+  cuda/
+    cuda-intro/index.mdx
+    cuda-threads/index.mdx
+    cuda-memory/index.mdx
+    cuda-streams/index.mdx
+  ml-systems/
+    ml-inference-basics/index.mdx
+    quantization-intro/index.mdx
+  kubernetes-ai/
+    k8s-basics/index.mdx
+    gpu-operator/index.mdx
+  foundations/
+    memory-model/index.mdx
+    simd-basics/index.mdx
+    profiling-basics/index.mdx
+```
+
+### Frontmatter schema
+
+```yaml
+---
+slug: cuda-intro
+title: Introduction to CUDA
+track: cuda
+type: concept
+tags:
+  - gpu
+  - programming-model
+status: published
+author: team
+---
+```
+
+Required fields: `slug`, `title`, `track`, `type` (must be `concept`), `status` (`published` or `draft`).
+
+### Adding a new theory page
+
+1. Create `theory/{track}/{slug}/index.mdx` with the correct frontmatter
+2. The `slug` must match an existing `CONCEPT` `RoadmapNode` slug in `apps/web/prisma/seed.ts`
+3. Run `pnpm theory:sync` to validate frontmatter and verify all CONCEPT nodes are covered
+4. On merge to main, the page is immediately available at `/learn/{slug}`
+
+```bash
+pnpm --filter @leetscuda/web theory:sync
+```
+
+---
+
 ## Judge node setup
 
 Judge nodes are standalone processes that poll the web API for jobs, compile and run code in an isolated Docker sandbox, and POST results back. They have **zero** direct database or Redis access.

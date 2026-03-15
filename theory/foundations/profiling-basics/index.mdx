@@ -1,0 +1,170 @@
+---
+slug: profiling-basics
+title: Profiling GPU Code
+track: foundations
+type: concept
+tags:
+  - profiling
+  - nsight
+  - nsys
+  - ncu
+  - performance
+  - bottlenecks
+status: published
+author: team
+---
+
+# Profiling GPU Code
+
+Writing a correct CUDA kernel is the first step. Making it fast requires measurement. NVIDIA provides two primary profiling tools: **Nsight Systems** for system-level timeline analysis and **Nsight Compute** for kernel-level roofline and micro-architectural analysis. Using them together reveals whether your kernel is memory-bandwidth-bound, compute-bound, or suffering from latency penalties, warp stalls, or occupancy problems.
+
+## The Two Tools
+
+| Tool | Focus | Output |
+|------|-------|--------|
+| **Nsight Systems** (`nsys`) | System timeline: CPU, GPU, memory transfers, API calls | Timeline view (`.nsys-rep`) |
+| **Nsight Compute** (`ncu`) | Per-kernel micro-architecture: roofline, memory throughput, warp stalls | Metric tables, roofline chart |
+
+**Always start with Nsight Systems** to identify which kernel is the bottleneck and to see if CPU or PCIe transfer time dominates. Then use Nsight Compute on the specific bottleneck kernel.
+
+## Nsight Systems — System Timeline
+
+```bash
+# Profile an entire application
+nsys profile --trace=cuda,nvtx,osrt \
+             --output=profile.nsys-rep \
+             ./my_cuda_app
+
+# Open in GUI
+nsys-ui profile.nsys-rep
+
+# Or generate a text report
+nsys stats profile.nsys-rep
+```
+
+The timeline view shows:
+- **CUDA API calls** on the CPU row (cudaMalloc, cudaMemcpy, kernel launches)
+- **GPU kernels** with duration on the GPU compute row
+- **Memory transfers** (H2D, D2H, D2D) on the DMA row
+- **NVTX ranges** (custom annotations) for correlation with application logic
+
+**NVTX annotations** mark regions of interest:
+
+```cpp
+#include <nvtx3/nvToolsExt.h>
+
+nvtxRangePush("matrix_multiply");
+matrix_multiply<<<grid, block>>>(A, B, C, N);
+cudaDeviceSynchronize();
+nvtxRangePop();
+```
+
+NVTX ranges appear colour-coded on the timeline, making it easy to see which application phase corresponds to which GPU activity.
+
+### What to Look For in Nsight Systems
+
+1. **Transfer gaps**: are there idle periods on the GPU while the CPU transfers data? Consider overlapping with streams.
+2. **Serial kernels**: are multiple kernels executing sequentially when they could overlap in different streams?
+3. **CPU bottleneck**: is the GPU idle because the CPU is preparing data or running Python? Profile the CPU row.
+4. **Long cudaMalloc calls**: repeated `cudaMalloc` in the hot path adds latency; pre-allocate or use a memory pool.
+
+## Nsight Compute — Kernel Deep Dive
+
+```bash
+# Profile a specific kernel with default metrics
+ncu --target-processes all \
+    --kernel-name my_kernel \
+    --output profile.ncu-rep \
+    ./my_cuda_app
+
+# Open in GUI
+ncu-ui profile.ncu-rep
+
+# Or print to console (reduced metric set)
+ncu --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed,\
+l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum.per_second \
+    ./my_cuda_app
+```
+
+Nsight Compute replays the kernel **multiple times** (once per metric collection pass) which can make profiling slow for long-running kernels. Use `--kernel-name` and `--launch-skip` to narrow to the kernel you care about.
+
+### Roofline Analysis
+
+The **roofline chart** in Nsight Compute plots your kernel's achieved FLOP/s against its arithmetic intensity (FLOP/byte). Two roof lines bound performance:
+
+- **Compute roof**: peak FLOP/s of the GPU (e.g., 312 TFLOP/s FP16 on H100)
+- **Memory bandwidth roof**: peak_FLOP/s = peak_BW × arithmetic_intensity (e.g., 3.35 TB/s × intensity)
+
+If your kernel sits below the memory bandwidth roof, it is **memory-bound** — increasing compute (more FMAs) won't help; you need to reduce bytes read or increase data reuse. If it sits below the compute roof, it is **compute-bound** — increase arithmetic intensity or reduce wasted arithmetic.
+
+Most LLM decode kernels at batch size 1 are heavily memory-bound (arithmetic intensity < 1 FLOP/byte).
+
+### Warp Stall Analysis
+
+Warp stalls occur when a warp cannot issue an instruction. Common stall reasons:
+
+| Stall reason | Cause | Fix |
+|-------------|-------|-----|
+| `Long Scoreboard` | Waiting for global memory load | Increase occupancy; prefetch; cache hits |
+| `Short Scoreboard` | Waiting for shared memory or L1 | Reduce bank conflicts; pipeline loads |
+| `No Instruction` | Warp has no ready instruction | Instruction cache miss; reduce register pressure |
+| `Barrier` | Waiting at `__syncthreads()` | Minimise unnecessary barriers |
+| `Memory Throttle` | Memory pipeline saturated | Reduce memory transactions |
+
+```bash
+# Collect warp stall metrics
+ncu --metrics \
+    smsp__average_warp_latency_due_to_long_scoreboard.ratio,\
+    smsp__average_warp_latency_due_to_barrier.ratio \
+    ./my_cuda_app
+```
+
+### Memory Throughput
+
+Nsight Compute shows achieved vs peak memory bandwidth for global, shared, and L1/L2:
+
+- **Global memory load throughput**: should approach HBM peak (3.35 TB/s for H100) for bandwidth-bound kernels
+- **L1 hit rate**: high hit rate means data is reused within an SM; low hit rate means every access goes to L2 or HBM
+- **Shared memory bank conflicts**: should be near 0 for optimised kernels
+
+### Occupancy
+
+Nsight Compute reports:
+- **Theoretical occupancy**: maximum possible given kernel resources (registers, shared mem)
+- **Achieved occupancy**: actual average warps active / max warps, measured during execution
+
+Low occupancy (< 25%) is often a red flag. Check:
+- Register usage with `nvcc -Xptxas -v` — high register counts limit warps per SM
+- Shared memory allocation — large dynamic shared memory allocations limit block count
+
+## Workflow Summary
+
+```
+1. nsys profile → find the slow kernel
+2. ncu on that kernel → roofline: compute-bound or memory-bound?
+3. If memory-bound:
+   - Check global memory efficiency (coalescing)
+   - Check L1/L2 hit rates (data reuse)
+   - Check shared memory usage (tiling opportunities)
+4. If compute-bound:
+   - Check warp stalls (instruction-level bottlenecks)
+   - Check Tensor Core utilization (use WMMA/cuBLAS for GEMM)
+5. Iterate: change kernel, re-profile, verify improvement
+```
+
+## Key Concepts
+
+- **Nsight Systems**: system-level timeline; reveals CPU/GPU overlap, transfer bottlenecks, kernel sequence.
+- **Nsight Compute**: kernel-level deep dive; roofline, warp stalls, memory throughput, occupancy.
+- **Roofline**: plots achieved FLOP/s vs arithmetic intensity to determine if a kernel is compute- or memory-bound.
+- **Warp stall**: a warp cannot issue an instruction; `Long Scoreboard` (global memory miss) is the most common.
+- **NVTX**: custom profiling annotations that appear on the Nsight Systems timeline.
+- **Occupancy**: ratio of active warps to max warps per SM; limited by registers and shared memory.
+
+## Further Reading
+
+- [Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html)
+- [Nsight Compute User Guide](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html)
+- [CUDA Best Practices Guide — Performance Metrics](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#performance-metrics)
+- [How to Implement Performance Metrics (NVIDIA blog)](https://developer.nvidia.com/blog/how-implement-performance-metrics-cuda-cc/)
+- [Kernel Profiling Guide (Nsight Compute)](https://docs.nvidia.com/nsight-compute/KernelProfilingGuide/index.html)
