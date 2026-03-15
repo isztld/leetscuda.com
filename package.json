@@ -1,0 +1,22 @@
+{
+  "name": "leetscuda",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @leetscuda/web dev",
+    "build": "pnpm --filter @leetscuda/web build",
+    "lint": "pnpm --filter @leetscuda/web lint"
+  },
+  "engines": {
+    "node": ">=18.17.0",
+    "pnpm": ">=8.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "unrs-resolver"
+    ]
+  }
+}
