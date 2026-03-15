@@ -1,19 +1,23 @@
 'use client'
 
+import { useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { trpc } from '@/lib/trpc/client'
 
-export function MarkReadButton({ slug, isRead }: { slug: string; isRead: boolean }) {
+export function MarkReadButton({ slug, isRead: initialIsRead }: { slug: string; isRead: boolean }) {
   const { status } = useSession()
+  const [isRead, setIsRead] = useState(initialIsRead)
   const utils = trpc.useUtils()
 
   const { mutate, isPending } = trpc.roadmap.markConceptRead.useMutation({
     onSuccess: () => {
+      setIsRead(true)
       utils.roadmap.getUserProgress.invalidate()
     },
   })
 
   if (status !== 'authenticated') return null
+
   if (isRead) {
     return (
       <div className="flex items-center gap-1.5 text-sm text-emerald-600 font-medium">

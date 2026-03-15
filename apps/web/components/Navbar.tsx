@@ -3,10 +3,22 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { useSession, signOut } from 'next-auth/react'
+import { usePathname } from 'next/navigation'
 import { useState, useRef, useEffect } from 'react'
+
+function navClass(pathname: string, href: string) {
+  const active = pathname === href || (href !== '/' && pathname.startsWith(href))
+  return [
+    'text-sm px-3 py-1.5 rounded-lg transition-colors',
+    active
+      ? 'text-slate-900 font-medium bg-slate-100'
+      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50',
+  ].join(' ')
+}
 
 export function Navbar() {
   const { data: session } = useSession()
+  const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -35,22 +47,13 @@ export function Navbar() {
 
         {/* Nav links */}
         <div className="flex items-center gap-1 flex-1">
-          <Link
-            href="/problems"
-            className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
-          >
+          <Link href="/problems" className={navClass(pathname, '/problems')}>
             Problems
           </Link>
-          <Link
-            href="/roadmap"
-            className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
-          >
+          <Link href="/roadmap" className={navClass(pathname, '/roadmap')}>
             Roadmap
           </Link>
-          <Link
-            href="/learn"
-            className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
-          >
+          <Link href="/learn" className={navClass(pathname, '/learn')}>
             Learn
           </Link>
         </div>
