@@ -4,6 +4,12 @@ const nextConfig = {
   serverExternalPackages: ['marked', 'highlight.js'],
   // Allow Tailscale / LAN dev access
   allowedDevOrigins: ['100.101.56.41'],
+  images: {
+    remotePatterns: [
+      { hostname: 'avatars.githubusercontent.com' },
+      { hostname: 'lh3.googleusercontent.com' },
+    ],
+  },
 }
 
 export default nextConfig
