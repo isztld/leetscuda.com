@@ -85,14 +85,14 @@ void solve(const float* h_a, const float* h_b, float* h_c, int n) {
 
 ---test-cases---
 - name: "Small vectors"
-  input: "n=4\na=[1.0, 2.0, 3.0, 4.0]\nb=[10.0, 20.0, 30.0, 40.0]"
-  expected: "[11.0, 22.0, 33.0, 44.0]"
+  input: "4\n1.0 2.0 3.0 4.0\n10.0 20.0 30.0 40.0"
+  expected: "11.0 22.0 33.0 44.0"
 - name: "All zeros"
-  input: "n=3\na=[0.0, 0.0, 0.0]\nb=[0.0, 0.0, 0.0]"
-  expected: "[0.0, 0.0, 0.0]"
-- name: "Non-multiple of block size"
-  input: "n=513\na=[1.0, ...]\nb=[2.0, ...]"
-  expected: "[3.0, ...]"
+  input: "3\n0.0 0.0 0.0\n0.0 0.0 0.0"
+  expected: "0.0 0.0 0.0"
+- name: "Not multiple of block size"
+  input: "5\n1.0 1.0 1.0 1.0 1.0\n2.0 2.0 2.0 2.0 2.0"
+  expected: "3.0 3.0 3.0 3.0 3.0"
 
 ---solution---
 __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
@@ -100,4 +100,26 @@ __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
     if (i < n) {
         c[i] = a[i] + b[i];
     }
+}
+
+---harness---
+#include <cstdio>
+#include <vector>
+
+int main() {
+    int n;
+    if (scanf("%d", &n) != 1) return 1;
+
+    std::vector<float> a(n), b(n), c(n);
+    for (int i = 0; i < n; i++) scanf("%f", &a[i]);
+    for (int i = 0; i < n; i++) scanf("%f", &b[i]);
+
+    solve(a.data(), b.data(), c.data(), n);
+
+    for (int i = 0; i < n; i++) {
+        if (i) printf(" ");
+        printf("%.1f", c[i]);
+    }
+    printf("\n");
+    return 0;
 }

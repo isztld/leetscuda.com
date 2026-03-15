@@ -14,7 +14,7 @@ async function runJob(job: JudgeJob): Promise<JudgeResult> {
   let firstStderr = ''
 
   for (const tc of job.testCases) {
-    const sandboxResult = await runInSandbox(job.code, tc.input, {
+    const sandboxResult = await runInSandbox(job.code + '\n' + job.harness, tc.input, {
       runtime: job.runtime,
       cppStandard: job.cppStandard,
       cudaVersion: job.cudaVersion,

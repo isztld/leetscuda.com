@@ -116,11 +116,11 @@ async function runDocker(
     }
   }
 
-  // Run
+  // Run — use --entrypoint to bypass the CUDA container's banner-printing entrypoint script
   const start = Date.now()
   const runResult = await runProcess(
     'docker',
-    [...dockerBaseArgs, '--stop-timeout', String(Math.ceil(opts.timeoutMs / 1000)), '-i', '-v', `${hostTmpDir}:/work`, '-w', '/work', image, './solution'],
+    [...dockerBaseArgs, '--entrypoint', '/work/solution', '--stop-timeout', String(Math.ceil(opts.timeoutMs / 1000)), '-i', '-v', `${hostTmpDir}:/work`, '-w', '/work', image],
     input,
     opts.timeoutMs,
   )

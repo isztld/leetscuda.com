@@ -87,9 +87,11 @@ export async function GET(req: NextRequest) {
 
   // 7. Load test cases from MDX (server has access to the problems directory)
   let testCases: { input: string; expected: string }[] = []
+  let harness = ''
   try {
     const content = await loadProblemContent(submission.problem.track.slug, job.problemSlug)
     testCases = content.testCases.map(({ input, expected }) => ({ input, expected }))
+    harness = content.harness
   } catch (err) {
     // If we can't load test cases, mark the submission as error and return 204
     await prisma.submission.update({
@@ -106,6 +108,7 @@ export async function GET(req: NextRequest) {
     submissionId: job.submissionId,
     problemSlug: job.problemSlug,
     code: job.code,
+    harness,
     language: 'cpp',
     runtime: job.runtime ?? 'cpp',
     cppStandard: job.cppStandard ?? '17',

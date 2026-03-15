@@ -9,6 +9,7 @@ export const JudgeJobSchema = z.object({
   submissionId: z.string(),
   problemSlug: z.string(),
   code: z.string(),
+  harness: z.string(),
   language: z.literal('cpp'),
   runtime: z.enum(['cpp', 'cuda']),
   cppStandard: z.enum(['14', '17', '20', '23']),
