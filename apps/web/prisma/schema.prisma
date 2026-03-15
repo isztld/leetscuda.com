@@ -120,6 +120,7 @@ model User {
   createdAt     DateTime       @default(now())
   submissions   Submission[]
   progress      UserProgress[]
+  conceptReads  ConceptRead[]
   comments      Comment[]
   accounts      Account[]
   sessions      Session[]
@@ -185,6 +186,16 @@ model UserProgress {
   attempts  Int      @default(1)
 
   @@unique([userId, problemId])
+}
+
+model ConceptRead {
+  id       String   @id @default(cuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nodeSlug String
+  readAt   DateTime @default(now())
+
+  @@unique([userId, nodeSlug])
 }
 
 model RoadmapNode {

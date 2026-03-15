@@ -23,13 +23,24 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     signIn: '/signin',
   },
   callbacks: {
-    jwt({ token, user, trigger, session }) {
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         // Runs once at sign-in; user comes from the DB via PrismaAdapter
         token.username = (user as { username?: string | null }).username ?? null
+        return token
       }
       if (trigger === 'update' && session?.username !== undefined) {
         token.username = session.username as string | null
+        return token
+      }
+      // On every subsequent token refresh, verify the user still exists in the DB.
+      // Returns null to clear the session cookie if the account has been deleted.
+      if (token.sub) {
+        const exists = await prisma.user.findUnique({
+          where: { id: token.sub },
+          select: { id: true },
+        })
+        if (!exists) return null
       }
       return token
     },

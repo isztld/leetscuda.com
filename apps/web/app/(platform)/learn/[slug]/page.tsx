@@ -1,7 +1,9 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
+import { auth } from '@/lib/auth'
 import { loadTheoryContent, extractHeadings, addHeadingIds } from '@/lib/theory-content'
+import { MarkReadButton } from './MarkReadButton'
 import type { Metadata } from 'next'
 
 interface Props {
@@ -11,6 +13,8 @@ interface Props {
 export default async function LearnPage({ params }: Props) {
   const { slug } = await params
 
+  const session = await auth()
+
   const node = await prisma.roadmapNode.findUnique({
     where: { slug },
     include: { track: true },
@@ -18,12 +22,20 @@ export default async function LearnPage({ params }: Props) {
 
   if (!node || node.type !== 'CONCEPT') notFound()
 
-  const trackNodes = await prisma.roadmapNode.findMany({
-    where: { trackId: node.trackId, type: 'CONCEPT' },
-    orderBy: { order: 'asc' },
-  })
+  const [trackNodes, content, existingRead] = await Promise.all([
+    prisma.roadmapNode.findMany({
+      where: { trackId: node.trackId, type: 'CONCEPT' },
+      orderBy: { order: 'asc' },
+    }),
+    loadTheoryContent(node.track.slug, slug),
+    session?.user?.id
+      ? prisma.conceptRead.findUnique({
+          where: { userId_nodeSlug: { userId: session.user.id, nodeSlug: slug } },
+        })
+      : null,
+  ])
 
-  const content = await loadTheoryContent(node.track.slug, slug)
+  const isRead = existingRead !== null
 
   const currentIndex = trackNodes.findIndex((n) => n.slug === slug)
   const prevNode = currentIndex > 0 ? trackNodes[currentIndex - 1] : null
@@ -128,9 +140,14 @@ export default async function LearnPage({ params }: Props) {
             )}
 
             {/* Page title */}
-            <h1 className="text-3xl font-bold text-slate-900 mb-3 leading-tight">
-              {node.title}
-            </h1>
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <h1 className="text-3xl font-bold text-slate-900 leading-tight">
+                {node.title}
+              </h1>
+              <div className="shrink-0 mt-1">
+                <MarkReadButton slug={slug} isRead={isRead} />
+              </div>
+            </div>
 
             {/* Tags */}
             {content?.meta.tags && content.meta.tags.length > 0 && (
