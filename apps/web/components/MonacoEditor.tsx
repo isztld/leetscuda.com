@@ -1,7 +1,18 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import { loader } from '@monaco-editor/react'
 import type { OnChange, OnMount } from '@monaco-editor/react'
+
+// Suppress Monaco's internal CancellationError — thrown whenever an async
+// Monaco operation is interrupted (unmount, tab switch, navigation). React 19's
+// error overlay surfaces this as a visible error even though it's harmless.
+// Guard with typeof window: 'use client' modules still evaluate on the server.
+if (typeof window !== 'undefined') {
+  loader.init().catch((e: unknown) => {
+    if ((e as Error)?.message !== 'Canceled') throw e
+  })
+}
 
 const Editor = dynamic(() => import('@monaco-editor/react'), {
   ssr: false,
