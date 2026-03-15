@@ -21,6 +21,7 @@ export interface SandboxResult {
   stderr: string
   exitCode: number
   runtimeMs: number
+  timedOut?: boolean
 }
 
 const DOCKER_IMAGES: Record<string, string> = {
@@ -90,8 +91,16 @@ async function runDocker(
     : ['g++', `-std=c++${opts.cppStandard}`, '-O2', '-o', 'solution', srcFile]
 
   const dockerBaseArgs = isCuda
-    ? ['run', '--rm', '--network', 'none', '--memory', '512m', '--gpus', 'device=0', '--ulimit', 'nproc=128']
-    : ['run', '--rm', '--network', 'none', '--memory', '256m', '--cpus', '0.5', '--ulimit', 'nproc=64']
+    ? [
+        'run', '--rm', '--network', 'none', '--memory', '512m',
+        '--gpus', 'device=0', '--ulimit', 'nproc=128',
+        '--label', 'leetscuda-judge=1',
+      ]
+    : [
+        'run', '--rm', '--network', 'none', '--memory', '256m',
+        '--cpus', '0.5', '--ulimit', 'nproc=64',
+        '--label', 'leetscuda-judge=1',
+      ]
 
   // When running inside Docker with the host Docker socket, volume mounts must use
   // the host-side path. JUDGE_HOST_TMP_DIR maps the container's tmp dir to its host path.
@@ -99,7 +108,7 @@ async function runDocker(
     ? path.join(env.hostTmpDir, opts.submissionId)
     : tmpDir
 
-  // Compile
+  // Compile — short-lived container, SIGKILL on 30s timeout is fine
   const compileResult = await runProcess(
     'docker',
     [...dockerBaseArgs, '-v', `${hostTmpDir}:/work`, '-w', '/work', image, ...compileCmd],
@@ -116,17 +125,45 @@ async function runDocker(
     }
   }
 
-  // Run — use --entrypoint to bypass the CUDA container's banner-printing entrypoint script
+  // Run — named container so we can do a two-phase SIGTERM/SIGKILL on timeout
+  const containerName = `lc-judge-${opts.submissionId}`
+  const runArgs = [
+    ...dockerBaseArgs,
+    '--name', containerName,
+    '--entrypoint', '/work/solution',
+    '-i',
+    '-v', `${hostTmpDir}:/work`,
+    '-w', '/work',
+    image,
+  ]
+
   const start = Date.now()
-  const runResult = await runProcess(
-    'docker',
-    [...dockerBaseArgs, '--entrypoint', '/work/solution', '--stop-timeout', String(Math.ceil(opts.timeoutMs / 1000)), '-i', '-v', `${hostTmpDir}:/work`, '-w', '/work', image],
-    input,
-    opts.timeoutMs,
+  // Give runProcess extra slack — we handle the real timeout externally via docker stop
+  const runPromise = runProcess('docker', runArgs, input, opts.timeoutMs + 30_000)
+  const timeoutP = new Promise<'TIMEOUT'>((resolve) =>
+    setTimeout(() => resolve('TIMEOUT'), opts.timeoutMs),
   )
+
+  const race = await Promise.race([
+    runPromise.then((r) => ({ tag: 'done' as const, ...r })),
+    timeoutP,
+  ])
   const runtimeMs = Date.now() - start
 
-  return { stdout: runResult.stdout, stderr: runResult.stderr, exitCode: runResult.exitCode, runtimeMs }
+  if (race === 'TIMEOUT') {
+    console.log(`[judge] TIMEOUT ${opts.submissionId} — SIGTERM sent, waiting 5s`)
+    try {
+      // docker stop: sends SIGTERM, waits --time seconds, then sends SIGKILL if still running
+      execSync(`docker stop --time 5 ${containerName}`, { stdio: 'ignore', timeout: 15_000 })
+    } catch {
+      // container may have already exited
+    }
+    // Drain the process promise to prevent unhandled rejection
+    await runPromise.catch(() => {})
+    return { stdout: '', stderr: '', exitCode: 124, runtimeMs, timedOut: true }
+  }
+
+  return { stdout: race.stdout, stderr: race.stderr, exitCode: race.exitCode, runtimeMs }
 }
 
 async function runDirect(
@@ -137,7 +174,6 @@ async function runDirect(
   const isCuda = opts.runtime === 'cuda'
   // Use absolute source path so nvcc's internal cc1plus subprocess can find the file
   // regardless of what CWD nvcc uses when it spawns subprocesses.
-  // Also pass cwd=tmpDir so nvcc can resolve its own relative temp-file references.
   const srcFile = path.join(tmpDir, isCuda ? 'solution.cu' : 'solution.cpp')
   const binFile = path.join(tmpDir, 'solution')
 

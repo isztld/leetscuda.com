@@ -14,6 +14,9 @@ import {
   SUBMISSION_STATUS_LABELS,
 } from '@/lib/constants'
 
+// Matches SUBMISSION_MAX_CODE_BYTES server-side default — used for the UI indicator only
+const MAX_CODE_BYTES = 16 * 1024
+
 interface Problem {
   id: string
   slug: string
@@ -38,6 +41,12 @@ type Tab = 'description' | 'discuss' | 'editorial'
 
 const POLL_MAX_MS = 60_000
 const POLL_MAX_FAILURES = 3
+const TERMINAL_STATUSES = ['ACCEPTED', 'WRONG_ANSWER', 'RUNTIME_ERROR', 'TIME_LIMIT', 'CANCELLED']
+
+function formatCodeSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
 
 function CopyCodeDescription({ html }: { html: string }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -94,7 +103,57 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
   const [isPolling, setIsPolling] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [pollError, setPollError] = useState<string | null>(null)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const [infoMsg, setInfoMsg] = useState<string | null>(null)
   const consecutivePollFailures = useRef(0)
+  const initializedFromLatest = useRef(false)
+
+  // On-mount: check if there's already a pending/running submission
+  const { data: latestSubmission } = trpc.submission.getLatestForProblem.useQuery(
+    { problemSlug: problem.slug },
+    { enabled: !!session, staleTime: 0 },
+  )
+
+  useEffect(() => {
+    if (initializedFromLatest.current) return
+    if (!latestSubmission) return
+    initializedFromLatest.current = true
+    if (latestSubmission.status === 'PENDING' || latestSubmission.status === 'RUNNING') {
+      setSubmissionId(latestSubmission.submissionId)
+      setIsPolling(true)
+      setDrawerOpen(true)
+      consecutivePollFailures.current = 0
+    }
+  }, [latestSubmission])
+
+  // Daily submission count
+  const { data: dailyCount } = trpc.submission.getDailyCount.useQuery(undefined, {
+    enabled: !!session,
+  })
+
+  const isLimitReached = !!(
+    dailyCount &&
+    !dailyCount.unlimited &&
+    dailyCount.limit > 0 &&
+    dailyCount.used >= dailyCount.limit
+  )
+
+  const cancelMutation = trpc.submission.cancel.useMutation({
+    onSuccess(data) {
+      if (data.cancelled) {
+        setDrawerOpen(false)
+        setSubmissionId(null)
+        setIsPolling(false)
+        setCancelError(null)
+        setInfoMsg('Submission cancelled')
+        setTimeout(() => setInfoMsg(null), 3000)
+      } else {
+        setCancelError(
+          `Could not cancel — submission is already ${(data.currentStatus as string).toLowerCase().replace('_', ' ')}`,
+        )
+      }
+    },
+  })
 
   const createMutation = trpc.submission.create.useMutation({
     onSuccess(data) {
@@ -103,14 +162,48 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
       setDrawerOpen(true)
       setSubmitError(null)
       setPollError(null)
+      setCancelError(null)
+      setInfoMsg(null)
       consecutivePollFailures.current = 0
     },
     onError(err) {
       if (err.data?.code === 'UNAUTHORIZED') {
         router.push(`/signin?callbackUrl=/problems/${problem.slug}`)
-      } else {
-        setDrawerOpen(true)
-        setSubmitError('Submission failed. Please try again.')
+        return
+      }
+
+      setDrawerOpen(true)
+
+      let parsed: { code?: string; submissionId?: string; message?: string } = {}
+      try {
+        parsed = JSON.parse(err.message) as typeof parsed
+      } catch {
+        // not a structured error
+      }
+
+      switch (parsed.code) {
+        case 'PENDING_SUBMISSION':
+          // Start polling the existing submission
+          if (parsed.submissionId) {
+            setSubmissionId(parsed.submissionId)
+            setIsPolling(true)
+            setPollError(null)
+            consecutivePollFailures.current = 0
+          } else {
+            setSubmitError('Submission failed. Please try again.')
+          }
+          break
+        case 'DAILY_LIMIT_REACHED':
+          setSubmitError('Daily limit reached. Upgrade for unlimited submissions.')
+          break
+        case 'RATE_LIMITED':
+          setSubmitError('Too many submissions. Wait a moment.')
+          break
+        case 'CODE_TOO_LARGE':
+          setSubmitError('Code exceeds 16 KB limit.')
+          break
+        default:
+          setSubmitError('Submission failed. Please try again.')
       }
     },
   })
@@ -128,8 +221,7 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
   // Stop polling on terminal status
   useEffect(() => {
     if (!submissionStatus) return
-    const terminal = ['ACCEPTED', 'WRONG_ANSWER', 'RUNTIME_ERROR', 'TIME_LIMIT']
-    if (terminal.includes(submissionStatus.status)) {
+    if (TERMINAL_STATUSES.includes(submissionStatus.status)) {
       setIsPolling(false)
     } else {
       consecutivePollFailures.current = 0
@@ -163,6 +255,7 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
       router.push(`/signin?callbackUrl=/problems/${problem.slug}`)
       return
     }
+    setInfoMsg(null)
     createMutation.mutate({ problemSlug: problem.slug, code, language: 'cpp' })
   }
 
@@ -182,6 +275,12 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
   const isSubmitting = createMutation.isPending || isPolling
 
   const diff = problem.difficulty as keyof typeof DIFFICULTY_COLORS
+
+  // Code size indicator
+  const codeSizeBytes = new TextEncoder().encode(code).length
+  const codePct = codeSizeBytes / MAX_CODE_BYTES
+  const codeSizeColor =
+    codePct >= 0.95 ? 'text-red-500' : codePct >= 0.8 ? 'text-amber-500' : 'text-slate-400'
 
   return (
     /* Mobile: flex-col, scrollable. Desktop: fixed-height flex-col */
@@ -276,10 +375,10 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
                 <option value="cpp">C++ / CUDA</option>
               </select>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col items-end gap-0.5">
               <button
                 onClick={handleSubmit}
-                disabled={isSubmitting}
+                disabled={isSubmitting || isLimitReached}
                 className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSubmitting && (
@@ -301,6 +400,14 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
                 )}
                 {isSubmitting ? 'Running…' : 'Submit'}
               </button>
+              {infoMsg && (
+                <p className="text-[10px] text-green-600">{infoMsg}</p>
+              )}
+              {!infoMsg && dailyCount && !dailyCount.unlimited && (
+                <p className="text-[10px] text-slate-400">
+                  {dailyCount.used} / {dailyCount.limit} today
+                </p>
+              )}
             </div>
           </div>
 
@@ -317,6 +424,13 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
             >
               <MonacoEditor value={code} onChange={setCode} language="cpp" />
             </ErrorBoundary>
+          </div>
+
+          {/* Code size indicator */}
+          <div
+            className={`px-3 py-1 text-xs border-t border-slate-200 bg-white text-right shrink-0 ${codeSizeColor}`}
+          >
+            {formatCodeSize(codeSizeBytes)} / 16 KB
           </div>
         </div>
       </div>
@@ -392,7 +506,43 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
                 </div>
               )}
               {!submitError && !pollError && isPending && !submissionStatus && (
-                <p className="text-slate-500 text-sm">Submission queued. Waiting for judge…</p>
+                <div>
+                  <p className="text-slate-500 text-sm">Submission queued. Waiting for judge…</p>
+                  {/* Cancel button — only while PENDING (not yet picked up) */}
+                  {submissionId && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick={() => cancelMutation.mutate({ submissionId })}
+                        disabled={cancelMutation.isPending}
+                        className="text-xs text-slate-400 hover:text-slate-600 underline disabled:opacity-50"
+                      >
+                        Cancel submission
+                      </button>
+                      {cancelError && (
+                        <span className="text-xs text-slate-500">{cancelError}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!submitError && !pollError && isPending && submissionStatus?.status === 'PENDING' && (
+                <div>
+                  <p className="text-slate-500 text-sm">Submission queued. Waiting for judge…</p>
+                  {submissionId && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick={() => cancelMutation.mutate({ submissionId })}
+                        disabled={cancelMutation.isPending}
+                        className="text-xs text-slate-400 hover:text-slate-600 underline disabled:opacity-50"
+                      >
+                        Cancel submission
+                      </button>
+                      {cancelError && (
+                        <span className="text-xs text-slate-500">{cancelError}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
               {!submitError && !pollError && isPending && submissionStatus?.status === 'RUNNING' && (
                 <p className="text-slate-600 text-sm">Running test cases…</p>

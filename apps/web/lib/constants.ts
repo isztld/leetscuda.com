@@ -53,6 +53,11 @@ export const SUBMISSION_STATUS_COLORS = {
     text: 'text-blue-700',
     panelBg: 'bg-blue-50',
   },
+  CANCELLED: {
+    bg: 'bg-slate-100',
+    text: 'text-slate-500',
+    panelBg: 'bg-slate-100',
+  },
 } as const
 
 export const SUBMISSION_STATUS_LABELS: Record<keyof typeof SUBMISSION_STATUS_COLORS, string> = {
@@ -62,4 +67,5 @@ export const SUBMISSION_STATUS_LABELS: Record<keyof typeof SUBMISSION_STATUS_COL
   TIME_LIMIT: 'Time Limit',
   PENDING: 'Pending',
   RUNNING: 'Running',
+  CANCELLED: 'Cancelled',
 }

@@ -1,12 +1,40 @@
 import 'dotenv/config'
 import './env.js'
+import { execSync } from 'child_process'
 import { pollForJob, submitResult } from './api-client.js'
 import { runInSandbox } from './sandbox.js'
 import { verify } from './verifier.js'
 import type { JudgeJob, JudgeResult } from './types.js'
 import { env } from './env.js'
 
+/** Kill any containers from a previous crashed judge session before starting. */
+async function cleanupOrphanedContainers(): Promise<void> {
+  try {
+    const ids = execSync(
+      'docker ps --filter label=leetscuda-judge --filter status=running -q',
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim()
+
+    if (!ids) return
+
+    const containerIds = ids.split('\n').filter(Boolean)
+    console.log(`[judge] CLEANUP found ${containerIds.length} orphaned containers, stopping`)
+    for (const id of containerIds) {
+      try {
+        execSync(`docker stop --time 1 ${id}`, { stdio: 'ignore' })
+      } catch {
+        // best-effort
+      }
+    }
+  } catch {
+    // Docker not available or no containers — ignore
+  }
+}
+
 async function runJob(job: JudgeJob): Promise<JudgeResult> {
+  // Clamp timeout to the hard ceiling — never trust the payload blindly
+  const effectiveTimeout = Math.min(job.timeoutMs ?? env.maxTimeoutMs, env.maxTimeoutMs)
+
   type FinalStatus = 'ACCEPTED' | 'WRONG_ANSWER' | 'RUNTIME_ERROR' | 'TIME_LIMIT'
   let finalStatus: FinalStatus = 'ACCEPTED'
   let maxRuntimeMs = 0
@@ -19,7 +47,7 @@ async function runJob(job: JudgeJob): Promise<JudgeResult> {
       cppStandard: job.cppStandard,
       cudaVersion: job.cudaVersion,
       computeCap: job.computeCap,
-      timeoutMs: job.timeoutMs,
+      timeoutMs: effectiveTimeout,
       submissionId: `${job.submissionId}-${job.testCases.indexOf(tc)}`,
     })
 
@@ -58,6 +86,9 @@ async function main() {
   console.log(`[judge] Capabilities: ${env.capabilities.join(', ')}`)
   console.log(`[judge] API URL: ${env.JUDGE_API_URL}`)
 
+  // Kill orphaned containers from any previous crash
+  await cleanupOrphanedContainers()
+
   process.on('SIGINT', () => {
     console.log('[judge] Shutting down...')
     process.exit(0)
@@ -71,6 +102,20 @@ async function main() {
     try {
       const job = await pollForJob()
       if (!job) continue
+
+      // Secondary code size guard — never trust the payload blindly
+      const codeBytes = Buffer.byteLength(job.code, 'utf8')
+      if (codeBytes > env.maxCodeBytes) {
+        console.log(`[judge] OVERSIZED ${job.submissionId} — rejected before sandbox`)
+        await submitResult({
+          submissionId: job.submissionId,
+          status: 'RUNTIME_ERROR',
+          runtimeMs: 0,
+          output: '',
+          errorMsg: 'Code payload exceeds maximum allowed size',
+        })
+        continue
+      }
 
       console.log(`[judge] Processing ${job.submissionId} — ${job.runtime} c++${job.cppStandard}`)
       const result = await runJob(job)
