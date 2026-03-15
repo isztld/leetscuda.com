@@ -1,3 +1,15 @@
+@import 'highlight.js/styles/github-dark.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Prose code block padding (highlight.js already styles .hljs) */
+.prose pre {
+  padding: 0 !important;
+}
+.prose pre code.hljs {
+  border-radius: 0.5rem;
+  padding: 1rem !important;
+  font-size: 0.8rem;
+}

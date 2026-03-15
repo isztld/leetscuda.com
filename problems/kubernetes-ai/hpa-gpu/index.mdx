@@ -1,0 +1,145 @@
+---
+slug: hpa-gpu
+title: Autoscale GPU Inference with HPA
+difficulty: MEDIUM
+track: kubernetes-ai
+tags:
+  - autoscaling
+  - hpa
+  - custom-metrics
+execution: CPU_SIM
+status: PUBLISHED
+xp: 200
+---
+
+## Background
+
+The Kubernetes **Horizontal Pod Autoscaler (HPA)** scales the number of pod replicas based on observed metrics. Out of the box it supports CPU utilisation, but for GPU inference servers the relevant signal is **GPU utilisation** or **requests-per-second**, surfaced via the DCGM Exporter → Prometheus → `custom.metrics.k8s.io` pipeline.
+
+The DCGM Exporter (part of the NVIDIA GPU Operator) publishes Prometheus metrics like `DCGM_FI_DEV_GPU_UTIL` (GPU utilisation 0–100). The **Prometheus Adapter** bridges Prometheus metrics into the Kubernetes metrics API, making them available to the HPA under `custom.metrics.k8s.io/v1beta1`.
+
+A typical production target is 60–70% GPU utilisation — high enough to amortise the fixed overhead per forward pass, low enough to absorb traffic spikes without queueing.
+
+## What to Implement
+
+Write the `HorizontalPodAutoscaler` manifest that:
+
+1. Targets the `Deployment` named `vllm-server` in the `inference` namespace
+2. Scales between `minReplicas: 1` and `maxReplicas: 8`
+3. Uses a `Pods` metric named `dcgm_fi_dev_gpu_util` with `averageValue: "60"` (percent)
+4. Sets `scaleDown.stabilizationWindowSeconds: 300` and `scaleUp.stabilizationWindowSeconds: 0`
+
+Also write a `PodMonitor` (Prometheus Operator CRD) that scrapes the vLLM pod's `/metrics` endpoint on port `8000` every 15 seconds so that DCGM metrics are collected.
+
+## Constraints
+
+- HPA `apiVersion` must be `autoscaling/v2`
+- The `PodMonitor` must be in the `monitoring` namespace and use `namespaceSelector.matchNames: [inference]`
+- Both resources must be valid YAML parseable by `kubectl apply`
+
+## Example
+
+Under sustained load:
+- At 80% GPU utilisation → HPA scales up toward `ceil(currentReplicas * 80/60) = 2` replicas
+- After 5 minutes of low utilisation → HPA scales back down (stabilisation window prevents flapping)
+
+---starter-code---
+# HorizontalPodAutoscaler for vllm-server
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllm-hpa
+  namespace: # TODO
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: # TODO
+  minReplicas: # TODO
+  maxReplicas: # TODO
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: # TODO (dcgm_fi_dev_gpu_util)
+        target:
+          type: # TODO (AverageValue)
+          averageValue: # TODO ("60")
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: # TODO
+    scaleUp:
+      stabilizationWindowSeconds: # TODO
+---
+# PodMonitor to scrape vLLM pods
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: vllm-podmonitor
+  namespace: # TODO (monitoring)
+spec:
+  namespaceSelector:
+    matchNames:
+      - # TODO
+  selector:
+    matchLabels:
+      app: vllm
+  podMetricsEndpoints:
+    - port: # TODO (name or number)
+      path: /metrics
+      interval: # TODO (15s)
+
+---test-cases---
+- name: "HPA targets correct deployment"
+  input: "Parse HPA spec.scaleTargetRef"
+  expected: "kind=Deployment name=vllm-server"
+- name: "Scale bounds correct"
+  input: "Parse minReplicas/maxReplicas"
+  expected: "min=1 max=8"
+- name: "Stabilisation windows set"
+  input: "Parse behavior"
+  expected: "scaleDown=300s scaleUp=0s"
+
+---solution---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllm-hpa
+  namespace: inference
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-server
+  minReplicas: 1
+  maxReplicas: 8
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: dcgm_fi_dev_gpu_util
+        target:
+          type: AverageValue
+          averageValue: "60"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 0
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: vllm-podmonitor
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - inference
+  selector:
+    matchLabels:
+      app: vllm
+  podMetricsEndpoints:
+    - port: "8000"
+      path: /metrics
+      interval: 15s

@@ -1,0 +1,135 @@
+---
+slug: pcie-bandwidth
+title: Measure PCIe Transfer Bandwidth
+difficulty: EASY
+track: foundations
+tags:
+  - memory
+  - bandwidth
+  - profiling
+execution: CPU_SIM
+status: PUBLISHED
+xp: 100
+---
+
+## Background
+
+Data must travel across the **PCIe bus** before a GPU can process it. Host-to-Device (H2D) and Device-to-Host (D2H) transfers via `cudaMemcpy` are the most common bottleneck in data-loading pipelines. PCIe 4.0 ×16 offers ~32 GB/s of peak unidirectional bandwidth; PCIe 5.0 ×16 doubles that to ~64 GB/s. In practice, pinned (page-locked) host memory is required to achieve peak transfer rates — pageable memory incurs an internal copy through a staging buffer.
+
+**Pinned memory** (allocated with `cudaHostAlloc` or `cudaMallocHost`) is locked in physical RAM and can be transferred directly by the DMA engine, bypassing the staging step. Large contiguous transfers (≥1 MB) approach the theoretical bus bandwidth; small transfers are dominated by per-transfer overhead (~5–10 µs).
+
+## What to Implement
+
+Implement `measureBandwidth` that measures H2D and D2H bandwidth in GB/s:
+
+```cpp
+struct BandwidthResult {
+    double h2d_gbps;  // host-to-device bandwidth
+    double d2h_gbps;  // device-to-host bandwidth
+};
+
+BandwidthResult measureBandwidth(size_t bytes, int iterations);
+```
+
+For each direction:
+1. Allocate pinned host memory with `cudaMallocHost` and device memory with `cudaMalloc`
+2. Warm up with 3 transfers (to prime the PCIe link)
+3. Time `iterations` transfers using `cudaEvent` timing (`cudaEventRecord` / `cudaEventSynchronize` / `cudaEventElapsedTime`)
+4. Compute bandwidth: `bytes * iterations / elapsed_seconds / 1e9`
+5. Free all allocations
+
+## Constraints
+
+- Use `cudaEventRecord` for timing (not `clock()` or `gettimeofday`)
+- Use `cudaMallocHost` for pinned host memory (not `malloc`)
+- `bytes` is a multiple of 512, `1 ≤ iterations ≤ 1000`
+- Return double-precision GB/s (bytes per second / 1e9)
+
+## Example
+
+On a PCIe 4.0 system with a modern GPU:
+
+```
+measureBandwidth(64 * 1024 * 1024, 100)
+→ { h2d_gbps: 26.4, d2h_gbps: 25.8 }
+```
+
+---starter-code---
+#include <cuda_runtime.h>
+#include <cstddef>
+
+struct BandwidthResult {
+    double h2d_gbps;
+    double d2h_gbps;
+};
+
+BandwidthResult measureBandwidth(size_t bytes, int iterations) {
+    BandwidthResult result = {0.0, 0.0};
+
+    // TODO:
+    // 1. Allocate pinned host memory (cudaMallocHost) and device memory (cudaMalloc)
+    // 2. Create CUDA events for timing
+    // 3. Warm up (3 transfers each direction, no timing)
+    // 4. Time H2D: iterations transfers, record start/stop events, sync, get elapsed ms
+    // 5. Compute h2d_gbps = bytes * iterations / (elapsed_ms / 1000.0) / 1e9
+    // 6. Repeat for D2H
+    // 7. Free all allocations and destroy events
+    // 8. Return result
+
+    return result;
+}
+
+---test-cases---
+- name: "H2D bandwidth positive"
+  input: "bytes=4MB iterations=10"
+  expected: "h2d_gbps > 0"
+- name: "D2H bandwidth positive"
+  input: "bytes=4MB iterations=10"
+  expected: "d2h_gbps > 0"
+- name: "Large transfer approaches peak"
+  input: "bytes=64MB iterations=100"
+  expected: "h2d_gbps > 5.0 (at least 5 GB/s on any PCIe system)"
+
+---solution---
+BandwidthResult measureBandwidth(size_t bytes, int iterations) {
+    BandwidthResult result = {0.0, 0.0};
+    char *h_buf, *d_buf;
+    cudaMallocHost(&h_buf, bytes);
+    cudaMalloc(&d_buf, bytes);
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    // Warm up H2D
+    for (int i = 0; i < 3; ++i)
+        cudaMemcpy(d_buf, h_buf, bytes, cudaMemcpyHostToDevice);
+
+    // Time H2D
+    cudaEventRecord(start);
+    for (int i = 0; i < iterations; ++i)
+        cudaMemcpy(d_buf, h_buf, bytes, cudaMemcpyHostToDevice);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float ms = 0;
+    cudaEventElapsedTime(&ms, start, stop);
+    result.h2d_gbps = (double)bytes * iterations / (ms / 1000.0) / 1e9;
+
+    // Warm up D2H
+    for (int i = 0; i < 3; ++i)
+        cudaMemcpy(h_buf, d_buf, bytes, cudaMemcpyDeviceToHost);
+
+    // Time D2H
+    cudaEventRecord(start);
+    for (int i = 0; i < iterations; ++i)
+        cudaMemcpy(h_buf, d_buf, bytes, cudaMemcpyDeviceToHost);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&ms, start, stop);
+    result.d2h_gbps = (double)bytes * iterations / (ms / 1000.0) / 1e9;
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFreeHost(h_buf);
+    cudaFree(d_buf);
+    return result;
+}

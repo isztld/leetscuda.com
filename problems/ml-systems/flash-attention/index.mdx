@@ -1,0 +1,146 @@
+---
+slug: flash-attention
+title: Flash Attention Forward Pass
+difficulty: HARD
+track: ml-systems
+tags:
+  - attention
+  - memory-efficiency
+  - io-aware
+execution: CPU_SIM
+status: PUBLISHED
+xp: 500
+---
+
+## Background
+
+Standard scaled dot-product attention materialises the full N×N attention matrix in HBM (GPU global memory). For a sequence of length N and head dimension D, this costs O(N²) memory and O(N²) HBM reads/writes — the dominant bottleneck for long contexts.
+
+**Flash Attention** (Dao et al., 2022) eliminates the N×N materialisation entirely by computing attention in **tiles** that fit in SRAM. The key insight is the **online softmax** trick: you can compute softmax incrementally, updating a running maximum `m` and a running sum `l`, without ever storing the full row. The output `O` is updated tile-by-tile:
+
+```
+For each tile K_j, V_j:
+  S_j   = Q * K_j^T / sqrt(D)             [block scores]
+  m_new = max(m_prev, rowmax(S_j))
+  P_j   = exp(S_j - m_new)                [unnormalised]
+  l_new = exp(m_prev - m_new) * l_prev + rowsum(P_j)
+  O     = (exp(m_prev - m_new) * O_prev + P_j * V_j) / l_new
+```
+
+This keeps memory at O(N) and cuts HBM traffic by ~5–20× for long sequences.
+
+## What to Implement
+
+Implement `flash_attention_forward` in C++ (CPU reference implementation for validation):
+
+```cpp
+// Q, K, V: [seq_len, head_dim] in row-major layout
+// O:       [seq_len, head_dim] output (pre-allocated, zeroed)
+// seq_len, head_dim: dimensions
+// block_size: tile size (number of key/value positions per tile)
+void flash_attention_forward(
+    const float* Q, const float* K, const float* V,
+    float* O, int seq_len, int head_dim, int block_size);
+```
+
+Implement the tiled forward pass using the online softmax recurrence above. Use `block_size` as the tile size for both the Q-tile and KV-tile dimensions (for simplicity, process one Q-tile = one query at a time, and tile over K and V).
+
+## Constraints
+
+- `seq_len` is a multiple of `block_size`
+- `1 ≤ seq_len ≤ 2048`, `1 ≤ head_dim ≤ 128`, `1 ≤ block_size ≤ seq_len`
+- Output must match standard attention (full materialisation) within `1e-4` absolute error
+- No external libraries (use `<cmath>` only)
+
+## Example
+
+For seq_len=2, head_dim=2, block_size=1:
+
+```
+Q = [[1,0],[0,1]], K = [[1,0],[0,1]], V = [[1,2],[3,4]]
+Standard attention output ≈ [[1.73, 2.73], [2.27, 3.27]]
+```
+
+---starter-code---
+#include <cmath>
+#include <vector>
+#include <limits>
+#include <cstring>
+
+// Tiled Flash Attention forward pass (CPU reference).
+// Q, K, V, O: row-major [seq_len × head_dim]
+void flash_attention_forward(
+    const float* Q, const float* K, const float* V,
+    float* O, int seq_len, int head_dim, int block_size)
+{
+    const float scale = 1.0f / std::sqrt((float)head_dim);
+
+    // TODO: implement the tiled forward pass.
+    // For each query block Q_i (one query row at a time for simplicity):
+    //   initialise m = -inf, l = 0, o = zeros
+    //   for each KV tile (j = 0, block_size, 2*block_size, ...):
+    //     compute S = Q_i * K_j^T * scale   (1 × block_size vector)
+    //     update m, l, O using the online softmax recurrence
+    //   write final O_i = o / l  into O[i * head_dim .. ]
+}
+
+---test-cases---
+- name: "Identity keys match queries"
+  input: "seq=2 dim=2 block=1\nQ=K=I, V=[[1,2],[3,4]]"
+  expected: "standard attention output within 1e-4"
+- name: "Uniform attention"
+  input: "seq=4 dim=1 block=2\nAll Q=K=0 (uniform softmax), V=[1,2,3,4]"
+  expected: "each output row = mean(V) = 2.5"
+- name: "Block size equals seq len"
+  input: "seq=4 dim=4 block=4\nrandom Q,K,V"
+  expected: "matches naive attention"
+
+---solution---
+void flash_attention_forward(
+    const float* Q, const float* K, const float* V,
+    float* O, int seq_len, int head_dim, int block_size)
+{
+    const float scale = 1.0f / std::sqrt((float)head_dim);
+    int num_kv_blocks = seq_len / block_size;
+
+    std::vector<float> s(block_size), o_row(head_dim);
+
+    for (int i = 0; i < seq_len; ++i) {
+        const float* q = Q + i * head_dim;
+        float m = -std::numeric_limits<float>::infinity();
+        float l = 0.0f;
+        std::fill(o_row.begin(), o_row.end(), 0.0f);
+
+        for (int jb = 0; jb < num_kv_blocks; ++jb) {
+            int j0 = jb * block_size;
+            // Compute scores S = Q_i * K[j0..j0+block_size]^T * scale
+            for (int jj = 0; jj < block_size; ++jj) {
+                float dot = 0.0f;
+                const float* k = K + (j0 + jj) * head_dim;
+                for (int d = 0; d < head_dim; ++d) dot += q[d] * k[d];
+                s[jj] = dot * scale;
+            }
+            // Online softmax update
+            float m_new = m;
+            for (int jj = 0; jj < block_size; ++jj)
+                m_new = std::max(m_new, s[jj]);
+
+            float l_new = std::exp(m - m_new) * l;
+            for (int jj = 0; jj < block_size; ++jj)
+                l_new += std::exp(s[jj] - m_new);
+
+            float correction = std::exp(m - m_new);
+            for (int d = 0; d < head_dim; ++d) {
+                float pv = 0.0f;
+                for (int jj = 0; jj < block_size; ++jj)
+                    pv += std::exp(s[jj] - m_new) * V[(j0 + jj) * head_dim + d];
+                o_row[d] = correction * o_row[d] + pv;
+            }
+            m = m_new;
+            l = l_new;
+        }
+        float* out = O + i * head_dim;
+        for (int d = 0; d < head_dim; ++d)
+            out[d] = o_row[d] / l;
+    }
+}

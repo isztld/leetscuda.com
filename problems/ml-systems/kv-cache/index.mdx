@@ -1,0 +1,129 @@
+---
+slug: kv-cache
+title: KV Cache Implementation
+difficulty: EASY
+track: ml-systems
+tags:
+  - transformers
+  - inference
+  - caching
+execution: CPU_SIM
+status: PUBLISHED
+xp: 100
+---
+
+## Background
+
+Autoregressive language models (GPT, LLaMA, etc.) generate tokens one at a time. At each step, the model attends over **all previous tokens**. Without caching, computing self-attention for step `t` requires re-computing the key and value projections for tokens `0..t-1` from scratch — an O(t²) total cost across the full generation.
+
+A **KV cache** stores the key and value tensors for every previous token. On step `t`, only the new token's key/value projections are computed; the rest are read from cache. This reduces total FLOP from O(t²) to O(t) and cuts inference latency dramatically — especially for long contexts.
+
+The cache is a pair of fixed-size buffers, one for keys and one for values, indexed by `[layer, head, position]`. On each forward pass, the current token's K and V are appended at the next available position, and attention is computed over the entire filled range `[0, current_pos]`.
+
+## What to Implement
+
+Implement the `KVCache` class in C++:
+
+```cpp
+class KVCache {
+public:
+    KVCache(int num_layers, int num_heads, int max_seq_len, int head_dim);
+    void store(int layer, int head, int pos, const float* k, const float* v);
+    void load(int layer, int head, int pos, float* k_out, float* v_out) const;
+    int size() const;   // current number of stored positions
+    void clear();       // reset to empty
+};
+```
+
+- `store` writes a key-value pair of length `head_dim` at the given position
+- `load` reads back the key-value pair for a given position
+- `size` returns how many positions have been filled so far
+- `clear` resets the cache (no deallocation)
+
+## Constraints
+
+- `1 ≤ num_layers ≤ 128`, `1 ≤ num_heads ≤ 128`, `1 ≤ max_seq_len ≤ 8192`, `1 ≤ head_dim ≤ 256`
+- `store` is always called with monotonically increasing `pos` starting at 0
+- `load` is only called for positions that have been stored
+
+## Example
+
+```
+cache = KVCache(layers=1, heads=2, max_seq=4, head_dim=2)
+cache.store(0, 0, 0, k=[1,2], v=[3,4])
+cache.store(0, 0, 1, k=[5,6], v=[7,8])
+cache.load(0, 0, 1) → k=[5,6], v=[7,8]
+cache.size() → 2
+```
+
+---starter-code---
+#include <vector>
+#include <cstring>
+
+class KVCache {
+public:
+    // TODO: Add member variables for the cache buffers
+    int num_layers_, num_heads_, max_seq_len_, head_dim_;
+    int current_size_;
+    std::vector<float> key_cache_;    // shape: [layers, heads, seq, head_dim]
+    std::vector<float> value_cache_;  // shape: [layers, heads, seq, head_dim]
+
+    KVCache(int num_layers, int num_heads, int max_seq_len, int head_dim)
+        : num_layers_(num_layers), num_heads_(num_heads),
+          max_seq_len_(max_seq_len), head_dim_(head_dim), current_size_(0) {
+        // TODO: allocate key_cache_ and value_cache_
+    }
+
+    void store(int layer, int head, int pos, const float* k, const float* v) {
+        // TODO: write k and v into cache at [layer, head, pos]
+    }
+
+    void load(int layer, int head, int pos, float* k_out, float* v_out) const {
+        // TODO: read k and v from cache at [layer, head, pos]
+    }
+
+    int size() const {
+        return current_size_;
+    }
+
+    void clear() {
+        current_size_ = 0;
+    }
+};
+
+---test-cases---
+- name: "Store and load single entry"
+  input: "layers=1 heads=1 seq=4 dim=2\nstore(0,0,0,k=[1,2],v=[3,4])"
+  expected: "load(0,0,0) → k=[1,2] v=[3,4]"
+- name: "Multiple heads"
+  input: "layers=1 heads=2 seq=4 dim=2\nstore(0,0,0,k=[1,2],v=[3,4])\nstore(0,1,0,k=[5,6],v=[7,8])"
+  expected: "load(0,1,0) → k=[5,6] v=[7,8]"
+- name: "Size tracking"
+  input: "layers=1 heads=1 seq=4 dim=2\nstore pos=0,1,2"
+  expected: "size()=3"
+
+---solution---
+KVCache(int num_layers, int num_heads, int max_seq_len, int head_dim)
+    : num_layers_(num_layers), num_heads_(num_heads),
+      max_seq_len_(max_seq_len), head_dim_(head_dim), current_size_(0) {
+    size_t total = (size_t)num_layers * num_heads * max_seq_len * head_dim;
+    key_cache_.resize(total, 0.0f);
+    value_cache_.resize(total, 0.0f);
+}
+
+inline size_t idx(int layer, int head, int pos, int d) const {
+    return ((size_t)layer * num_heads_ * max_seq_len_ + head * max_seq_len_ + pos) * head_dim_ + d;
+}
+
+void store(int layer, int head, int pos, const float* k, const float* v) {
+    size_t base = idx(layer, head, pos, 0);
+    std::memcpy(&key_cache_[base],   k, head_dim_ * sizeof(float));
+    std::memcpy(&value_cache_[base], v, head_dim_ * sizeof(float));
+    if (pos + 1 > current_size_) current_size_ = pos + 1;
+}
+
+void load(int layer, int head, int pos, float* k_out, float* v_out) const {
+    size_t base = idx(layer, head, pos, 0);
+    std::memcpy(k_out, &key_cache_[base],   head_dim_ * sizeof(float));
+    std::memcpy(v_out, &value_cache_[base], head_dim_ * sizeof(float));
+}

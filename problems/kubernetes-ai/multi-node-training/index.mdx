@@ -1,0 +1,204 @@
+---
+slug: multi-node-training
+title: Multi-Node Distributed Training Job
+difficulty: HARD
+track: kubernetes-ai
+tags:
+  - distributed
+  - pytorch
+  - mpi
+  - networking
+execution: CPU_SIM
+status: PUBLISHED
+xp: 400
+---
+
+## Background
+
+Large model training requires more GPU memory than a single node can provide. **Data parallelism** shards the minibatch across nodes; **tensor parallelism** shards individual weight matrices; **pipeline parallelism** splits model layers across devices. All three patterns require nodes to exchange gradients or activations over a high-bandwidth interconnect.
+
+On Kubernetes, multi-node training jobs are managed by the **MPI Operator** (for MPI-based frameworks) or the **PyTorch Operator** (for `torch.distributed`). The PyTorch Operator creates a `PyTorchJob` custom resource with a `Master` role (1 replica, drives `torchrun`) and `Worker` roles (N replicas, connect back to master via `MASTER_ADDR` and `MASTER_PORT` environment variables injected by the operator).
+
+GPU-to-GPU communication uses **NCCL** (NVIDIA Collective Communications Library) over NVLink (intra-node) or RoCE/InfiniBand (inter-node). On cloud Kubernetes clusters, inter-node bandwidth is typically 100–400 Gbps via RDMA-capable network interfaces placed in a dedicated pod network.
+
+## What to Implement
+
+Write the `PyTorchJob` manifest for a 2-node, 8-GPU-per-node distributed training job:
+
+1. `apiVersion: kubeflow.org/v1`, `kind: PyTorchJob`
+2. One `Master` replica and 1 `Worker` replica (2 nodes total)
+3. Each pod runs: `torchrun --nproc_per_node=8 train.py --backend nccl`
+4. Container image: `pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime`
+5. Each pod requests `nvidia.com/gpu: 8`, `memory: 200Gi`, `cpu: "32"`, and `rdma/hca: 1`
+6. Set `hostNetwork: true` and `dnsPolicy: ClusterFirstWithHostNet` on the pod spec to enable low-latency RDMA
+7. Environment variable: `NCCL_IB_DISABLE=0` and `NCCL_DEBUG=INFO`
+8. Mount a shared `PersistentVolumeClaim` named `training-data` at `/data` (ReadOnlyMany)
+
+## Constraints
+
+- Use `restartPolicy: OnFailure` on the `PyTorchJob`
+- Both Master and Worker specs should be identical except for the role label (managed by the operator)
+- The PVC must be declared in `volumes` and referenced in `volumeMounts`
+
+## Example
+
+After `kubectl apply -f job.yaml`:
+
+```bash
+$ kubectl get pods -n training
+NAME                              READY  STATUS
+my-job-master-0                   1/1    Running
+my-job-worker-0                   1/1    Running
+```
+
+Training throughput: ~14,000 tokens/sec across 16 A100 GPUs for a 13B parameter model.
+
+---starter-code---
+# PyTorchJob for multi-node distributed training
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: llm-training-job
+  namespace: training
+spec:
+  pytorchReplicaSpecs:
+    Master:
+      replicas: 1
+      restartPolicy: # TODO
+      template:
+        spec:
+          hostNetwork: # TODO
+          dnsPolicy: # TODO
+          containers:
+            - name: trainer
+              image: # TODO
+              command:
+                - torchrun
+                - # TODO: --nproc_per_node, train.py, --backend
+              env:
+                - name: NCCL_IB_DISABLE
+                  value: # TODO
+                - name: NCCL_DEBUG
+                  value: # TODO
+              resources:
+                requests:
+                  nvidia.com/gpu: # TODO
+                  memory: # TODO
+                  cpu: # TODO
+                  rdma/hca: # TODO
+                limits:
+                  nvidia.com/gpu: # TODO
+                  memory: # TODO
+                  cpu: # TODO
+                  rdma/hca: # TODO
+              volumeMounts:
+                - name: training-data
+                  mountPath: # TODO
+          volumes:
+            - name: training-data
+              persistentVolumeClaim:
+                claimName: # TODO
+    Worker:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        spec:
+          # TODO: same as master
+
+---test-cases---
+- name: "GPU resources correct"
+  input: "Parse Master container resources"
+  expected: "nvidia.com/gpu: 8 in requests and limits"
+- name: "RDMA interface requested"
+  input: "Parse resources"
+  expected: "rdma/hca: 1"
+- name: "PVC mounted"
+  input: "Parse volumeMounts"
+  expected: "training-data mounted at /data"
+
+---solution---
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: llm-training-job
+  namespace: training
+spec:
+  pytorchReplicaSpecs:
+    Master:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        spec:
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
+          containers:
+            - name: trainer
+              image: pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+              command:
+                - torchrun
+                - --nproc_per_node=8
+                - train.py
+                - --backend
+                - nccl
+              env:
+                - name: NCCL_IB_DISABLE
+                  value: "0"
+                - name: NCCL_DEBUG
+                  value: INFO
+              resources:
+                requests:
+                  nvidia.com/gpu: "8"
+                  memory: 200Gi
+                  cpu: "32"
+                  rdma/hca: "1"
+                limits:
+                  nvidia.com/gpu: "8"
+                  memory: 200Gi
+                  cpu: "32"
+                  rdma/hca: "1"
+              volumeMounts:
+                - name: training-data
+                  mountPath: /data
+          volumes:
+            - name: training-data
+              persistentVolumeClaim:
+                claimName: training-data
+    Worker:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        spec:
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
+          containers:
+            - name: trainer
+              image: pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+              command:
+                - torchrun
+                - --nproc_per_node=8
+                - train.py
+                - --backend
+                - nccl
+              env:
+                - name: NCCL_IB_DISABLE
+                  value: "0"
+                - name: NCCL_DEBUG
+                  value: INFO
+              resources:
+                requests:
+                  nvidia.com/gpu: "8"
+                  memory: 200Gi
+                  cpu: "32"
+                  rdma/hca: "1"
+                limits:
+                  nvidia.com/gpu: "8"
+                  memory: 200Gi
+                  cpu: "32"
+                  rdma/hca: "1"
+              volumeMounts:
+                - name: training-data
+                  mountPath: /data
+          volumes:
+            - name: training-data
+              persistentVolumeClaim:
+                claimName: training-data

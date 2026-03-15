@@ -1,0 +1,168 @@
+---
+slug: deploy-inference-server
+title: Deploy a vLLM Inference Server
+difficulty: EASY
+track: kubernetes-ai
+tags:
+  - deployment
+  - vllm
+  - resources
+execution: CPU_SIM
+status: PUBLISHED
+xp: 100
+---
+
+## Background
+
+**vLLM** is a high-throughput LLM inference engine that uses PagedAttention to maximise KV-cache utilisation. Deploying it on Kubernetes means writing a `Deployment` that schedules the pod on a GPU node, exposes the OpenAI-compatible REST API on port 8000, and includes the proper resource requests so the scheduler places the pod correctly.
+
+On Kubernetes, GPU resources are exposed as extended resources under `nvidia.com/gpu`. A container must *request* a GPU to be scheduled on a GPU node, and should *limit* it to the same value — GPUs are not time-shared like CPU cores.
+
+A `Service` of type `ClusterIP` makes the server reachable inside the cluster. A `liveness` probe on `/health` (HTTP GET, port 8000) lets the kubelet restart the container if it hangs.
+
+## What to Implement
+
+Write the Kubernetes manifest (YAML) that:
+
+1. Creates a `Deployment` named `vllm-server` in the `inference` namespace with 1 replica
+2. Container image: `vllm/vllm-openai:v0.4.0`
+3. Container command: `["python", "-m", "vllm.entrypoints.openai.api_server", "--model", "meta-llama/Llama-2-7b-chat-hf", "--port", "8000"]`
+4. Requests and limits: `nvidia.com/gpu: 1`, `memory: 20Gi`, `cpu: "4"`
+5. Liveness probe: HTTP GET `/health` port 8000, initialDelaySeconds 60, periodSeconds 15
+6. Creates a `Service` named `vllm-service` of type `ClusterIP` targeting port 8000
+
+## Constraints
+
+- The `Deployment` and `Service` must be in the same file (use `---` YAML separator)
+- Use `app: vllm` as the selector label on both `Deployment` and `Service`
+- Namespace `inference` must be specified in both `metadata` sections
+- Do not use `imagePullPolicy: Always` (omit it; the default is fine)
+
+## Example
+
+A correctly deployed vLLM server can be queried inside the cluster:
+
+```bash
+curl http://vllm-service.inference.svc.cluster.local:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "meta-llama/Llama-2-7b-chat-hf", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+---starter-code---
+# Write your Kubernetes manifests below.
+# Use --- to separate the Deployment and Service documents.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-server
+  namespace: # TODO
+  labels:
+    app: vllm
+spec:
+  replicas: # TODO
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      containers:
+        - name: vllm
+          image: # TODO
+          command: # TODO
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              # TODO: add GPU, memory, cpu
+            limits:
+              # TODO: add GPU, memory, cpu
+          livenessProbe:
+            # TODO
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: # TODO
+  namespace: # TODO
+spec:
+  selector:
+    app: vllm
+  ports:
+    - port: # TODO
+      targetPort: # TODO
+  type: ClusterIP
+
+---test-cases---
+- name: "Deployment has GPU resource"
+  input: "Parse the YAML and check resources"
+  expected: "nvidia.com/gpu: 1 in both requests and limits"
+- name: "Service targets correct port"
+  input: "Parse Service spec"
+  expected: "port: 8000, targetPort: 8000"
+- name: "Liveness probe configured"
+  input: "Parse livenessProbe"
+  expected: "httpGet path=/health port=8000 initialDelaySeconds=60"
+
+---solution---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-server
+  namespace: inference
+  labels:
+    app: vllm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.4.0
+          command:
+            - python
+            - -m
+            - vllm.entrypoints.openai.api_server
+            - --model
+            - meta-llama/Llama-2-7b-chat-hf
+            - --port
+            - "8000"
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+              memory: 20Gi
+              cpu: "4"
+            limits:
+              nvidia.com/gpu: "1"
+              memory: 20Gi
+              cpu: "4"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+  namespace: inference
+spec:
+  selector:
+    app: vllm
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP

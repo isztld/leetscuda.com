@@ -1,0 +1,163 @@
+---
+slug: batched-inference
+title: Continuous Batching Scheduler
+difficulty: MEDIUM
+track: ml-systems
+tags:
+  - serving
+  - throughput
+  - scheduling
+execution: CPU_SIM
+status: PUBLISHED
+xp: 250
+---
+
+## Background
+
+LLM serving systems like vLLM and TensorRT-LLM use **continuous batching** (also called in-flight batching) to maximise GPU utilisation. Classic static batching waits until `B` requests arrive, processes them as a fixed batch, and only starts the next batch when all `B` requests finish. This leaves the GPU idle whenever requests have different output lengths.
+
+Continuous batching solves this by treating each generation step independently. At every step, the scheduler selects a batch of active requests, runs one forward pass, and immediately replaces any finished requests with waiting ones. The batch size stays near-constant, the GPU stays busy, and P50/P99 latency drops significantly.
+
+## What to Implement
+
+Implement `ContinuousBatchScheduler` in C++:
+
+```cpp
+class ContinuousBatchScheduler {
+public:
+    ContinuousBatchScheduler(int max_batch_size, int max_seq_len);
+    void add_request(int req_id, int prompt_len, int max_new_tokens);
+    // Returns the batch of req_ids selected for the next step.
+    // Preempts (moves to waiting) any request that would exceed max_seq_len.
+    std::vector<int> schedule();
+    // Mark a request as having generated one token (increments its token count).
+    void step(int req_id);
+    // Returns true if the request has finished (token count == max_new_tokens).
+    bool is_done(int req_id) const;
+    // Number of requests still running or waiting.
+    int pending_count() const;
+};
+```
+
+Scheduling policy:
+1. Maintain a **running set** (at most `max_batch_size` requests) and a **waiting queue** (FIFO)
+2. `schedule()` fills the running set from the waiting queue until full, then returns the running set
+3. Any request in the running set whose `prompt_len + tokens_generated` would exceed `max_seq_len` is preempted back to the waiting queue
+4. `step()` increments the token counter; if a request finishes, remove it from the running set
+
+## Constraints
+
+- `1 ≤ max_batch_size ≤ 64`
+- `1 ≤ max_seq_len ≤ 8192`
+- Request IDs are unique non-negative integers
+- `schedule()` is always called before `step()` for each time step
+
+## Example
+
+```
+scheduler(max_batch=2, max_seq=10)
+add(req=0, prompt=3, max_new=4)   // finishes at step 4
+add(req=1, prompt=5, max_new=3)   // finishes at step 3
+add(req=2, prompt=1, max_new=2)   // waiting initially
+
+schedule() → [0, 1]   // batch full
+step(0); step(1)
+schedule() → [0, 1]   // req 1 finishes after 3 more steps, req 2 fills in
+```
+
+---starter-code---
+#include <vector>
+#include <queue>
+#include <unordered_map>
+#include <algorithm>
+
+struct Request {
+    int req_id;
+    int prompt_len;
+    int max_new_tokens;
+    int tokens_generated = 0;
+};
+
+class ContinuousBatchScheduler {
+public:
+    int max_batch_size_;
+    int max_seq_len_;
+    std::vector<Request> running_;
+    std::queue<Request> waiting_;
+    std::unordered_map<int, Request*> req_map_;
+
+    ContinuousBatchScheduler(int max_batch_size, int max_seq_len)
+        : max_batch_size_(max_batch_size), max_seq_len_(max_seq_len) {}
+
+    void add_request(int req_id, int prompt_len, int max_new_tokens) {
+        // TODO: add to waiting queue
+    }
+
+    std::vector<int> schedule() {
+        // TODO: fill running_ from waiting_ up to max_batch_size_,
+        //       preempt requests that exceed max_seq_len,
+        //       return vector of req_ids in running set.
+        return {};
+    }
+
+    void step(int req_id) {
+        // TODO: increment token count; if done, remove from running_
+    }
+
+    bool is_done(int req_id) const {
+        // TODO
+        return false;
+    }
+
+    int pending_count() const {
+        return (int)(running_.size() + waiting_.size());
+    }
+};
+
+---test-cases---
+- name: "Single request runs to completion"
+  input: "max_batch=1 max_seq=10\nadd(0, prompt=2, max_new=3)"
+  expected: "3 schedule/step cycles to finish req 0"
+- name: "Two requests, one waits"
+  input: "max_batch=1 max_seq=10\nadd(0, prompt=1, max_new=2)\nadd(1, prompt=1, max_new=1)"
+  expected: "req 1 starts after req 0 finishes"
+- name: "Preemption on seq limit"
+  input: "max_batch=1 max_seq=5\nadd(0, prompt=4, max_new=3)"
+  expected: "req 0 preempted after 1 generated token (4+1=5 is the limit)"
+
+---solution---
+void add_request(int req_id, int prompt_len, int max_new_tokens) {
+    waiting_.push({req_id, prompt_len, max_new_tokens, 0});
+}
+
+std::vector<int> schedule() {
+    // Preempt overflowing requests
+    auto it = running_.begin();
+    while (it != running_.end()) {
+        if (it->prompt_len + it->tokens_generated >= max_seq_len_) {
+            waiting_.push(*it);
+            it = running_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    // Fill slots from waiting queue
+    while ((int)running_.size() < max_batch_size_ && !waiting_.empty()) {
+        running_.push_back(waiting_.front());
+        waiting_.pop();
+    }
+    std::vector<int> batch;
+    for (auto& r : running_) batch.push_back(r.req_id);
+    return batch;
+}
+
+void step(int req_id) {
+    for (auto it = running_.begin(); it != running_.end(); ++it) {
+        if (it->req_id == req_id) {
+            it->tokens_generated++;
+            if (it->tokens_generated >= it->max_new_tokens)
+                running_.erase(it);
+            return;
+        }
+    }
+}

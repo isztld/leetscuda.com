@@ -1,0 +1,156 @@
+---
+slug: false-sharing
+title: Eliminate False Sharing
+difficulty: HARD
+track: foundations
+tags:
+  - cpu
+  - cache
+  - concurrency
+  - false-sharing
+execution: CPU_SIM
+status: PUBLISHED
+xp: 300
+---
+
+## Background
+
+Modern CPUs cache data in **cache lines** (typically 64 bytes). When two threads on different cores write to *different variables that share the same cache line*, the hardware's cache coherence protocol (MESI) forces that cache line to bounce between the cores' L1 caches on every write — even though the threads are not sharing data logically. This is **false sharing**, and it can degrade multi-core throughput by 10–100×.
+
+The canonical example is an array of counters where each thread increments `counters[thread_id]`. If `sizeof(counter) < 64` and threads are adjacent in the array, their counters share a cache line. Every increment by thread 0 invalidates the cache line in thread 1's L1, and vice versa.
+
+The fix is **padding**: ensure each thread's data occupies at least one full cache line. This is done by either:
+- Aligning and sizing the struct to 64 bytes (`alignas(64)`)
+- Interleaving padding bytes manually
+
+## What to Implement
+
+Implement two versions of a parallel accumulator:
+
+```cpp
+// Version A — exhibits false sharing (naive layout)
+struct NaiveCounters {
+    long long values[MAX_THREADS];
+};
+
+// Version B — eliminates false sharing (padded layout)
+struct alignas(64) PaddedCounter {
+    long long value;
+    char pad[64 - sizeof(long long)];
+};
+struct PaddedCounters {
+    PaddedCounter slots[MAX_THREADS];
+};
+```
+
+Then implement the benchmark:
+
+```cpp
+// Returns elapsed milliseconds for T threads each incrementing their slot N times
+double benchmark_naive(int T, long long N);
+double benchmark_padded(int T, long long N);
+```
+
+Use `std::thread` and `std::chrono::high_resolution_clock` for timing. Each thread increments its own slot in a tight loop `N` times. The function returns total wall-clock time in milliseconds.
+
+Finally, implement `speedup(int T, long long N)` that returns `benchmark_naive / benchmark_padded`.
+
+## Constraints
+
+- `1 ≤ T ≤ 64` (number of threads)
+- `1 ≤ N ≤ 10^8` per thread
+- `sizeof(PaddedCounter)` must equal 64
+- The padded version must be at least 2× faster than naive for T≥4 and N=10^7
+
+## Example
+
+```
+T=8 threads, N=10^7 increments each:
+benchmark_naive(8, 1e7)  ≈ 850 ms   (false sharing thrashing)
+benchmark_padded(8, 1e7) ≈  40 ms   (each thread in its own cache line)
+speedup ≈ 21×
+```
+
+---starter-code---
+#include <thread>
+#include <chrono>
+#include <vector>
+#include <cstring>
+
+static constexpr int MAX_THREADS = 64;
+static constexpr int CACHE_LINE  = 64;
+
+// Naive layout — adjacent counters share cache lines when sizeof(long long)==8
+struct NaiveCounters {
+    long long values[MAX_THREADS];
+};
+
+// Padded layout — each counter occupies exactly one cache line
+struct alignas(CACHE_LINE) PaddedCounter {
+    long long value;
+    char pad[CACHE_LINE - sizeof(long long)];
+};
+
+struct PaddedCounters {
+    PaddedCounter slots[MAX_THREADS];
+};
+
+static_assert(sizeof(PaddedCounter) == CACHE_LINE,
+    "PaddedCounter must be exactly one cache line");
+
+double benchmark_naive(int T, long long N) {
+    NaiveCounters c;
+    std::memset(&c, 0, sizeof(c));
+
+    // TODO: launch T threads, each incrementing c.values[tid] N times,
+    //       time the total wall-clock duration in milliseconds, return it.
+    return 0.0;
+}
+
+double benchmark_padded(int T, long long N) {
+    PaddedCounters c;
+    std::memset(&c, 0, sizeof(c));
+
+    // TODO: same as above but increment c.slots[tid].value
+    return 0.0;
+}
+
+double speedup(int T, long long N) {
+    return benchmark_naive(T, N) / benchmark_padded(T, N);
+}
+
+---test-cases---
+- name: "Single thread: no false sharing"
+  input: "T=1 N=1000000"
+  expected: "speedup near 1.0 (no contention)"
+- name: "8 threads: significant speedup"
+  input: "T=8 N=10000000"
+  expected: "speedup >= 2.0"
+- name: "PaddedCounter size"
+  input: "sizeof(PaddedCounter)"
+  expected: "64"
+
+---solution---
+double benchmark_naive(int T, long long N) {
+    NaiveCounters c;
+    std::memset(&c, 0, sizeof(c));
+    std::vector<std::thread> threads;
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (int tid = 0; tid < T; ++tid)
+        threads.emplace_back([&c, tid, N]{ for (long long i = 0; i < N; ++i) c.values[tid]++; });
+    for (auto& t : threads) t.join();
+    auto t1 = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration<double, std::milli>(t1 - t0).count();
+}
+
+double benchmark_padded(int T, long long N) {
+    PaddedCounters c;
+    std::memset(&c, 0, sizeof(c));
+    std::vector<std::thread> threads;
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (int tid = 0; tid < T; ++tid)
+        threads.emplace_back([&c, tid, N]{ for (long long i = 0; i < N; ++i) c.slots[tid].value++; });
+    for (auto& t : threads) t.join();
+    auto t1 = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration<double, std::milli>(t1 - t0).count();
+}
