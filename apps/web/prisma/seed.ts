@@ -93,7 +93,7 @@ const NODES: {
     type: NodeType.PROBLEM,
     trackSlug: 'cuda',
     order: 5,
-    prerequisites: ['cuda-memory', 'vector-add'],
+    prerequisites: ['cuda-memory'],
   },
   {
     slug: 'matrix-transpose',
@@ -120,7 +120,7 @@ const NODES: {
     type: NodeType.CONCEPT,
     trackSlug: 'cuda',
     order: 8,
-    prerequisites: ['matrix-multiply'],
+    prerequisites: ['cuda-memory'],
   },
 
   // ── ML Systems track ─────────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ const NODES: {
     type: NodeType.PROBLEM,
     trackSlug: 'ml-systems',
     order: 4,
-    prerequisites: ['kv-cache', 'quantization-intro'],
+    prerequisites: ['quantization-intro'],
   },
   {
     slug: 'flash-attention',
@@ -167,7 +167,7 @@ const NODES: {
     type: NodeType.PROBLEM,
     trackSlug: 'ml-systems',
     order: 5,
-    prerequisites: ['batched-inference'],
+    prerequisites: ['quantization-intro'],
   },
 
   // ── Kubernetes for AI track ───────────────────────────────────────────────────
@@ -178,7 +178,7 @@ const NODES: {
     type: NodeType.PROBLEM,
     trackSlug: 'kubernetes-ai',
     order: 5,
-    prerequisites: ['hpa-gpu'],
+    prerequisites: ['gpu-operator'],
   },
   {
     slug: 'k8s-basics',
@@ -214,7 +214,7 @@ const NODES: {
     type: NodeType.PROBLEM,
     trackSlug: 'kubernetes-ai',
     order: 4,
-    prerequisites: ['deploy-inference-server'],
+    prerequisites: ['gpu-operator'],
   },
 
   // ── Foundations track ────────────────────────────────────────────────────────
@@ -252,7 +252,7 @@ const NODES: {
     type: NodeType.CONCEPT,
     trackSlug: 'foundations',
     order: 4,
-    prerequisites: ['pcie-bandwidth'],
+    prerequisites: ['simd-basics'],
   },
   {
     slug: 'roofline-model',
