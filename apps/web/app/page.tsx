@@ -38,60 +38,62 @@ const tracks = [
 
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <div className="min-h-screen">
       <Navbar />
 
       {/* Hero */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-20">
-        <div className="max-w-3xl">
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight">
-            The interview prep platform for AI infrastructure engineers
-          </h1>
-          <p className="mt-6 text-lg sm:text-xl text-zinc-400 leading-relaxed">
-            CUDA, ML systems, Kubernetes for AI, and the algorithms underneath.
-            One platform. No fluff.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              href="/problems"
-              className="px-5 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-medium transition-colors"
-            >
-              Start practicing
-            </Link>
-            <Link
-              href="/roadmap"
-              className="px-5 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium border border-zinc-700 transition-colors"
-            >
-              View roadmap
-            </Link>
-          </div>
-          <div className="mt-10 flex flex-wrap gap-6">
-            <div className="flex flex-col">
-              <span className="text-2xl font-bold text-white">12</span>
-              <span className="text-sm text-zinc-500 mt-0.5">problems</span>
+      <section className="bg-white border-b border-slate-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-20">
+          <div className="max-w-3xl">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight text-slate-900">
+              The interview prep platform for AI infrastructure engineers
+            </h1>
+            <p className="mt-6 text-lg sm:text-xl text-slate-600 leading-relaxed">
+              CUDA, ML systems, Kubernetes for AI, and the algorithms underneath.
+              One platform. No fluff.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link
+                href="/problems"
+                className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+              >
+                Start practicing
+              </Link>
+              <Link
+                href="/roadmap"
+                className="px-5 py-2.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium transition-colors"
+              >
+                View roadmap
+              </Link>
             </div>
-            <div className="w-px bg-zinc-800 hidden sm:block" />
-            <div className="flex flex-col">
-              <span className="text-2xl font-bold text-white">4</span>
-              <span className="text-sm text-zinc-500 mt-0.5">tracks</span>
-            </div>
-            <div className="w-px bg-zinc-800 hidden sm:block" />
-            <div className="flex flex-col">
-              <span className="text-2xl font-bold text-white">Principal-level</span>
-              <span className="text-sm text-zinc-500 mt-0.5">interview depth</span>
+            <div className="mt-10 flex flex-wrap gap-6">
+              <div className="flex flex-col">
+                <span className="text-2xl font-bold text-slate-900">12</span>
+                <span className="text-sm text-slate-500 mt-0.5">problems</span>
+              </div>
+              <div className="w-px bg-slate-200 hidden sm:block" />
+              <div className="flex flex-col">
+                <span className="text-2xl font-bold text-slate-900">4</span>
+                <span className="text-sm text-slate-500 mt-0.5">tracks</span>
+              </div>
+              <div className="w-px bg-slate-200 hidden sm:block" />
+              <div className="flex flex-col">
+                <span className="text-2xl font-bold text-slate-900">Principal-level</span>
+                <span className="text-sm text-slate-500 mt-0.5">interview depth</span>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       {/* The problem */}
-      <section className="border-t border-zinc-800">
+      <section className="bg-slate-50 border-y border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
           <div className="max-w-2xl">
-            <h2 className="text-3xl font-bold tracking-tight">
+            <h2 className="text-3xl font-bold tracking-tight text-slate-900">
               LeetCode won&apos;t get you this job
             </h2>
-            <div className="mt-6 space-y-4 text-zinc-400 leading-relaxed">
+            <div className="mt-6 space-y-4 text-slate-700 leading-relaxed">
               <p>
                 Companies like Nebius, Groq, and Lambda Labs are now interviewing for AI
                 infrastructure roles that go well beyond two-sum and system design. They want
@@ -117,30 +119,30 @@ export default function HomePage() {
       </section>
 
       {/* Tracks */}
-      <section className="border-t border-zinc-800 bg-zinc-900/30">
+      <section className="bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-          <h2 className="text-3xl font-bold tracking-tight">
+          <h2 className="text-3xl font-bold tracking-tight text-slate-900">
             Four tracks. One coherent path.
           </h2>
           <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4">
             {tracks.map((track) => (
               <div
                 key={track.slug}
-                className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col gap-3"
+                className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col gap-3"
                 style={{ borderLeft: `3px solid ${track.color}` }}
               >
                 <div className="flex items-start justify-between gap-4">
-                  <h3 className="text-base font-semibold text-white leading-snug">
+                  <h3 className="text-base font-semibold text-slate-900 leading-snug">
                     {track.title}
                   </h3>
-                  <span className="shrink-0 text-xs font-medium text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">
+                  <span className="shrink-0 text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
                     {track.count} problems
                   </span>
                 </div>
-                <p className="text-sm text-zinc-400 leading-relaxed">{track.description}</p>
+                <p className="text-sm text-slate-600 leading-relaxed">{track.description}</p>
                 <Link
                   href={`/problems?track=${track.slug}`}
-                  className="text-sm text-zinc-400 hover:text-white transition-colors mt-auto"
+                  className="text-sm text-blue-600 hover:text-blue-700 transition-colors mt-auto"
                 >
                   Explore →
                 </Link>
@@ -151,57 +153,52 @@ export default function HomePage() {
       </section>
 
       {/* How it works */}
-      <section className="border-t border-zinc-800">
+      <section className="bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-          <h2 className="text-3xl font-bold tracking-tight">How it works</h2>
+          <h2 className="text-3xl font-bold tracking-tight text-slate-900">How it works</h2>
           <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
-            <div className="flex flex-col gap-3">
-              <span className="text-xs font-mono text-zinc-500 tracking-widest uppercase">
-                Step 1
-              </span>
-              <h3 className="text-lg font-semibold text-white">Follow the roadmap</h3>
-              <p className="text-sm text-zinc-400 leading-relaxed">
-                Start from the visual dependency graph. Understand what to learn and in what
-                order before you write a single line of code.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3">
-              <span className="text-xs font-mono text-zinc-500 tracking-widest uppercase">
-                Step 2
-              </span>
-              <h3 className="text-lg font-semibold text-white">Solve real problems</h3>
-              <p className="text-sm text-zinc-400 leading-relaxed">
-                Problems modeled after actual interview questions at AI infrastructure
-                companies. Not toy examples — the real depth.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3">
-              <span className="text-xs font-mono text-zinc-500 tracking-widest uppercase">
-                Step 3
-              </span>
-              <h3 className="text-lg font-semibold text-white">Track your progress</h3>
-              <p className="text-sm text-zinc-400 leading-relaxed">
-                XP, streaks, and per-track completion so you always know exactly where you
-                stand and what to work on next.
-              </p>
-            </div>
+            {[
+              {
+                n: '1',
+                title: 'Follow the roadmap',
+                body: 'Start from the visual dependency graph. Understand what to learn and in what order before you write a single line of code.',
+              },
+              {
+                n: '2',
+                title: 'Solve real problems',
+                body: 'Problems modeled after actual interview questions at AI infrastructure companies. Not toy examples — the real depth.',
+              },
+              {
+                n: '3',
+                title: 'Track your progress',
+                body: 'XP, streaks, and per-track completion so you always know exactly where you stand and what to work on next.',
+              },
+            ].map((step) => (
+              <div key={step.n} className="flex flex-col gap-3">
+                <span className="w-8 h-8 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center">
+                  {step.n}
+                </span>
+                <h3 className="text-lg font-semibold text-slate-900">{step.title}</h3>
+                <p className="text-sm text-slate-600 leading-relaxed">{step.body}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
       {/* CTA */}
-      <section className="border-t border-zinc-800 bg-zinc-900/30">
+      <section className="bg-slate-900">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-12 text-center max-w-2xl mx-auto">
-            <h2 className="text-3xl font-bold tracking-tight">
+          <div className="text-center max-w-2xl mx-auto">
+            <h2 className="text-3xl font-bold tracking-tight text-white">
               Ready to actually prepare?
             </h2>
-            <p className="mt-4 text-zinc-400">
+            <p className="mt-4 text-slate-300">
               Free to use. No credit card. Just sign in with GitHub or Google.
             </p>
             <Link
               href="/api/auth/signin"
-              className="mt-8 inline-block px-6 py-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-medium transition-colors"
+              className="mt-8 inline-block px-6 py-3 rounded-lg bg-white text-slate-900 hover:bg-slate-100 font-medium transition-colors"
             >
               Get started
             </Link>
@@ -210,20 +207,20 @@ export default function HomePage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-zinc-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center gap-4 text-sm text-zinc-500">
+      <footer className="bg-white border-t border-slate-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center gap-4 text-sm text-slate-500">
           <p>leetscuda.com — built for the interview nobody warns you about</p>
           <div className="flex items-center gap-5">
             <a
               href="#"
-              className="hover:text-zinc-300 transition-colors"
+              className="hover:text-slate-700 transition-colors"
             >
               GitHub
             </a>
-            <Link href="/roadmap" className="hover:text-zinc-300 transition-colors">
+            <Link href="/roadmap" className="hover:text-slate-700 transition-colors">
               Roadmap
             </Link>
-            <Link href="/problems" className="hover:text-zinc-300 transition-colors">
+            <Link href="/problems" className="hover:text-slate-700 transition-colors">
               Problems
             </Link>
           </div>

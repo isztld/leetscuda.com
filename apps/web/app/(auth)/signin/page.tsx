@@ -21,21 +21,21 @@ export default async function SignInPage({ searchParams }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-zinc-950 flex items-center justify-center px-4">
+    <main className="min-h-screen bg-slate-100 flex items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-white tracking-tight">leetscuda.com</h1>
-          <p className="text-zinc-400 mt-2 text-sm">Master the stack behind modern AI</p>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">leetscuda.com</h1>
+          <p className="text-slate-600 mt-2 text-sm">Master the stack behind modern AI</p>
         </div>
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 space-y-3">
-          <h2 className="text-base font-semibold text-white text-center mb-5">Sign in</h2>
+        <div className="bg-white border border-slate-200 rounded-xl p-8 space-y-3">
+          <h2 className="text-base font-semibold text-slate-900 text-center mb-5">Sign in</h2>
 
           {/* GitHub */}
           <form action={signInWithGitHub}>
             <button
               type="submit"
-              className="w-full flex items-center justify-center gap-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg px-4 py-3 text-sm font-medium transition-colors"
+              className="w-full flex items-center justify-center gap-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg px-4 py-3 text-sm font-medium transition-colors"
             >
               <GitHubIcon />
               Sign in with GitHub
@@ -46,7 +46,7 @@ export default async function SignInPage({ searchParams }: Props) {
           <form action={signInWithGoogle}>
             <button
               type="submit"
-              className="w-full flex items-center justify-center gap-3 bg-white hover:bg-zinc-100 text-zinc-900 rounded-lg px-4 py-3 text-sm font-medium transition-colors"
+              className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg px-4 py-3 text-sm font-medium transition-colors"
             >
               <GoogleIcon />
               Sign in with Google

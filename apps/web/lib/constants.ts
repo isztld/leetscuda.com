@@ -1,18 +1,18 @@
 export const DIFFICULTY_COLORS = {
   EASY: {
-    bg: 'bg-emerald-500/15',
-    text: 'text-emerald-400',
-    border: 'border-emerald-500/30',
+    bg: 'bg-green-50',
+    text: 'text-green-700',
+    border: 'border-green-200',
   },
   MEDIUM: {
-    bg: 'bg-yellow-500/15',
-    text: 'text-yellow-400',
-    border: 'border-yellow-500/30',
+    bg: 'bg-amber-50',
+    text: 'text-amber-700',
+    border: 'border-amber-200',
   },
   HARD: {
-    bg: 'bg-red-500/15',
-    text: 'text-red-400',
-    border: 'border-red-500/30',
+    bg: 'bg-red-50',
+    text: 'text-red-700',
+    border: 'border-red-200',
   },
 } as const
 
@@ -24,34 +24,34 @@ export const DIFFICULTY_LABELS: Record<keyof typeof DIFFICULTY_COLORS, string> =
 
 export const SUBMISSION_STATUS_COLORS = {
   ACCEPTED: {
-    bg: 'bg-emerald-500/15',
-    text: 'text-emerald-400',
-    panelBg: 'bg-emerald-950',
+    bg: 'bg-green-50',
+    text: 'text-green-700',
+    panelBg: 'bg-green-50',
   },
   WRONG_ANSWER: {
-    bg: 'bg-red-500/15',
-    text: 'text-red-400',
-    panelBg: 'bg-red-950',
+    bg: 'bg-red-50',
+    text: 'text-red-700',
+    panelBg: 'bg-red-50',
   },
   RUNTIME_ERROR: {
-    bg: 'bg-red-500/15',
-    text: 'text-red-400',
-    panelBg: 'bg-red-950',
+    bg: 'bg-red-50',
+    text: 'text-red-700',
+    panelBg: 'bg-red-50',
   },
   TIME_LIMIT: {
-    bg: 'bg-orange-500/15',
-    text: 'text-orange-400',
-    panelBg: 'bg-orange-950',
+    bg: 'bg-amber-50',
+    text: 'text-amber-700',
+    panelBg: 'bg-amber-50',
   },
   PENDING: {
-    bg: 'bg-zinc-500/15',
-    text: 'text-zinc-400',
-    panelBg: 'bg-zinc-800',
+    bg: 'bg-slate-100',
+    text: 'text-slate-600',
+    panelBg: 'bg-slate-100',
   },
   RUNNING: {
-    bg: 'bg-blue-500/15',
-    text: 'text-blue-400',
-    panelBg: 'bg-blue-950',
+    bg: 'bg-blue-50',
+    text: 'text-blue-700',
+    panelBg: 'bg-blue-50',
   },
 } as const
 

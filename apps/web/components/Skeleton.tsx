@@ -11,5 +11,5 @@ export function Skeleton({ variant = 'line', className = '' }: SkeletonProps) {
         ? 'h-24 w-full'
         : 'h-5 w-16'
 
-  return <div className={`animate-pulse bg-zinc-800 rounded ${variantClass} ${className}`} />
+  return <div className={`animate-pulse bg-slate-200 rounded ${variantClass} ${className}`} />
 }

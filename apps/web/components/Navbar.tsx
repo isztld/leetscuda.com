@@ -23,12 +23,12 @@ export function Navbar() {
   const user = session?.user
 
   return (
-    <nav className="border-b border-zinc-800 bg-zinc-950">
+    <nav className="border-b border-slate-200 bg-white shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center gap-6">
         {/* Logo */}
         <Link
           href="/"
-          className="text-white font-bold text-lg tracking-tight hover:text-zinc-300 transition-colors shrink-0"
+          className="text-slate-900 font-bold text-lg tracking-tight hover:text-slate-700 transition-colors shrink-0"
         >
           leetscuda
         </Link>
@@ -37,13 +37,13 @@ export function Navbar() {
         <div className="flex items-center gap-1 flex-1">
           <Link
             href="/problems"
-            className="text-sm text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+            className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
           >
             Problems
           </Link>
           <Link
             href="/roadmap"
-            className="text-sm text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+            className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
           >
             Roadmap
           </Link>
@@ -67,20 +67,20 @@ export function Navbar() {
                   className="rounded-full"
                 />
               ) : (
-                <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center text-white text-sm font-semibold">
+                <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-semibold">
                   {(user.username ?? user.email ?? '?')[0].toUpperCase()}
                 </div>
               )}
-              <span className="text-sm text-zinc-300 hidden sm:block">
+              <span className="text-sm text-slate-600 hidden sm:block">
                 {user.username}
               </span>
             </button>
 
             {open && (
-              <div className="absolute right-0 mt-2 w-44 bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg py-1 z-50">
+              <div className="absolute right-0 mt-2 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-50">
                 <Link
                   href={user.username ? `/profile/${user.username}` : '/profile'}
-                  className="block px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors"
+                  className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
                   onClick={() => setOpen(false)}
                 >
                   Profile
@@ -90,7 +90,7 @@ export function Navbar() {
                     setOpen(false)
                     signOut({ callbackUrl: '/' })
                   }}
-                  className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors"
+                  className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
                 >
                   Sign out
                 </button>
@@ -100,7 +100,7 @@ export function Navbar() {
         ) : (
           <Link
             href="/signin"
-            className="shrink-0 text-sm text-zinc-300 hover:text-white px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+            className="shrink-0 text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors"
           >
             Sign in
           </Link>

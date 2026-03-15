@@ -5,9 +5,9 @@ export default function ProblemDetailLoading() {
     <div className="flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Left panel skeleton (40%) */}
-        <div className="w-2/5 flex flex-col border-r border-zinc-800 min-h-0">
+        <div className="w-2/5 flex flex-col bg-white border-r border-slate-200 min-h-0">
           {/* Header */}
-          <div className="px-5 py-4 border-b border-zinc-800 shrink-0">
+          <div className="px-5 py-4 border-b border-slate-200 shrink-0">
             <Skeleton variant="line" className="h-6 w-3/4 mb-3" />
             <div className="flex items-center gap-2">
               <Skeleton variant="badge" className="w-16 h-5 rounded-full" />
@@ -17,7 +17,7 @@ export default function ProblemDetailLoading() {
           </div>
 
           {/* Tabs */}
-          <div className="flex border-b border-zinc-800 shrink-0 px-4 py-2 gap-4">
+          <div className="flex border-b border-slate-200 shrink-0 px-4 py-2 gap-4">
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} variant="badge" className="h-4 w-20" />
             ))}
@@ -38,7 +38,7 @@ export default function ProblemDetailLoading() {
         {/* Right panel skeleton (60%) */}
         <div className="w-3/5 flex flex-col min-h-0">
           {/* Toolbar */}
-          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-950 shrink-0">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 bg-slate-50 shrink-0">
             <Skeleton variant="badge" className="h-7 w-24" />
             <Skeleton variant="badge" className="h-7 w-20" />
           </div>

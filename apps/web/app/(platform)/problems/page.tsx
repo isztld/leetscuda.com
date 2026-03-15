@@ -49,18 +49,20 @@ export default async function ProblemsPage({
   }
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-white">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <div className="mb-10">
-          <h1 className="text-4xl font-bold tracking-tight">Problems</h1>
-          <p className="text-zinc-400 mt-3 text-lg">
+    <main className="min-h-screen">
+      <div className="bg-white border-b border-slate-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <h1 className="text-4xl font-bold tracking-tight text-slate-900">Problems</h1>
+          <p className="text-slate-600 mt-3 text-lg">
             Solve your way to an AI infrastructure role
           </p>
         </div>
+      </div>
 
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <ErrorBoundary
           fallback={
-            <p className="text-zinc-400 text-sm">Failed to load problems. Please refresh.</p>
+            <p className="text-slate-500 text-sm">Failed to load problems. Please refresh.</p>
           }
         >
           <ProblemsClient

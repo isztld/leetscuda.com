@@ -69,7 +69,7 @@ function avatarBg(username: string): string {
 function difficultyClass(difficulty: string) {
   const d = difficulty as Difficulty
   const c = DIFFICULTY_COLORS[d]
-  return c ? `${c.bg} ${c.text}` : 'bg-zinc-500/15 text-zinc-400'
+  return c ? `${c.bg} ${c.text}` : 'bg-slate-100 text-slate-600'
 }
 
 function difficultyLabel(difficulty: string): string {
@@ -79,7 +79,7 @@ function difficultyLabel(difficulty: string): string {
 function statusClass(status: string) {
   const s = status as SubmissionStatus
   const c = SUBMISSION_STATUS_COLORS[s]
-  return c ? `${c.bg} ${c.text}` : 'bg-zinc-500/15 text-zinc-400'
+  return c ? `${c.bg} ${c.text}` : 'bg-slate-100 text-slate-600'
 }
 
 function statusLabel(status: string): string {
@@ -96,9 +96,9 @@ function formatMemberSince(iso: string) {
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex flex-col gap-1">
-      <span className="text-2xl font-bold text-white">{value}</span>
-      <span className="text-sm text-zinc-400">{label}</span>
+    <div className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col gap-1">
+      <span className="text-2xl font-bold text-slate-900">{value}</span>
+      <span className="text-sm text-slate-500">{label}</span>
     </div>
   )
 }
@@ -107,10 +107,10 @@ export function ProfileClient({ data }: { data: ProfileData }) {
   const { user, stats, recentSubmissions, solvedProblems } = data
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-white">
+    <main className="min-h-screen">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8">
         {/* ── User card ────────────────────────────────────────────── */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex items-start gap-6">
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 flex items-start gap-6">
           {/* Avatar */}
           {user.avatarUrl ? (
             <Image
@@ -131,44 +131,44 @@ export function ProfileClient({ data }: { data: ProfileData }) {
           {/* Info */}
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-1">
-              <h1 className="text-2xl font-bold text-white truncate">{user.username}</h1>
+              <h1 className="text-2xl font-bold text-slate-900 truncate">{user.username}</h1>
               {user.role === 'CONTRIBUTOR' && (
-                <span className="bg-blue-500/15 text-blue-400 text-xs font-semibold px-2 py-0.5 rounded-full">
+                <span className="bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold px-2 py-0.5 rounded-full">
                   Contributor
                 </span>
               )}
               {user.role === 'ADMIN' && (
-                <span className="bg-violet-500/15 text-violet-400 text-xs font-semibold px-2 py-0.5 rounded-full">
+                <span className="bg-violet-50 text-violet-700 border border-violet-200 text-xs font-semibold px-2 py-0.5 rounded-full">
                   Admin
                 </span>
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-4 text-sm text-zinc-400">
+            <div className="flex flex-wrap items-center gap-4 text-sm text-slate-500">
               {/* XP */}
-              <span className="flex items-center gap-1">
-                <svg className="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+              <span className="flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full text-xs font-medium">
+                <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" />
                 </svg>
-                <span className="text-white font-semibold">{user.xp.toLocaleString()}</span> XP
+                {user.xp.toLocaleString()} XP
               </span>
-
-              {/* Member since */}
-              <span>Joined {formatMemberSince(user.createdAt)}</span>
 
               {/* Streak */}
               {user.streakDays > 0 && (
-                <span className="flex items-center gap-1">
-                  <svg className="w-4 h-4 text-orange-400" fill="currentColor" viewBox="0 0 20 20">
+                <span className="flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full text-xs font-medium">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fillRule="evenodd"
                       d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.534-.398-2.654A1 1 0 005.05 6.05 6.981 6.981 0 003 11a7 7 0 1011.95-4.95c-.592-.591-.98-.985-1.348-1.467-.363-.476-.724-1.063-1.207-2.03zM12.12 15.12A3 3 0 017 13s.879.5 2.5.5c0-1 .5-4 1.25-4.5.5 1 .786 1.293 1.371 1.879A2.99 2.99 0 0113 13a2.99 2.99 0 01-.879 2.121z"
                       clipRule="evenodd"
                     />
                   </svg>
-                  <span className="text-white font-semibold">{user.streakDays}</span> day streak
+                  {user.streakDays} day streak
                 </span>
               )}
+
+              {/* Member since */}
+              <span>Joined {formatMemberSince(user.createdAt)}</span>
             </div>
           </div>
         </div>
@@ -185,23 +185,23 @@ export function ProfileClient({ data }: { data: ProfileData }) {
         </div>
 
         {/* ── Difficulty breakdown ────────────────────────────────────── */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+        <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">
             Difficulty Breakdown
           </h2>
           <div className="flex flex-wrap gap-3">
             <span className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${DIFFICULTY_COLORS.EASY.bg} ${DIFFICULTY_COLORS.EASY.text}`}>
-              <span className={`w-2 h-2 rounded-full inline-block bg-emerald-400`} />
+              <span className="w-2 h-2 rounded-full inline-block bg-green-600" />
               Easy &nbsp;
               <span className="font-bold">{stats.solvedByDifficulty.easy}</span>
             </span>
             <span className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${DIFFICULTY_COLORS.MEDIUM.bg} ${DIFFICULTY_COLORS.MEDIUM.text}`}>
-              <span className={`w-2 h-2 rounded-full inline-block bg-yellow-400`} />
+              <span className="w-2 h-2 rounded-full inline-block bg-amber-500" />
               Medium &nbsp;
               <span className="font-bold">{stats.solvedByDifficulty.medium}</span>
             </span>
             <span className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${DIFFICULTY_COLORS.HARD.bg} ${DIFFICULTY_COLORS.HARD.text}`}>
-              <span className={`w-2 h-2 rounded-full inline-block bg-red-400`} />
+              <span className="w-2 h-2 rounded-full inline-block bg-red-600" />
               Hard &nbsp;
               <span className="font-bold">{stats.solvedByDifficulty.hard}</span>
             </span>
@@ -210,8 +210,8 @@ export function ProfileClient({ data }: { data: ProfileData }) {
 
         {/* ── Track progress ──────────────────────────────────────────── */}
         {stats.solvedByTrack.length > 0 && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-            <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-5">
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">
               Track Progress
             </h2>
             <div className="space-y-4">
@@ -222,12 +222,12 @@ export function ProfileClient({ data }: { data: ProfileData }) {
                   style={{ borderLeftColor: track.color }}
                 >
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm font-medium text-zinc-200">{track.trackTitle}</span>
-                    <span className="text-xs text-zinc-500">
+                    <span className="text-sm font-medium text-slate-700">{track.trackTitle}</span>
+                    <span className="text-xs text-slate-500">
                       {track.solved} / {track.total}
                     </span>
                   </div>
-                  <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all"
                       style={{
@@ -243,30 +243,30 @@ export function ProfileClient({ data }: { data: ProfileData }) {
         )}
 
         {/* ── Recent submissions ──────────────────────────────────────── */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">
             Recent Submissions
           </h2>
           {recentSubmissions.length === 0 ? (
-            <p className="text-zinc-500 text-sm">No submissions yet.</p>
+            <p className="text-slate-500 text-sm">No submissions yet.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-zinc-500 text-left border-b border-zinc-800">
+                  <tr className="text-slate-500 text-left border-b border-slate-200">
                     <th className="pb-2 font-medium pr-4">Problem</th>
                     <th className="pb-2 font-medium pr-4">Status</th>
                     <th className="pb-2 font-medium pr-4">Runtime</th>
                     <th className="pb-2 font-medium">Date</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/50">
+                <tbody className="divide-y divide-slate-100">
                   {recentSubmissions.map((sub) => (
-                    <tr key={sub.id} className="hover:bg-zinc-800/30 transition-colors">
+                    <tr key={sub.id} className="hover:bg-slate-50 transition-colors">
                       <td className="py-2.5 pr-4">
                         <Link
                           href={`/problems/${sub.problemSlug}`}
-                          className="text-zinc-200 hover:text-white transition-colors"
+                          className="text-slate-700 hover:text-blue-600 transition-colors"
                         >
                           {sub.problemTitle}
                         </Link>
@@ -278,10 +278,10 @@ export function ProfileClient({ data }: { data: ProfileData }) {
                           {statusLabel(sub.status)}
                         </span>
                       </td>
-                      <td className="py-2.5 pr-4 text-zinc-400">
+                      <td className="py-2.5 pr-4 text-slate-500">
                         {sub.runtimeMs != null ? `${sub.runtimeMs} ms` : '—'}
                       </td>
-                      <td className="py-2.5 text-zinc-500">{formatDate(sub.submittedAt)}</td>
+                      <td className="py-2.5 text-slate-500">{formatDate(sub.submittedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -292,14 +292,14 @@ export function ProfileClient({ data }: { data: ProfileData }) {
 
         {/* ── Solved problems ─────────────────────────────────────────── */}
         <div>
-          <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">
             Solved Problems
           </h2>
           {solvedProblems.length === 0 ? (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center">
-              <p className="text-zinc-500 text-sm">
+            <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
+              <p className="text-slate-500 text-sm">
                 No problems solved yet.{' '}
-                <Link href="/roadmap" className="text-violet-400 hover:text-violet-300 transition-colors">
+                <Link href="/roadmap" className="text-blue-600 hover:text-blue-700 transition-colors">
                   Start with the roadmap.
                 </Link>
               </p>
@@ -310,9 +310,9 @@ export function ProfileClient({ data }: { data: ProfileData }) {
                 <Link
                   key={problem.slug}
                   href={`/problems/${problem.slug}`}
-                  className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 hover:border-zinc-600 transition-colors flex flex-col gap-2"
+                  className="bg-white border border-slate-200 rounded-lg p-4 hover:border-slate-300 transition-colors flex flex-col gap-2"
                 >
-                  <span className="text-sm font-medium text-white leading-snug line-clamp-2">
+                  <span className="text-sm font-medium text-slate-900 leading-snug line-clamp-2">
                     {problem.title}
                   </span>
                   <div className="flex flex-wrap gap-1.5 mt-auto pt-1">
@@ -331,10 +331,10 @@ export function ProfileClient({ data }: { data: ProfileData }) {
                       {problem.trackTitle}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-xs text-zinc-500 pt-1 border-t border-zinc-800">
+                  <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
                     <span className="flex items-center gap-1">
                       <svg
-                        className="w-3 h-3 text-yellow-500"
+                        className="w-3 h-3 text-amber-500"
                         fill="currentColor"
                         viewBox="0 0 20 20"
                       >
