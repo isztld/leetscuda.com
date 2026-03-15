@@ -1,48 +1,66 @@
 # leetscuda.com
 
-AI Infrastructure Interview Prep Platform — covering CUDA/GPU programming, ML systems, Kubernetes for AI workloads, and foundational DSA.
+AI Infrastructure Interview Prep Platform — practice CUDA/GPU programming, ML systems, Kubernetes for AI, and systems foundations through real coding problems in your browser.
 
-## Setup
+Targeted at senior/staff-level interviews at GPU-cloud and AI infrastructure companies (Nebius, Groq, Crusoe, Lambda Labs, Anyscale, etc.).
+
+---
+
+## What it is
+
+LeetsCUDA is a LeetCode-style platform where every problem involves something you'd actually encounter building AI infrastructure:
+
+- Writing CUDA kernels (vector-add, matrix-transpose, parallel reduction)
+- Implementing ML inference primitives (KV cache, continuous batching, Flash Attention)
+- Writing Kubernetes manifests for GPU workloads (vLLM deployments, HPA with custom metrics)
+- Systems analysis (roofline model, PCIe bandwidth, false sharing)
+
+Problems are written in MDX, compiled server-side, and presented in a split-pane editor powered by Monaco (the VS Code engine).
+
+---
+
+## Quick start
 
 ### Prerequisites
 
 - Node.js >= 18.17.0
 - pnpm >= 8.0.0
-- PostgreSQL (local or via Docker)
-- Redis (local or via Docker)
+- PostgreSQL (local or Docker)
+- Redis (local or Docker)
 
-### Quick start
+### 1. Clone and install
 
 ```bash
-# 1. Clone the repo
 git clone https://github.com/your-org/leetscuda.git
 cd leetscuda
-
-# 2. Copy env and fill in credentials
-cp .env.example .env
-# Edit .env — add NEXTAUTH_SECRET, GitHub/Google OAuth client IDs & secrets
-
-# 3. Install dependencies
 pnpm install
-
-# 4. Generate Prisma client and run migrations
-pnpm --filter @leetscuda/web db:generate
-pnpm --filter @leetscuda/web db:migrate
-
-# 5. Start the dev server
-pnpm dev
 ```
 
-App runs at http://localhost:3000.
+### 2. Configure environment
 
-### OAuth credentials
+```bash
+cp .env.example .env
+```
 
-- **GitHub OAuth**: create an app at https://github.com/settings/developers
-  - Authorization callback URL: `http://localhost:3000/api/auth/callback/github`
-- **Google OAuth**: create credentials at https://console.cloud.google.com
-  - Authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
+Edit `.env` and fill in:
 
-### Local Postgres & Redis (Docker)
+```
+NEXTAUTH_SECRET=<generate with: openssl rand -base64 32>
+NEXTAUTH_URL=http://localhost:3000
+
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/leetscuda
+REDIS_URL=redis://localhost:6379
+```
+
+> The `.env` file lives at the repo root. `apps/web/.env` is a symlink to it — create the symlink if it doesn't exist: `ln -s ../../.env apps/web/.env`
+
+### 3. Start Postgres and Redis (Docker)
 
 ```bash
 docker run -d --name leetscuda-pg \
@@ -54,42 +72,245 @@ docker run -d --name leetscuda-redis \
   -p 6379:6379 redis:7
 ```
 
-### Useful commands
+### 4. Migrate and seed the database
 
 ```bash
-pnpm --filter @leetscuda/web db:migrate   # apply Prisma migrations
-pnpm --filter @leetscuda/web db:generate  # regenerate Prisma client
-pnpm --filter @leetscuda/web db:studio    # open Prisma Studio
-pnpm --filter @leetscuda/web lint         # lint the web app
-pnpm --filter @leetscuda/web build        # production build
+pnpm --filter @leetscuda/web db:migrate   # run all migrations
+pnpm --filter @leetscuda/web db:seed      # seed tracks, roadmap nodes, 12 problems
 ```
 
-## Monorepo structure
+### 5. Start the dev server
+
+```bash
+pnpm dev
+```
+
+App runs at http://localhost:3000.
+
+---
+
+## OAuth setup
+
+### GitHub
+
+1. Go to https://github.com/settings/developers → **New OAuth App**
+2. Set **Authorization callback URL** to `http://localhost:3000/api/auth/callback/github`
+3. Copy Client ID and Client Secret into `.env`
+
+### Google
+
+1. Go to https://console.cloud.google.com → APIs & Services → Credentials → **Create OAuth client**
+2. Application type: **Web application**
+3. Add authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
+4. Copy Client ID and Client Secret into `.env`
+
+---
+
+## Repository structure
 
 ```
 leetscuda/
-  apps/
-    web/          Next.js 14 app (App Router, tRPC, Prisma, NextAuth)
-    judge/        Standalone judge worker (Phase 6)
-  packages/
-    ui/           Shared component library
-    types/        Shared TypeScript types
-  problems/
-    cuda/         CUDA & GPU programming problems (MDX)
-    ml-systems/   ML systems & inference problems (MDX)
-    kubernetes-ai/ Kubernetes for AI problems (MDX)
-    foundations/  DSA & C++ foundations problems (MDX)
+├── apps/
+│   ├── web/                    Next.js 14 app (App Router)
+│   │   ├── app/
+│   │   │   ├── (auth)/         Sign-in, username setup pages
+│   │   │   └── (platform)/     Roadmap, problems list, problem detail
+│   │   ├── components/         React components
+│   │   ├── lib/                Prisma client, tRPC client, problems content loader
+│   │   ├── server/
+│   │   │   └── routers/        tRPC routers (user, roadmap, problems, submission)
+│   │   └── prisma/
+│   │       ├── schema.prisma
+│   │       └── seed.ts
+│   └── judge/                  Standalone judge worker (Phase 6 — not yet built)
+├── packages/
+│   ├── ui/                     Shared component library (stub)
+│   └── types/                  Shared TypeScript types (stub)
+└── problems/                   Problem content (MDX files)
+    ├── cuda/
+    │   ├── vector-add/index.mdx
+    │   ├── matrix-transpose/index.mdx
+    │   └── reduce-sum/index.mdx
+    ├── ml-systems/
+    │   ├── kv-cache/index.mdx
+    │   ├── batched-inference/index.mdx
+    │   └── flash-attention/index.mdx
+    ├── kubernetes-ai/
+    │   ├── deploy-inference-server/index.mdx
+    │   ├── hpa-gpu/index.mdx
+    │   └── multi-node-training/index.mdx
+    └── foundations/
+        ├── pcie-bandwidth/index.mdx
+        ├── roofline-model/index.mdx
+        └── false-sharing/index.mdx
 ```
+
+---
 
 ## Tech stack
 
 | Layer | Technology |
-|-------|-----------|
+|---|---|
 | Frontend | Next.js 14 (App Router) |
 | Language | TypeScript |
-| Styling | Tailwind CSS |
+| Styling | Tailwind CSS + @tailwindcss/typography |
 | API | tRPC v11 |
-| Auth | NextAuth.js v5 |
-| ORM | Prisma |
+| Auth | NextAuth.js v5 (GitHub + Google OAuth) |
+| ORM | Prisma 5 |
 | Database | PostgreSQL |
-| Cache/Queue | Redis |
+| Cache / Queue | Redis (ioredis) |
+| Code Editor | Monaco Editor (@monaco-editor/react) |
+| Markdown | marked + highlight.js |
+| Judge | Docker + Firejail (Phase 6) |
+
+---
+
+## Architecture
+
+### Request flow
+
+```
+Browser → Next.js App Router (Server Components)
+                ↓ Prisma (direct DB queries for server pages)
+                ↓ tRPC (client-side mutations and queries)
+                      ↓ protectedProcedure (NextAuth session check)
+                      ↓ Prisma (DB reads/writes)
+                      ↓ Redis rpush (job queue for judge)
+```
+
+### Authentication
+
+NextAuth.js v5 with GitHub and Google providers. Sessions are JWTs stored in httpOnly cookies. On first sign-in, users are redirected to `/setup-username` before reaching any platform page. The middleware at `apps/web/middleware.ts` enforces this.
+
+Public routes (no auth required): `/`, `/signin`, `/roadmap`, `/problems`, `/problems/*`
+Protected: everything else, plus tRPC mutations that use `protectedProcedure`
+
+### tRPC routers
+
+| Router | Procedures |
+|---|---|
+| `user` | `me`, `setUsername` |
+| `roadmap` | `getTracks`, `getUserProgress` |
+| `problems` | `list`, `getBySlug` |
+| `submission` | `create`, `getStatus` |
+
+### Database schema (key models)
+
+```
+User           id, email, username, xp, streakDays, role
+Track          id, slug, title, color, order
+Problem        id, slug, title, difficulty, trackId, tags[], xpReward, executionMode
+Submission     id, userId, problemId, code, language, status, runtimeMs, output, errorMsg
+UserProgress   userId, problemId, trackId, solvedAt, attempts
+RoadmapNode    id, slug, title, type, trackId, prerequisites[]
+Comment        id, userId, problemId, body, upvotes
+```
+
+`SubmissionStatus` enum: `PENDING | RUNNING | ACCEPTED | WRONG_ANSWER | RUNTIME_ERROR | TIME_LIMIT`
+
+### Submission flow
+
+1. User clicks **Submit** → `trpc.submission.create` mutation
+2. Server writes a `PENDING` submission to Postgres and pushes a job to Redis (`judge:queue`)
+3. Client polls `trpc.submission.getStatus` every 1500 ms
+4. Judge worker (Phase 6) pops the job, compiles and runs the code in a Docker/Firejail sandbox, writes result back to Postgres
+5. Client detects terminal status and stops polling
+
+While the judge is not yet running, submissions sit as `PENDING` indefinitely. The UI handles this with a spinner and "Waiting for judge…" message.
+
+---
+
+## Problem format (MDX)
+
+Every problem lives at `problems/{track}/{slug}/index.mdx`. The file has four sections:
+
+```
+---
+[YAML frontmatter — must match DB seed exactly]
+---
+
+[Markdown description — rendered to HTML with syntax highlighting]
+
+---starter-code---
+[C++ / CUDA starter code shown in Monaco editor]
+
+---test-cases---
+[YAML array of {name, input, expected} test cases]
+
+---solution---
+[Reference solution — never sent to the client, used by judge only]
+```
+
+### Frontmatter fields
+
+```yaml
+slug: vector-add           # must match DB Problem.slug
+title: Vector Addition     # must match DB Problem.title
+difficulty: EASY           # EASY | MEDIUM | HARD
+track: cuda                # cuda | ml-systems | kubernetes-ai | foundations
+tags:
+  - memory
+  - threads
+execution: CPU_SIM         # CPU_SIM | GPU_BASIC | GPU_PERF
+status: PUBLISHED
+xp: 100
+```
+
+### Adding a new problem
+
+1. Create `problems/{track}/{slug}/index.mdx` following the format above
+2. Add a matching entry to `PROBLEMS` in `apps/web/prisma/seed.ts`
+3. Re-run `pnpm --filter @leetscuda/web db:seed`
+4. The problem will appear at `/problems/{slug}`
+
+---
+
+## Development commands
+
+```bash
+# Run dev server
+pnpm dev
+
+# Database
+pnpm --filter @leetscuda/web db:migrate    # apply migrations
+pnpm --filter @leetscuda/web db:generate   # regenerate Prisma client after schema changes
+pnpm --filter @leetscuda/web db:seed       # seed tracks + problems
+pnpm --filter @leetscuda/web db:studio     # open Prisma Studio (GUI)
+
+# Code quality
+pnpm --filter @leetscuda/web lint
+pnpm --filter @leetscuda/web build         # production build check
+```
+
+---
+
+## Build phases
+
+| Phase | Status | What was built |
+|---|---|---|
+| 1 | Done | Monorepo scaffold, Prisma schema, NextAuth, tRPC, middleware |
+| 2 | Done | Sign-in page, username setup, session management |
+| 3 | Done | Roadmap page with dependency graph |
+| 4 | Done | Problems listing page with filters |
+| 5 | Done | Problem detail page — Monaco editor, MDX rendering, submission flow |
+| 6 | Pending | Judge worker — Docker/Firejail sandbox, test case verification, XP award |
+| 7 | Pending | User profile, XP leaderboard, streak tracking |
+| 8 | Pending | Comments system |
+| 9 | Pending | Contributor tooling — problem authoring workflow |
+
+---
+
+## Environment variables reference
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXTAUTH_SECRET` | Yes | Random secret for JWT signing. Generate: `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | Yes | Full URL of the app, e.g. `http://localhost:3000` |
+| `GITHUB_CLIENT_ID` | Yes* | GitHub OAuth app client ID |
+| `GITHUB_CLIENT_SECRET` | Yes* | GitHub OAuth app client secret |
+| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `REDIS_URL` | Yes | Redis connection string |
+
+*At least one OAuth provider must be configured.
