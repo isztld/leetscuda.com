@@ -38,6 +38,10 @@ export type ProblemMeta = {
   execution: string
   status: string
   xp: number
+  runtime: 'cpp' | 'cuda'
+  cpp_standard: string
+  cuda_version?: string
+  compute_cap?: string
 }
 
 export type ProblemContent = {

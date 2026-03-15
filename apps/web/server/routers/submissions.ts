@@ -28,6 +28,9 @@ export const submissionsRouter = router({
           code: input.code,
           language: input.language,
           status: 'PENDING',
+          cppStandard: problem.cppStandard,
+          cudaVersion: problem.cudaVersion,
+          computeCap: problem.computeCap,
         },
       })
 
@@ -35,17 +38,26 @@ export const submissionsRouter = router({
         `[api] Submission created ${submission.id} for ${input.problemSlug} by ${ctx.session.user.id}`,
       )
 
-      // Enqueue job for judge worker
+      // Enqueue job to the correct queue based on execution runtime
+      const queueName =
+        problem.executionRuntime === 'cuda'
+          ? `judge:queue:cuda:${problem.cudaVersion ?? '12.6'}`
+          : 'judge:queue:cpp'
+
       const redis = getRedis()
       if (redis) {
         try {
           await redis.rpush(
-            'judge:queue',
+            queueName,
             JSON.stringify({
               submissionId: submission.id,
               problemSlug: input.problemSlug,
               code: input.code,
               language: input.language,
+              runtime: problem.executionRuntime,
+              cppStandard: problem.cppStandard,
+              cudaVersion: problem.cudaVersion,
+              computeCap: problem.computeCap,
             }),
           )
         } catch (err) {

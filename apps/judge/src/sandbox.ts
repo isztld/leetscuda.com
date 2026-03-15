@@ -1,10 +1,19 @@
-import { exec, spawn } from 'child_process'
-import { promisify } from 'util'
+import { spawn } from 'child_process'
+import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
-import os from 'os'
+import { fileURLToPath } from 'url'
 
-const execAsync = promisify(exec)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+export interface SandboxOptions {
+  runtime: 'cpp' | 'cuda'
+  cppStandard: '14' | '17' | '20' | '23'
+  cudaVersion?: string
+  computeCap?: string
+  timeoutMs: number
+  submissionId: string
+}
 
 export interface SandboxResult {
   stdout: string
@@ -13,13 +22,18 @@ export interface SandboxResult {
   runtimeMs: number
 }
 
-// Detect if Docker is available
+const DOCKER_IMAGES: Record<string, string> = {
+  cpp: 'gcc:14',
+  'cuda:12.6': 'nvidia/cuda:12.6.0-devel-ubuntu22.04',
+}
+
+// Detect if Docker is available (cached after first check)
 let dockerAvailable: boolean | null = null
-async function isDockerAvailable(): Promise<boolean> {
+function isDockerAvailable(): boolean {
   if (dockerAvailable !== null) return dockerAvailable
   try {
-    await execAsync('which docker')
-    await execAsync('docker info', { timeout: 3000 })
+    execSync('which docker', { stdio: 'ignore' })
+    execSync('docker info', { stdio: 'ignore', timeout: 3000 })
     dockerAvailable = true
   } catch {
     dockerAvailable = false
@@ -51,39 +65,37 @@ async function runProcess(
 
     child.on('close', (code) => {
       clearTimeout(timer)
-      resolve({
-        stdout,
-        stderr,
-        exitCode: timedOut ? 124 : (code ?? 1),
-      })
+      resolve({ stdout, stderr, exitCode: timedOut ? 124 : (code ?? 1) })
     })
 
-    if (input) {
-      child.stdin.write(input)
-    }
+    if (input) child.stdin.write(input)
     child.stdin.end()
   })
 }
 
-async function compileAndRunDocker(
+async function runDocker(
   tmpDir: string,
   input: string,
-  timeoutMs: number,
+  opts: SandboxOptions,
 ): Promise<SandboxResult> {
-  // Compile inside Docker
+  const isCuda = opts.runtime === 'cuda'
+  const imageKey = isCuda ? `cuda:${opts.cudaVersion ?? '12.6'}` : 'cpp'
+  const image = DOCKER_IMAGES[imageKey] ?? DOCKER_IMAGES['cpp']
+  const srcFile = isCuda ? 'solution.cu' : 'solution.cpp'
+  const computeArch = opts.computeCap ?? 'sm_86'
+
+  const compileCmd = isCuda
+    ? ['nvcc', `-std=c++${opts.cppStandard}`, `-arch=${computeArch}`, '-O2', '-o', 'solution', srcFile]
+    : ['g++', `-std=c++${opts.cppStandard}`, '-O2', '-o', 'solution', srcFile]
+
+  const dockerBaseArgs = isCuda
+    ? ['run', '--rm', '--network', 'none', '--memory', '512m', '--gpus', 'device=0', '--ulimit', 'nproc=128']
+    : ['run', '--rm', '--network', 'none', '--memory', '256m', '--cpus', '0.5', '--ulimit', 'nproc=64']
+
+  // Compile
   const compileResult = await runProcess(
     'docker',
-    [
-      'run', '--rm',
-      '--network', 'none',
-      '--memory', '256m',
-      '--cpus', '0.5',
-      '--ulimit', 'nproc=64',
-      '-v', `${tmpDir}:/work`,
-      '-w', '/work',
-      'gcc:latest',
-      'g++', '-O2', '-o', 'solution', 'solution.cpp',
-    ],
+    [...dockerBaseArgs, '-v', `${tmpDir}:/work`, '-w', '/work', image, ...compileCmd],
     '',
     30_000,
   )
@@ -97,51 +109,33 @@ async function compileAndRunDocker(
     }
   }
 
-  // Run inside Docker
+  // Run
   const start = Date.now()
   const runResult = await runProcess(
     'docker',
-    [
-      'run', '--rm',
-      '--network', 'none',
-      '--memory', '256m',
-      '--cpus', '0.5',
-      '--ulimit', 'nproc=64',
-      '--stop-timeout', String(Math.ceil(timeoutMs / 1000)),
-      '-i',
-      '-v', `${tmpDir}:/work`,
-      '-w', '/work',
-      'gcc:latest',
-      './solution',
-    ],
+    [...dockerBaseArgs, '--stop-timeout', String(Math.ceil(opts.timeoutMs / 1000)), '-i', '-v', `${tmpDir}:/work`, '-w', '/work', image, './solution'],
     input,
-    timeoutMs,
+    opts.timeoutMs,
   )
   const runtimeMs = Date.now() - start
 
-  return {
-    stdout: runResult.stdout,
-    stderr: runResult.stderr,
-    exitCode: runResult.exitCode,
-    runtimeMs,
-  }
+  return { stdout: runResult.stdout, stderr: runResult.stderr, exitCode: runResult.exitCode, runtimeMs }
 }
 
-async function compileAndRunDirect(
+async function runDirect(
   tmpDir: string,
   input: string,
-  timeoutMs: number,
+  opts: SandboxOptions,
 ): Promise<SandboxResult> {
-  // Compile directly
-  const solutionBin = path.join(tmpDir, 'solution')
-  const solutionSrc = path.join(tmpDir, 'solution.cpp')
+  const isCuda = opts.runtime === 'cuda'
+  const srcFile = path.join(tmpDir, isCuda ? 'solution.cu' : 'solution.cpp')
+  const binFile = path.join(tmpDir, 'solution')
 
-  const compileResult = await runProcess(
-    'g++',
-    ['-O2', '-o', solutionBin, solutionSrc],
-    '',
-    30_000,
-  )
+  const compileArgs = isCuda
+    ? ['nvcc', `-std=c++${opts.cppStandard}`, `-arch=${opts.computeCap ?? 'sm_86'}`, '-O2', '-o', binFile, srcFile]
+    : ['g++', `-std=c++${opts.cppStandard}`, '-O2', '-o', binFile, srcFile]
+
+  const compileResult = await runProcess(compileArgs[0], compileArgs.slice(1), '', 30_000)
 
   if (compileResult.exitCode !== 0) {
     return {
@@ -153,40 +147,30 @@ async function compileAndRunDirect(
   }
 
   const start = Date.now()
-  const runResult = await runProcess(solutionBin, [], input, timeoutMs)
+  const runResult = await runProcess(binFile, [], input, opts.timeoutMs)
   const runtimeMs = Date.now() - start
 
-  return {
-    stdout: runResult.stdout,
-    stderr: runResult.stderr,
-    exitCode: runResult.exitCode,
-    runtimeMs,
-  }
+  return { stdout: runResult.stdout, stderr: runResult.stderr, exitCode: runResult.exitCode, runtimeMs }
 }
 
 export async function runInSandbox(
   code: string,
   input: string,
-  timeoutMs: number,
-  submissionId: string,
+  opts: SandboxOptions,
 ): Promise<SandboxResult> {
-  const tmpBase = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
-    '..',
-    'tmp',
-  )
-  const tmpDir = path.join(tmpBase, submissionId)
+  const tmpBase = path.join(__dirname, '..', 'tmp')
+  const tmpDir = path.join(tmpBase, opts.submissionId)
+  const isCuda = opts.runtime === 'cuda'
+  const srcFile = isCuda ? 'solution.cu' : 'solution.cpp'
 
   try {
     fs.mkdirSync(tmpDir, { recursive: true })
-    fs.writeFileSync(path.join(tmpDir, 'solution.cpp'), code, 'utf8')
+    fs.writeFileSync(path.join(tmpDir, srcFile), code, 'utf8')
 
-    const useDocker = await isDockerAvailable()
-
-    if (useDocker) {
-      return await compileAndRunDocker(tmpDir, input, timeoutMs)
+    if (isDockerAvailable()) {
+      return await runDocker(tmpDir, input, opts)
     } else {
-      return await compileAndRunDirect(tmpDir, input, timeoutMs)
+      return await runDirect(tmpDir, input, opts)
     }
   } finally {
     try {

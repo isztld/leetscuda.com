@@ -123,19 +123,23 @@ model Track {
 }
 
 model Problem {
-  id            String         @id @default(cuid())
-  slug          String         @unique
-  title         String
-  difficulty    Difficulty
-  trackId       String
-  track         Track          @relation(fields: [trackId], references: [id])
-  tags          String[]
-  status        ProblemStatus  @default(DRAFT)
-  xpReward      Int            @default(100)
-  executionMode ExecutionMode  @default(CPU_SIM)
-  submissions   Submission[]
-  comments      Comment[]
-  progress      UserProgress[]
+  id               String         @id @default(cuid())
+  slug             String         @unique
+  title            String
+  difficulty       Difficulty
+  trackId          String
+  track            Track          @relation(fields: [trackId], references: [id])
+  tags             String[]
+  status           ProblemStatus  @default(DRAFT)
+  xpReward         Int            @default(100)
+  executionMode    ExecutionMode  @default(CPU_SIM)
+  executionRuntime String         @default("cpp")
+  cppStandard      String         @default("17")
+  cudaVersion      String?
+  computeCap       String?
+  submissions      Submission[]
+  comments         Comment[]
+  progress         UserProgress[]
 }
 
 model Submission {
@@ -151,6 +155,9 @@ model Submission {
   output      String?
   errorMsg    String?
   submittedAt DateTime         @default(now())
+  cppStandard String?
+  cudaVersion String?
+  computeCap  String?
 }
 
 model UserProgress {
@@ -187,4 +194,14 @@ model Comment {
   body      String
   upvotes   Int      @default(0)
   createdAt DateTime @default(now())
+}
+
+model JudgeToken {
+  id           String    @id @default(cuid())
+  name         String
+  token        String    @unique // SHA-256 hash of the raw token
+  capabilities String[]
+  isActive     Boolean   @default(true)
+  lastSeenAt   DateTime?
+  createdAt    DateTime  @default(now())
 }

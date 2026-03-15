@@ -243,6 +243,10 @@ const PROBLEMS: {
   tags: string[]
   xpReward: number
   executionMode: ExecutionMode
+  executionRuntime: string
+  cppStandard: string
+  cudaVersion?: string
+  computeCap?: string
 }[] = [
   // ── CUDA track ───────────────────────────────────────────────────────────────
   {
@@ -253,6 +257,10 @@ const PROBLEMS: {
     tags: ['memory', 'threads', 'indexing'],
     xpReward: 100,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cuda',
+    cppStandard: '17',
+    cudaVersion: '12.6',
+    computeCap: 'sm_120',
   },
   {
     slug: 'matrix-transpose',
@@ -262,6 +270,10 @@ const PROBLEMS: {
     tags: ['memory', 'coalescing', 'shared-memory'],
     xpReward: 200,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cuda',
+    cppStandard: '17',
+    cudaVersion: '12.6',
+    computeCap: 'sm_120',
   },
   {
     slug: 'reduce-sum',
@@ -271,6 +283,10 @@ const PROBLEMS: {
     tags: ['reduction', 'shared-memory', 'warp-primitives'],
     xpReward: 400,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cuda',
+    cppStandard: '17',
+    cudaVersion: '12.6',
+    computeCap: 'sm_120',
   },
 
   // ── ML Systems track ─────────────────────────────────────────────────────────
@@ -282,6 +298,8 @@ const PROBLEMS: {
     tags: ['transformers', 'inference', 'caching'],
     xpReward: 100,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
   {
     slug: 'batched-inference',
@@ -291,6 +309,8 @@ const PROBLEMS: {
     tags: ['serving', 'throughput', 'scheduling'],
     xpReward: 250,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
   {
     slug: 'flash-attention',
@@ -300,6 +320,8 @@ const PROBLEMS: {
     tags: ['attention', 'memory-efficiency', 'io-aware'],
     xpReward: 500,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
 
   // ── Kubernetes for AI track ───────────────────────────────────────────────────
@@ -311,6 +333,8 @@ const PROBLEMS: {
     tags: ['deployment', 'vllm', 'resources'],
     xpReward: 100,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
   {
     slug: 'hpa-gpu',
@@ -320,6 +344,8 @@ const PROBLEMS: {
     tags: ['autoscaling', 'hpa', 'custom-metrics'],
     xpReward: 200,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
   {
     slug: 'multi-node-training',
@@ -329,6 +355,8 @@ const PROBLEMS: {
     tags: ['distributed', 'pytorch', 'mpi', 'networking'],
     xpReward: 400,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
 
   // ── Foundations track ────────────────────────────────────────────────────────
@@ -340,6 +368,8 @@ const PROBLEMS: {
     tags: ['memory', 'bandwidth', 'profiling'],
     xpReward: 100,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
   {
     slug: 'roofline-model',
@@ -349,6 +379,8 @@ const PROBLEMS: {
     tags: ['performance', 'roofline', 'arithmetic-intensity'],
     xpReward: 200,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
   {
     slug: 'false-sharing',
@@ -358,6 +390,8 @@ const PROBLEMS: {
     tags: ['cpu', 'cache', 'concurrency', 'false-sharing'],
     xpReward: 300,
     executionMode: ExecutionMode.CPU_SIM,
+    executionRuntime: 'cpp',
+    cppStandard: '17',
   },
 ]
 

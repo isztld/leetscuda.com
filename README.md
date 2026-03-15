@@ -265,41 +265,58 @@ xp: 100
 
 ---
 
-## Running the judge
+## Judge node setup
 
-The judge worker processes submissions from the Redis queue, compiles and runs code in a Docker sandbox, and writes results back to Postgres.
+Judge nodes are standalone HTTP clients. They poll the web API for jobs, compile and run code in a Docker sandbox, and POST results back. They have **zero** direct database or Redis access.
 
-### Local dev (without Docker)
+### Generate a token
 
-If Docker is not available, the judge falls back to running `g++` directly as a child process. Ensure `g++` is installed.
+```bash
+# CPU-only judge
+pnpm --filter @leetscuda/web judge:token --name "cpu-worker-1" --capabilities "cpp"
+
+# GPU judge (CUDA 12.6)
+pnpm --filter @leetscuda/web judge:token --name "gpu-helsinki" --capabilities "cpp,cuda:12.6"
+```
+
+The token is printed **once** and never retrievable again.
+
+### Configure and run
 
 ```bash
 cp apps/judge/.env.example apps/judge/.env
-# Edit apps/judge/.env and fill in DATABASE_URL and REDIS_URL
+# Fill in: JUDGE_API_URL, JUDGE_API_TOKEN, JUDGE_CAPABILITIES
 
+# Pre-pull sandbox images (once per judge machine)
+docker pull gcc:14
+docker pull nvidia/cuda:12.6.0-devel-ubuntu22.04
+
+# Local dev
 pnpm --filter @leetscuda/judge dev
-```
 
-The worker logs `Judge worker ready` when connected to Redis and Postgres.
-
-### Production (Docker)
-
-The judge container runs sandbox containers via the host Docker socket.
-
-```bash
-# Build the judge image
+# Production (GPU node)
 docker build -t leetscuda-judge apps/judge
-
-# Run it — mount the host Docker socket and the problems directory
 docker run \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v $(pwd)/problems:/problems \
-  -e PROBLEMS_PATH=/problems \
+  --gpus all \
   --env-file apps/judge/.env \
   leetscuda-judge
 ```
 
-> **Note:** Mounting `/var/run/docker.sock` gives the judge container access to the host Docker daemon so it can spin up per-submission sandbox containers (`gcc:latest`). In production, restrict Docker socket access appropriately (e.g., via a dedicated `docker` group or a socket proxy).
+GPU hosts additionally require: NVIDIA drivers + CUDA 12.6, `nvidia-container-toolkit`.
+
+### Job routing
+
+| Problem runtime | Queue |
+|---|---|
+| C++ (`executionRuntime: "cpp"`) | `judge:queue:cpp` |
+| CUDA 12.6 (`executionRuntime: "cuda"`) | `judge:queue:cuda:12.6` |
+
+CPU judges receive only `judge:queue:cpp`. GPU judges receive both.
+
+### Revoke a judge node
+
+Set `isActive = false` on the `JudgeToken` row in the database.
 
 ---
 
