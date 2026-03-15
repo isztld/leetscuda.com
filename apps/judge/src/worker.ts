@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import './env.js'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
@@ -62,166 +63,181 @@ async function processJob(rawPayload: string): Promise<void> {
   try {
     parsed = JSON.parse(rawPayload)
   } catch {
-    console.error('Failed to parse job payload:', rawPayload)
+    console.error('[judge] Failed to parse job payload:', rawPayload)
     return
   }
 
   const result = JudgeJobSchema.safeParse(parsed)
   if (!result.success) {
-    console.error('Invalid job payload:', result.error.message)
+    console.error('[judge] Invalid job payload:', result.error.message)
     return
   }
 
   const job = result.data
-  console.log(`[judge] Processing submission ${job.submissionId} (${job.problemSlug})`)
+  console.log(`[judge] Processing submission ${job.submissionId} for problem ${job.problemSlug}`)
 
-  // Mark submission as RUNNING
-  await getPrisma().submission.update({
-    where: { id: job.submissionId },
-    data: { status: 'RUNNING' },
-  })
-
-  // Load test cases
-  const trackSlug = findTrackForProblem(job.problemSlug)
-  if (!trackSlug) {
-    await getPrisma().submission.update({
-      where: { id: job.submissionId },
-      data: {
-        status: 'RUNTIME_ERROR',
-        errorMsg: `Problem '${job.problemSlug}' not found in problems directory`,
-      },
-    })
-    return
-  }
-
-  let testCases: TestCase[]
   try {
-    testCases = loadTestCases(trackSlug, job.problemSlug)
-  } catch (err) {
+    // Mark submission as RUNNING
     await getPrisma().submission.update({
       where: { id: job.submissionId },
-      data: {
-        status: 'RUNTIME_ERROR',
-        errorMsg: `Failed to load test cases: ${err instanceof Error ? err.message : String(err)}`,
-      },
-    })
-    return
-  }
-
-  if (testCases.length === 0) {
-    await getPrisma().submission.update({
-      where: { id: job.submissionId },
-      data: {
-        status: 'RUNTIME_ERROR',
-        errorMsg: 'No test cases found for this problem',
-      },
-    })
-    return
-  }
-
-  // Run each test case
-  type FinalStatus = 'ACCEPTED' | 'WRONG_ANSWER' | 'RUNTIME_ERROR' | 'TIME_LIMIT'
-  let finalStatus: FinalStatus = 'ACCEPTED'
-  let maxRuntimeMs = 0
-  let lastStdout = ''
-  let firstStderr = ''
-
-  for (const tc of testCases) {
-    console.log(`[judge]   Running test case: ${tc.name}`)
-
-    const sandboxResult = await runInSandbox(
-      job.code,
-      tc.input,
-      TIMEOUT_MS,
-      `${job.submissionId}-${tc.name.replace(/\s+/g, '_')}`,
-    )
-
-    if (sandboxResult.runtimeMs > maxRuntimeMs) {
-      maxRuntimeMs = sandboxResult.runtimeMs
-    }
-    if (sandboxResult.stdout) {
-      lastStdout = sandboxResult.stdout
-    }
-    if (sandboxResult.stderr && !firstStderr) {
-      firstStderr = sandboxResult.stderr
-    }
-
-    if (sandboxResult.exitCode === 124) {
-      finalStatus = 'TIME_LIMIT'
-      break
-    }
-
-    if (sandboxResult.exitCode !== 0) {
-      finalStatus = 'RUNTIME_ERROR'
-      break
-    }
-
-    if (!verify(sandboxResult.stdout, tc.expected)) {
-      finalStatus = 'WRONG_ANSWER'
-      break
-    }
-  }
-
-  // Update submission
-  await getPrisma().submission.update({
-    where: { id: job.submissionId },
-    data: {
-      status: finalStatus,
-      runtimeMs: maxRuntimeMs,
-      output: lastStdout || null,
-      errorMsg: firstStderr || null,
-    },
-  })
-
-  console.log(`[judge]   Result: ${finalStatus} (${maxRuntimeMs}ms)`)
-
-  // On ACCEPTED: upsert UserProgress and award XP on first solve
-  if (finalStatus === 'ACCEPTED') {
-    const submission = await getPrisma().submission.findUnique({
-      where: { id: job.submissionId },
-      include: { problem: true },
+      data: { status: 'RUNNING' },
     })
 
-    if (submission) {
-      const { userId, problem } = submission
-
-      const existingProgress = await getPrisma().userProgress.findUnique({
-        where: { userId_problemId: { userId, problemId: problem.id } },
-      })
-
-      await getPrisma().userProgress.upsert({
-        where: { userId_problemId: { userId, problemId: problem.id } },
-        create: {
-          userId,
-          problemId: problem.id,
-          trackId: problem.trackId,
-          attempts: 1,
-        },
-        update: {
-          attempts: { increment: 1 },
+    // Load test cases
+    const trackSlug = findTrackForProblem(job.problemSlug)
+    if (!trackSlug) {
+      await getPrisma().submission.update({
+        where: { id: job.submissionId },
+        data: {
+          status: 'RUNTIME_ERROR',
+          errorMsg: `Problem '${job.problemSlug}' not found in problems directory`,
         },
       })
+      console.log(`[judge] ${job.submissionId} written to DB`)
+      return
+    }
 
-      if (!existingProgress) {
-        // First time solving this problem — award XP
-        await getPrisma().user.update({
-          where: { id: userId },
-          data: { xp: { increment: problem.xpReward } },
-        })
-        console.log(`[judge]   Awarded ${problem.xpReward} XP to user ${userId}`)
+    let testCases: TestCase[]
+    try {
+      testCases = loadTestCases(trackSlug, job.problemSlug)
+    } catch (err) {
+      await getPrisma().submission.update({
+        where: { id: job.submissionId },
+        data: {
+          status: 'RUNTIME_ERROR',
+          errorMsg: `Failed to load test cases: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      })
+      console.log(`[judge] ${job.submissionId} written to DB`)
+      return
+    }
+
+    if (testCases.length === 0) {
+      await getPrisma().submission.update({
+        where: { id: job.submissionId },
+        data: {
+          status: 'RUNTIME_ERROR',
+          errorMsg: 'No test cases found for this problem',
+        },
+      })
+      console.log(`[judge] ${job.submissionId} written to DB`)
+      return
+    }
+
+    // Run each test case
+    type FinalStatus = 'ACCEPTED' | 'WRONG_ANSWER' | 'RUNTIME_ERROR' | 'TIME_LIMIT'
+    let finalStatus: FinalStatus = 'ACCEPTED'
+    let maxRuntimeMs = 0
+    let lastStdout = ''
+    let firstStderr = ''
+
+    for (const tc of testCases) {
+      const sandboxResult = await runInSandbox(
+        job.code,
+        tc.input,
+        TIMEOUT_MS,
+        `${job.submissionId}-${tc.name.replace(/\s+/g, '_')}`,
+      )
+
+      if (sandboxResult.runtimeMs > maxRuntimeMs) {
+        maxRuntimeMs = sandboxResult.runtimeMs
       }
+      if (sandboxResult.stdout) {
+        lastStdout = sandboxResult.stdout
+      }
+      if (sandboxResult.stderr && !firstStderr) {
+        firstStderr = sandboxResult.stderr
+      }
+
+      if (sandboxResult.exitCode === 124) {
+        finalStatus = 'TIME_LIMIT'
+        break
+      }
+
+      if (sandboxResult.exitCode !== 0) {
+        finalStatus = 'RUNTIME_ERROR'
+        break
+      }
+
+      if (!verify(sandboxResult.stdout, tc.expected)) {
+        finalStatus = 'WRONG_ANSWER'
+        break
+      }
+    }
+
+    console.log(`[judge] ${job.submissionId} → ${finalStatus} in ${maxRuntimeMs}ms`)
+
+    // Update submission
+    await getPrisma().submission.update({
+      where: { id: job.submissionId },
+      data: {
+        status: finalStatus,
+        runtimeMs: maxRuntimeMs,
+        output: lastStdout || null,
+        errorMsg: firstStderr || null,
+      },
+    })
+
+    console.log(`[judge] ${job.submissionId} written to DB`)
+
+    // On ACCEPTED: upsert UserProgress and award XP on first solve
+    if (finalStatus === 'ACCEPTED') {
+      const submission = await getPrisma().submission.findUnique({
+        where: { id: job.submissionId },
+        include: { problem: true },
+      })
+
+      if (submission) {
+        const { userId, problem } = submission
+
+        const existingProgress = await getPrisma().userProgress.findUnique({
+          where: { userId_problemId: { userId, problemId: problem.id } },
+        })
+
+        await getPrisma().userProgress.upsert({
+          where: { userId_problemId: { userId, problemId: problem.id } },
+          create: {
+            userId,
+            problemId: problem.id,
+            trackId: problem.trackId,
+            attempts: 1,
+          },
+          update: {
+            attempts: { increment: 1 },
+          },
+        })
+
+        if (!existingProgress) {
+          // First time solving this problem — award XP
+          await getPrisma().user.update({
+            where: { id: userId },
+            data: { xp: { increment: problem.xpReward } },
+          })
+          console.log(`[judge] Awarded ${problem.xpReward} XP to user ${userId}`)
+        }
+      }
+    }
+  } catch (err) {
+    console.error(
+      `[judge] ERROR ${job.submissionId}: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    // Attempt to mark submission as RUNTIME_ERROR so it doesn't get stuck RUNNING
+    try {
+      await getPrisma().submission.update({
+        where: { id: job.submissionId },
+        data: {
+          status: 'RUNTIME_ERROR',
+          errorMsg: `Internal judge error: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      })
+    } catch {
+      // best-effort — don't throw again
     }
   }
 }
 
 async function main() {
-  const redisUrl = process.env.REDIS_URL
-  if (!redisUrl) {
-    throw new Error('REDIS_URL is required')
-  }
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required')
-  }
+  const redisUrl = process.env.REDIS_URL!
 
   const redis = new Redis(redisUrl, { lazyConnect: true })
   await redis.connect()

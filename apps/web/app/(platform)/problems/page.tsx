@@ -2,6 +2,7 @@ import { Difficulty } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { auth } from '@/lib/auth'
 import { ProblemsClient } from '@/components/ProblemsClient'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export const metadata = {
   title: 'Problems — LeetsCUDA',
@@ -54,13 +55,19 @@ export default async function ProblemsPage({
           </p>
         </div>
 
-        <ProblemsClient
-          problems={problems}
-          tracks={tracks}
-          solvedIds={solvedIds}
-          activeTrack={activeTrack}
-          activeDifficulty={activeDifficulty}
-        />
+        <ErrorBoundary
+          fallback={
+            <p className="text-zinc-400 text-sm">Failed to load problems. Please refresh.</p>
+          }
+        >
+          <ProblemsClient
+            problems={problems}
+            tracks={tracks}
+            solvedIds={solvedIds}
+            activeTrack={activeTrack}
+            activeDifficulty={activeDifficulty}
+          />
+        </ErrorBoundary>
       </div>
     </main>
   )

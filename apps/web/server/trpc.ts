@@ -1,3 +1,4 @@
+import '@/lib/env'
 import { initTRPC, TRPCError } from '@trpc/server'
 import { auth } from '@/lib/auth'
 

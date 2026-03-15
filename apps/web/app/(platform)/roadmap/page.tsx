@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { RoadmapClient } from '@/components/RoadmapClient'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export const metadata = {
   title: 'Roadmap — LeetsCUDA',
@@ -22,7 +23,13 @@ export default async function RoadmapPage() {
           </p>
         </div>
 
-        <RoadmapClient tracks={tracks} />
+        <ErrorBoundary
+          fallback={
+            <p className="text-zinc-400 text-sm">Failed to load roadmap. Please refresh.</p>
+          }
+        >
+          <RoadmapClient tracks={tracks} />
+        </ErrorBoundary>
       </div>
     </main>
   )

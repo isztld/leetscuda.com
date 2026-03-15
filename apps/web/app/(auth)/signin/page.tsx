@@ -1,16 +1,24 @@
 import { signIn } from '@/lib/auth'
 
-async function signInWithGitHub() {
-  'use server'
-  await signIn('github', { redirectTo: '/roadmap' })
+interface Props {
+  searchParams: { callbackUrl?: string }
 }
 
-async function signInWithGoogle() {
-  'use server'
-  await signIn('google', { redirectTo: '/roadmap' })
-}
+export default function SignInPage({ searchParams }: Props) {
+  // Only allow relative paths to prevent open-redirect attacks
+  const raw = searchParams.callbackUrl ?? ''
+  const callbackUrl = raw.startsWith('/') ? raw : '/roadmap'
 
-export default function SignInPage() {
+  async function signInWithGitHub() {
+    'use server'
+    await signIn('github', { redirectTo: callbackUrl })
+  }
+
+  async function signInWithGoogle() {
+    'use server'
+    await signIn('google', { redirectTo: callbackUrl })
+  }
+
   return (
     <main className="min-h-screen bg-zinc-950 flex items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-8">

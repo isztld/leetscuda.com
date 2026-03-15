@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { trpc } from '@/lib/trpc/client'
 import { MonacoEditor } from './MonacoEditor'
+import { ErrorBoundary } from './ErrorBoundary'
 import type { TestCase } from '@/lib/problems-content'
 
 interface Problem {
@@ -44,6 +45,9 @@ const STATUS_CONFIG = {
 
 type Tab = 'description' | 'discuss' | 'editorial'
 
+const POLL_MAX_MS = 60_000
+const POLL_MAX_FAILURES = 3
+
 export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases }: Props) {
   const { data: session } = useSession()
   const router = useRouter()
@@ -53,39 +57,75 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [submissionId, setSubmissionId] = useState<string | null>(null)
   const [isPolling, setIsPolling] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [pollError, setPollError] = useState<string | null>(null)
+  const consecutivePollFailures = useRef(0)
 
   const createMutation = trpc.submission.create.useMutation({
     onSuccess(data) {
       setSubmissionId(data.submissionId)
       setIsPolling(true)
       setDrawerOpen(true)
+      setSubmitError(null)
+      setPollError(null)
+      consecutivePollFailures.current = 0
     },
     onError(err) {
       if (err.data?.code === 'UNAUTHORIZED') {
-        router.push('/signin')
+        router.push(`/signin?callbackUrl=/problems/${problem.slug}`)
+      } else {
+        setDrawerOpen(true)
+        setSubmitError('Submission failed. Please try again.')
       }
     },
   })
 
-  const { data: submissionStatus } = trpc.submission.getStatus.useQuery(
-    { submissionId: submissionId ?? '' },
-    {
-      enabled: !!submissionId && isPolling,
-      refetchInterval: isPolling ? 1500 : false,
-    },
-  )
+  const { data: submissionStatus, isError: statusIsError } =
+    trpc.submission.getStatus.useQuery(
+      { submissionId: submissionId ?? '' },
+      {
+        enabled: !!submissionId && isPolling,
+        refetchInterval: isPolling ? 1500 : false,
+        retry: false,
+      },
+    )
 
+  // Stop polling on terminal status
   useEffect(() => {
     if (!submissionStatus) return
     const terminal = ['ACCEPTED', 'WRONG_ANSWER', 'RUNTIME_ERROR', 'TIME_LIMIT']
     if (terminal.includes(submissionStatus.status)) {
       setIsPolling(false)
+    } else {
+      consecutivePollFailures.current = 0
     }
   }, [submissionStatus])
 
+  // Track consecutive poll failures
+  useEffect(() => {
+    if (!isPolling) return
+    if (statusIsError) {
+      consecutivePollFailures.current += 1
+      if (consecutivePollFailures.current >= POLL_MAX_FAILURES) {
+        setIsPolling(false)
+        setPollError('Lost connection to judge. Please check your submission history.')
+      }
+    }
+  }, [statusIsError, isPolling])
+
+  // 60-second polling timeout
+  useEffect(() => {
+    if (!isPolling) return
+    const timer = setTimeout(() => {
+      setIsPolling(false)
+      setPollError('Judge is taking longer than expected. Check back shortly.')
+    }, POLL_MAX_MS)
+    return () => clearTimeout(timer)
+  }, [isPolling])
+
   function handleSubmit() {
     if (!session) {
-      router.push('/signin')
+      router.push(`/signin?callbackUrl=/problems/${problem.slug}`)
       return
     }
     createMutation.mutate({ problemSlug: problem.slug, code, language: 'cpp' })
@@ -95,84 +135,99 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
     ? STATUS_CONFIG[submissionStatus.status]
     : STATUS_CONFIG.PENDING
 
-  const isPending = !submissionStatus || submissionStatus.status === 'PENDING' || submissionStatus.status === 'RUNNING'
+  const isPending =
+    !submissionStatus ||
+    submissionStatus.status === 'PENDING' ||
+    submissionStatus.status === 'RUNNING'
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
       {/* Main split pane */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* ── Left panel (40%) ───────────────────────────────── */}
-        <div className="w-2/5 flex flex-col border-r border-zinc-800 min-h-0">
-          {/* Problem header */}
-          <div className="px-5 py-4 border-b border-zinc-800 shrink-0">
-            <h1 className="text-lg font-semibold text-white mb-2">{problem.title}</h1>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span
-                className={`text-xs font-medium px-2 py-0.5 rounded-full ${DIFFICULTY_STYLES[problem.difficulty]}`}
-              >
-                {problem.difficulty}
-              </span>
-              <span
-                className="text-xs font-medium px-2 py-0.5 rounded-full text-zinc-300 bg-zinc-800"
-                style={{ borderLeft: `3px solid ${problem.track.color}` }}
-              >
-                {problem.track.title}
-              </span>
-              <span className="text-xs text-amber-400 font-medium ml-auto">+{problem.xpReward} XP</span>
+        <ErrorBoundary
+          fallback={
+            <div className="w-2/5 flex items-center justify-center border-r border-zinc-800">
+              <p className="text-zinc-400 text-sm px-4 text-center">
+                Failed to load problem description. Please refresh.
+              </p>
+            </div>
+          }
+        >
+          <div className="w-2/5 flex flex-col border-r border-zinc-800 min-h-0">
+            {/* Problem header */}
+            <div className="px-5 py-4 border-b border-zinc-800 shrink-0">
+              <h1 className="text-lg font-semibold text-white mb-2">{problem.title}</h1>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className={`text-xs font-medium px-2 py-0.5 rounded-full ${DIFFICULTY_STYLES[problem.difficulty]}`}
+                >
+                  {problem.difficulty}
+                </span>
+                <span
+                  className="text-xs font-medium px-2 py-0.5 rounded-full text-zinc-300 bg-zinc-800"
+                  style={{ borderLeft: `3px solid ${problem.track.color}` }}
+                >
+                  {problem.track.title}
+                </span>
+                <span className="text-xs text-amber-400 font-medium ml-auto">
+                  +{problem.xpReward} XP
+                </span>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex border-b border-zinc-800 shrink-0">
+              {(['description', 'discuss', 'editorial'] as Tab[]).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-2.5 text-sm capitalize transition-colors relative ${
+                    activeTab === tab
+                      ? 'text-white font-medium'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {tab}
+                  {tab === 'editorial' && <span className="ml-1 text-xs">🔒</span>}
+                  {activeTab === tab && (
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-500 rounded-t" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab content */}
+            <div className="flex-1 overflow-y-auto">
+              {activeTab === 'description' && (
+                <div
+                  className="px-5 py-4 prose prose-invert prose-sm max-w-none
+                    prose-headings:text-zinc-100
+                    prose-p:text-zinc-300
+                    prose-li:text-zinc-300
+                    prose-strong:text-zinc-100
+                    prose-code:text-violet-300 prose-code:bg-zinc-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
+                    prose-pre:bg-zinc-900 prose-pre:rounded-lg prose-pre:border prose-pre:border-zinc-700 prose-pre:p-0
+                    prose-pre:overflow-x-auto"
+                  dangerouslySetInnerHTML={{ __html: descriptionHtml }}
+                />
+              )}
+              {activeTab === 'discuss' && (
+                <div className="px-5 py-8 text-center text-zinc-500 text-sm">
+                  Comments coming soon
+                </div>
+              )}
+              {activeTab === 'editorial' && (
+                <div className="px-5 py-8 text-center">
+                  <div className="text-4xl mb-3">🔒</div>
+                  <p className="text-zinc-400 text-sm">
+                    Solve the problem to unlock the editorial.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
-
-          {/* Tabs */}
-          <div className="flex border-b border-zinc-800 shrink-0">
-            {(['description', 'discuss', 'editorial'] as Tab[]).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2.5 text-sm capitalize transition-colors relative ${
-                  activeTab === tab
-                    ? 'text-white font-medium'
-                    : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                {tab}
-                {tab === 'editorial' && (
-                  <span className="ml-1 text-xs">🔒</span>
-                )}
-                {activeTab === tab && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-500 rounded-t" />
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Tab content */}
-          <div className="flex-1 overflow-y-auto">
-            {activeTab === 'description' && (
-              <div
-                className="px-5 py-4 prose prose-invert prose-sm max-w-none
-                  prose-headings:text-zinc-100
-                  prose-p:text-zinc-300
-                  prose-li:text-zinc-300
-                  prose-strong:text-zinc-100
-                  prose-code:text-violet-300 prose-code:bg-zinc-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
-                  prose-pre:bg-zinc-900 prose-pre:rounded-lg prose-pre:border prose-pre:border-zinc-700 prose-pre:p-0
-                  prose-pre:overflow-x-auto"
-                dangerouslySetInnerHTML={{ __html: descriptionHtml }}
-              />
-            )}
-            {activeTab === 'discuss' && (
-              <div className="px-5 py-8 text-center text-zinc-500 text-sm">
-                Comments coming soon
-              </div>
-            )}
-            {activeTab === 'editorial' && (
-              <div className="px-5 py-8 text-center">
-                <div className="text-4xl mb-3">🔒</div>
-                <p className="text-zinc-400 text-sm">Solve the problem to unlock the editorial.</p>
-              </div>
-            )}
-          </div>
-        </div>
+        </ErrorBoundary>
 
         {/* ── Right panel (60%) ─────────────────────────────── */}
         <div className="w-3/5 flex flex-col min-h-0">
@@ -200,7 +255,17 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
 
           {/* Monaco editor fills remaining height */}
           <div className="flex-1 min-h-0">
-            <MonacoEditor value={code} onChange={setCode} language="cpp" />
+            <ErrorBoundary
+              fallback={
+                <div className="flex h-full items-center justify-center bg-zinc-900">
+                  <p className="text-zinc-400 text-sm">
+                    Editor failed to load. Try refreshing the page.
+                  </p>
+                </div>
+              }
+            >
+              <MonacoEditor value={code} onChange={setCode} language="cpp" />
+            </ErrorBoundary>
           </div>
         </div>
       </div>
@@ -215,15 +280,13 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
           <div className="h-full flex flex-col">
             {/* Drawer header */}
             <div
-              className={`flex items-center justify-between px-4 py-2 border-b border-zinc-800 ${statusCfg.bg}`}
+              className={`flex items-center justify-between px-4 py-2 border-b border-zinc-800 ${
+                submitError || pollError ? 'bg-red-950' : statusCfg.bg
+              }`}
             >
               <div className="flex items-center gap-2">
-                {isPending && (
-                  <svg
-                    className="animate-spin h-4 w-4 text-zinc-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
+                {isPending && !submitError && !pollError && (
+                  <svg className="animate-spin h-4 w-4 text-zinc-400" fill="none" viewBox="0 0 24 24">
                     <circle
                       className="opacity-25"
                       cx="12"
@@ -239,8 +302,16 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
                     />
                   </svg>
                 )}
-                <span className={`text-sm font-semibold ${statusCfg.color}`}>
-                  {statusCfg.label}
+                <span
+                  className={`text-sm font-semibold ${
+                    submitError || pollError ? 'text-red-400' : statusCfg.color
+                  }`}
+                >
+                  {submitError
+                    ? 'Submission Error'
+                    : pollError
+                      ? 'Connection Lost'
+                      : statusCfg.label}
                 </span>
                 {submissionStatus?.runtimeMs != null && (
                   <span className="text-xs text-zinc-500 ml-2">
@@ -258,10 +329,21 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
 
             {/* Drawer body */}
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-              {isPending && !submissionStatus && (
+              {/* Inline error messages */}
+              {submitError && (
+                <div className="bg-red-950 border border-red-800 rounded p-3">
+                  <p className="text-sm text-red-300">{submitError}</p>
+                </div>
+              )}
+              {pollError && (
+                <div className="bg-red-950 border border-red-800 rounded p-3">
+                  <p className="text-sm text-red-300">{pollError}</p>
+                </div>
+              )}
+              {!submitError && !pollError && isPending && !submissionStatus && (
                 <p className="text-zinc-500 text-sm">Submission queued. Waiting for judge…</p>
               )}
-              {isPending && submissionStatus?.status === 'RUNNING' && (
+              {!submitError && !pollError && isPending && submissionStatus?.status === 'RUNNING' && (
                 <p className="text-zinc-400 text-sm">Running test cases…</p>
               )}
               {submissionStatus?.errorMsg && (
@@ -296,9 +378,10 @@ export function ProblemDetail({ problem, descriptionHtml, starterCode, testCases
                       </div>
                       <div>
                         <span className="text-zinc-500 block mb-0.5">Expected</span>
-                        <pre className="text-zinc-300 font-mono whitespace-pre-wrap">{tc.expected}</pre>
+                        <pre className="text-zinc-300 font-mono whitespace-pre-wrap">
+                          {tc.expected}
+                        </pre>
                       </div>
-                      {/* Actual output & pass/fail shown once judge runs (Phase 6) */}
                       <div className="col-span-2 flex items-center gap-1 text-zinc-600">
                         <span>{tc.name}</span>
                         {submissionStatus?.status !== 'PENDING' &&

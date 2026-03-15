@@ -31,18 +31,32 @@ export const submissionsRouter = router({
         },
       })
 
-      // Enqueue job for judge worker (Phase 6)
+      console.log(
+        `[api] Submission created ${submission.id} for ${input.problemSlug} by ${ctx.session.user.id}`,
+      )
+
+      // Enqueue job for judge worker
       const redis = getRedis()
       if (redis) {
-        await redis.rpush(
-          'judge:queue',
-          JSON.stringify({
-            submissionId: submission.id,
-            problemSlug: input.problemSlug,
-            code: input.code,
-            language: input.language,
-          }),
-        )
+        try {
+          await redis.rpush(
+            'judge:queue',
+            JSON.stringify({
+              submissionId: submission.id,
+              problemSlug: input.problemSlug,
+              code: input.code,
+              language: input.language,
+            }),
+          )
+        } catch (err) {
+          console.error(
+            `[api] ERROR Failed to enqueue ${submission.id}: ${err instanceof Error ? err.message : String(err)}`,
+          )
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Submission created but failed to queue for judging. Please try again.',
+          })
+        }
       }
 
       return { submissionId: submission.id }
