@@ -112,14 +112,15 @@ model User {
 }
 
 model Track {
-  id          String    @id @default(cuid())
-  slug        String    @unique
-  title       String
-  description String
-  icon        String
-  color       String
-  order       Int
-  problems    Problem[]
+  id           String        @id @default(cuid())
+  slug         String        @unique
+  title        String
+  description  String
+  icon         String
+  color        String
+  order        Int
+  problems     Problem[]
+  roadmapNodes RoadmapNode[]
 }
 
 model Problem {
@@ -173,6 +174,7 @@ model RoadmapNode {
   description   String
   type          NodeType
   trackId       String
+  track         Track    @relation(fields: [trackId], references: [id])
   order         Int
   prerequisites String[]
 }
