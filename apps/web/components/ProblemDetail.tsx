@@ -39,16 +39,25 @@ interface SubmissionTestResult {
   runtimeMs: number
 }
 
+interface ProblemStats {
+  totalAccepted: number
+  totalSubmissions: number
+  acceptanceRate: number
+}
+
 interface Props {
   problem: Problem
   descriptionHtml: string
   starterCode: string
   testCases: TestCase[]
   editorialHtml: string | null
+  initialIsSolved: boolean
+  initialStats: ProblemStats
 }
 
 type Tab = 'description' | 'discuss' | 'editorial' | 'submissions'
 
+const POLL_INTERVAL_MS = 500
 const POLL_MAX_MS = 60_000
 const POLL_MAX_FAILURES = 3
 const TERMINAL_STATUSES = ['ACCEPTED', 'WRONG_ANSWER', 'RUNTIME_ERROR', 'TIME_LIMIT', 'CANCELLED']
@@ -409,6 +418,8 @@ export function ProblemDetail({
   starterCode,
   testCases,
   editorialHtml,
+  initialIsSolved,
+  initialStats,
 }: Props) {
   const { data: session } = useSession()
   const router = useRouter()
@@ -422,7 +433,7 @@ export function ProblemDetail({
   const [pollError, setPollError] = useState<string | null>(null)
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [infoMsg, setInfoMsg] = useState<string | null>(null)
-  const [isSolved, setIsSolved] = useState(false)
+  const [isSolved, setIsSolved] = useState(initialIsSolved)
   const [showSolvedBanner, setShowSolvedBanner] = useState(false)
   const [viewingCode, setViewingCode] = useState<{
     id: string
@@ -446,10 +457,6 @@ export function ProblemDetail({
     if (latestSubmission === undefined) return
     initializedFromLatest.current = true
 
-    if (latestSubmission?.isSolved) {
-      setIsSolved(true)
-    }
-
     if (
       latestSubmission?.submissionId &&
       (latestSubmission.status === 'PENDING' || latestSubmission.status === 'RUNNING')
@@ -465,12 +472,6 @@ export function ProblemDetail({
   const { data: dailyCount } = trpc.submission.getDailyCount.useQuery(undefined, {
     enabled: !!session,
   })
-
-  // Problem stats
-  const { data: problemStats } = trpc.problems.getStats.useQuery(
-    { slug: problem.slug },
-    { staleTime: 60_000 },
-  )
 
   // Submission history
   const { data: historyData } = trpc.submission.getHistoryForProblem.useQuery(
@@ -559,7 +560,7 @@ export function ProblemDetail({
       { submissionId: submissionId ?? '' },
       {
         enabled: !!submissionId && isPolling,
-        refetchInterval: isPolling ? 1500 : false,
+        refetchInterval: isPolling ? POLL_INTERVAL_MS : false,
         retry: false,
       },
     )
@@ -706,11 +707,11 @@ export function ProblemDetail({
               </div>
 
               {/* Problem stats row */}
-              {problemStats && (
+              {initialStats.totalSubmissions > 0 && (
                 <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
-                  <span>Accepted: {problemStats.totalAccepted}</span>
-                  <span>Submissions: {problemStats.totalSubmissions}</span>
-                  <span>Acceptance: {problemStats.acceptanceRate}%</span>
+                  <span>Accepted: {initialStats.totalAccepted}</span>
+                  <span>Submissions: {initialStats.totalSubmissions}</span>
+                  <span>Acceptance: {initialStats.acceptanceRate}%</span>
                 </div>
               )}
             </div>
@@ -918,7 +919,7 @@ export function ProblemDetail({
               {infoMsg && (
                 <p className="text-[10px] text-green-600">{infoMsg}</p>
               )}
-              {!infoMsg && dailyCount && !dailyCount.unlimited && (
+              {dailyCount && !dailyCount.unlimited && (
                 <p className="text-[10px] text-slate-400">
                   {dailyCount.used} / {dailyCount.limit} today
                 </p>

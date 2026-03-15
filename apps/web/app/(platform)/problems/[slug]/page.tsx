@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
+import { auth } from '@/lib/auth'
 import { loadProblemContent } from '@/lib/problems-content'
 import { ProblemDetail } from '@/components/ProblemDetail'
 
@@ -10,18 +11,35 @@ interface Props {
 export default async function ProblemPage({ params }: Props) {
   const { slug } = await params
 
-  const problem = await prisma.problem.findUnique({
-    where: { slug },
-    include: { track: true },
-  })
+  const [problem, session] = await Promise.all([
+    prisma.problem.findUnique({ where: { slug }, include: { track: true } }),
+    auth(),
+  ])
 
   if (!problem) notFound()
 
-  let content
-  try {
-    content = await loadProblemContent(problem.track.slug, problem.slug)
-  } catch {
-    notFound()
+  // Fetch content + stats + isSolved in parallel
+  const [content, totalAccepted, totalSubmissions, progress] = await Promise.all([
+    loadProblemContent(problem.track.slug, problem.slug).catch(() => null),
+    prisma.submission.count({ where: { problemId: problem.id, status: 'ACCEPTED' } }),
+    prisma.submission.count({ where: { problemId: problem.id, status: { not: 'CANCELLED' } } }),
+    session?.user?.id
+      ? prisma.userProgress.findUnique({
+          where: { userId_problemId: { userId: session.user.id, problemId: problem.id } },
+          select: { id: true },
+        })
+      : Promise.resolve(null),
+  ])
+
+  if (!content) notFound()
+
+  const initialStats = {
+    totalAccepted,
+    totalSubmissions,
+    acceptanceRate:
+      totalSubmissions > 0
+        ? Math.round((totalAccepted / totalSubmissions) * 1000) / 10
+        : 0,
   }
 
   return (
@@ -42,6 +60,8 @@ export default async function ProblemPage({ params }: Props) {
       starterCode={content.starterCode}
       testCases={content.testCases}
       editorialHtml={content.editorial}
+      initialIsSolved={!!progress}
+      initialStats={initialStats}
     />
   )
 }
