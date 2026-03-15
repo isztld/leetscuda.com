@@ -94,18 +94,15 @@ void solve(const float* h_A, const float* h_B, float* h_C, int N) {
 }
 
 ---test-cases---
-- name: "2×2 matrices"
-  input: "N=2\nA=[[1,2],[3,4]]\nB=[[5,6],[7,8]]"
-  expected: "[[19,22],[43,50]]"
-- name: "Identity × matrix"
-  input: "N=16\nA=identity\nB=sequential"
-  expected: "sequential (B unchanged)"
-- name: "16×16 random"
-  input: "N=16\nA=random\nB=random"
-  expected: "matches reference CPU result"
-- name: "512×512"
-  input: "N=512\nA=ones\nB=ones"
-  expected: "all elements equal 512.0"
+- name: "Zero matrix"
+  input: "16\nfill:0.0\nfill:1.0"
+  expected: "fill:256:0.0"
+- name: "Ones times ones"
+  input: "16\nfill:1.0\nfill:1.0"
+  expected: "fill:256:16.0"
+- name: "Correctness"
+  input: "verify 16"
+  expected: "1"
 
 ---solution---
 __global__ void matmul(const float* A, const float* B, float* C, int N) {
@@ -128,4 +125,55 @@ __global__ void matmul(const float* A, const float* B, float* C, int N) {
     }
 
     C[row * N + col] = acc;
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+
+static void readMatrix(std::vector<float>& m, int N) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float v = atof(tok + 5);
+        for (int i = 0; i < N * N; i++) m[i] = v;
+    } else {
+        m[0] = atof(tok);
+        for (int i = 1; i < N * N; i++) scanf("%f", &m[i]);
+    }
+}
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        int N; scanf("%d", &N);
+        std::vector<float> hA(N*N), hB(N*N), hC(N*N), ref(N*N, 0.0f);
+        for (int i = 0; i < N*N; i++) hA[i] = (float)(i % 5 + 1);
+        for (int i = 0; i < N*N; i++) hB[i] = (float)(i % 3 + 1);
+        for (int i = 0; i < N; i++)
+            for (int j = 0; j < N; j++)
+                for (int k = 0; k < N; k++)
+                    ref[i*N+j] += hA[i*N+k] * hB[k*N+j];
+        solve(hA.data(), hB.data(), hC.data(), N);
+        bool ok = true;
+        for (int i = 0; i < N*N && ok; i++)
+            if (fabsf(hC[i] - ref[i]) > 0.5f) ok = false;
+        printf("%d\n", ok ? 1 : 0);
+    } else {
+        int N = atoi(first);
+        std::vector<float> hA(N*N), hB(N*N), hC(N*N);
+        readMatrix(hA, N);
+        readMatrix(hB, N);
+        solve(hA.data(), hB.data(), hC.data(), N);
+        for (int i = 0; i < N*N; i++) {
+            if (i) printf(" ");
+            printf("%.1f", hC[i]);
+        }
+        printf("\n");
+    }
+    return 0;
 }

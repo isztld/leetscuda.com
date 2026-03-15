@@ -88,14 +88,14 @@ void solve(const float* h_in, float* h_out, int n) {
 
 ---test-cases---
 - name: "Small sum"
-  input: "n=4\nin=[1.0, 2.0, 3.0, 4.0]"
+  input: "4\n1.0 2.0 3.0 4.0"
   expected: "10.0"
-- name: "Power-of-2 large"
-  input: "n=1024\nin=[1.0, 1.0, ..., 1.0]"
-  expected: "1024.0"
-- name: "Mixed values"
-  input: "n=8\nin=[1.0, -1.0, 2.0, -2.0, 3.0, -3.0, 4.0, -4.0]"
+- name: "Zero sum"
+  input: "8\n1.0 -1.0 2.0 -2.0 3.0 -3.0 4.0 -4.0"
   expected: "0.0"
+- name: "Large uniform"
+  input: "256\nfill:1.0"
+  expected: "256.0"
 
 ---solution---
 __global__ void reduceBlock(const float* in, float* partials, int n) {
@@ -137,4 +137,28 @@ __global__ void reducePartials(float* partials, float* out, int count) {
             val += __shfl_down_sync(0xffffffff, val, offset);
         if (lane == 0) *out = val;
     }
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    std::vector<float> h_in(n);
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float v = atof(tok + 5);
+        for (int i = 0; i < n; i++) h_in[i] = v;
+    } else {
+        h_in[0] = atof(tok);
+        for (int i = 1; i < n; i++) scanf("%f", &h_in[i]);
+    }
+    float result = 0.0f;
+    solve(h_in.data(), &result, n);
+    printf("%.4f\n", result);
+    return 0;
 }

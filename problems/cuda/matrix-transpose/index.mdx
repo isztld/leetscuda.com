@@ -83,15 +83,15 @@ void solve(const float* h_in, float* h_out, int N) {
 }
 
 ---test-cases---
-- name: "2×2 matrix"
-  input: "N=2\nin=[[1,2],[3,4]]"
-  expected: "[[1,3],[2,4]]"
-- name: "4×4 identity"
-  input: "N=4\nin=identity matrix"
-  expected: "identity matrix (transpose of identity is identity)"
-- name: "32×32 tile"
-  input: "N=32\nin=sequential values 0..1023"
-  expected: "transposed sequential values"
+- name: "Uniform values"
+  input: "32\nfill:3.0"
+  expected: "fill:1024:3.0"
+- name: "Zero matrix"
+  input: "32\nfill:0.0"
+  expected: "fill:1024:0.0"
+- name: "Correctness"
+  input: "verify 32"
+  expected: "1"
 
 ---solution---
 __global__ void transpose(const float* in, float* out, int N) {
@@ -110,4 +110,50 @@ __global__ void transpose(const float* in, float* out, int N) {
 
     if (col_out < N && row_out < N)
         out[row_out * N + col_out] = smem[threadIdx.x][threadIdx.y];
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        int N; scanf("%d", &N);
+        std::vector<float> hIn(N*N), hOut(N*N), ref(N*N);
+        for (int i = 0; i < N; i++)
+            for (int j = 0; j < N; j++)
+                hIn[i*N+j] = (float)(i*N+j);
+        for (int i = 0; i < N; i++)
+            for (int j = 0; j < N; j++)
+                ref[j*N+i] = hIn[i*N+j];
+        solve(hIn.data(), hOut.data(), N);
+        bool ok = true;
+        for (int i = 0; i < N*N && ok; i++)
+            if (fabsf(hOut[i] - ref[i]) > 0.5f) ok = false;
+        printf("%d\n", ok ? 1 : 0);
+    } else {
+        int N = atoi(first);
+        char tok[64];
+        scanf("%s", tok);
+        std::vector<float> hIn(N*N), hOut(N*N);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            float v = atof(tok + 5);
+            for (int i = 0; i < N*N; i++) hIn[i] = v;
+        } else {
+            hIn[0] = atof(tok);
+            for (int i = 1; i < N*N; i++) scanf("%f", &hIn[i]);
+        }
+        solve(hIn.data(), hOut.data(), N);
+        for (int i = 0; i < N*N; i++) {
+            if (i) printf(" ");
+            printf("%.1f", hOut[i]);
+        }
+        printf("\n");
+    }
+    return 0;
 }

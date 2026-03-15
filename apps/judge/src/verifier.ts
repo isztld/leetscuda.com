@@ -25,6 +25,13 @@ function compareLines(actual: string, expected: string): boolean {
   return true
 }
 
+// Expand fill:N:X shorthand used in MDX test cases (e.g. "fill:256:0.0" → "0.0 0.0 ...")
+function expandFills(s: string): string {
+  return s.replace(/fill:(\d+):([-\d.eE+]+)/g, (_, n, v) =>
+    Array(parseInt(n, 10)).fill(v).join(' '),
+  )
+}
+
 export function verify(actual: string, expected: string): boolean {
-  return compareLines(actual, expected)
+  return compareLines(actual, expandFills(expected))
 }
