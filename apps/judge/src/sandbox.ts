@@ -3,6 +3,7 @@ import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { env } from './env.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -92,10 +93,16 @@ async function runDocker(
     ? ['run', '--rm', '--network', 'none', '--memory', '512m', '--gpus', 'device=0', '--ulimit', 'nproc=128']
     : ['run', '--rm', '--network', 'none', '--memory', '256m', '--cpus', '0.5', '--ulimit', 'nproc=64']
 
+  // When running inside Docker with the host Docker socket, volume mounts must use
+  // the host-side path. JUDGE_HOST_TMP_DIR maps the container's tmp dir to its host path.
+  const hostTmpDir = env.hostTmpDir
+    ? path.join(env.hostTmpDir, opts.submissionId)
+    : tmpDir
+
   // Compile
   const compileResult = await runProcess(
     'docker',
-    [...dockerBaseArgs, '-v', `${tmpDir}:/work`, '-w', '/work', image, ...compileCmd],
+    [...dockerBaseArgs, '-v', `${hostTmpDir}:/work`, '-w', '/work', image, ...compileCmd],
     '',
     30_000,
   )
@@ -113,7 +120,7 @@ async function runDocker(
   const start = Date.now()
   const runResult = await runProcess(
     'docker',
-    [...dockerBaseArgs, '--stop-timeout', String(Math.ceil(opts.timeoutMs / 1000)), '-i', '-v', `${tmpDir}:/work`, '-w', '/work', image, './solution'],
+    [...dockerBaseArgs, '--stop-timeout', String(Math.ceil(opts.timeoutMs / 1000)), '-i', '-v', `${hostTmpDir}:/work`, '-w', '/work', image, './solution'],
     input,
     opts.timeoutMs,
   )
@@ -128,6 +135,9 @@ async function runDirect(
   opts: SandboxOptions,
 ): Promise<SandboxResult> {
   const isCuda = opts.runtime === 'cuda'
+  // Use absolute source path so nvcc's internal cc1plus subprocess can find the file
+  // regardless of what CWD nvcc uses when it spawns subprocesses.
+  // Also pass cwd=tmpDir so nvcc can resolve its own relative temp-file references.
   const srcFile = path.join(tmpDir, isCuda ? 'solution.cu' : 'solution.cpp')
   const binFile = path.join(tmpDir, 'solution')
 
@@ -135,7 +145,7 @@ async function runDirect(
     ? ['nvcc', `-std=c++${opts.cppStandard}`, `-arch=${opts.computeCap ?? 'sm_86'}`, '-O2', '-o', binFile, srcFile]
     : ['g++', `-std=c++${opts.cppStandard}`, '-O2', '-o', binFile, srcFile]
 
-  const compileResult = await runProcess(compileArgs[0], compileArgs.slice(1), '', 30_000)
+  const compileResult = await runProcess(compileArgs[0], compileArgs.slice(1), '', 30_000, tmpDir)
 
   if (compileResult.exitCode !== 0) {
     return {
