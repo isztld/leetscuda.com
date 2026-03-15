@@ -72,12 +72,15 @@ docker run -d --name leetscuda-redis \
   -p 6379:6379 redis:7
 ```
 
-### 4. Migrate and seed the database
+### 4. Migrate, seed, and sync the database
 
 ```bash
-pnpm --filter @leetscuda/web db:migrate   # run all migrations
-pnpm --filter @leetscuda/web db:seed      # seed tracks, roadmap nodes, 12 problems
+pnpm --filter @leetscuda/web db:migrate   # apply schema migrations
+pnpm --filter @leetscuda/web db:seed      # seed tracks + roadmap nodes
+pnpm --filter @leetscuda/web db:sync      # sync problems from MDX files
 ```
+
+`db:sync` must run after `db:seed` because problems reference track IDs created by the seed.
 
 ### 5. Start the dev server
 
@@ -275,16 +278,19 @@ Self-verifying test cases output `1` (pass) or `0` (fail) — the harness comput
 
 ### Frontmatter fields
 
+MDX frontmatter is the **single source of truth** for all problem metadata. The database is a derived cache populated by `db:sync`.
+
 ```yaml
-slug: vector-add           # must match DB Problem.slug
-title: Vector Addition     # must match DB Problem.title
-difficulty: EASY           # EASY | MEDIUM | HARD
+slug: vector-add           # lowercase alphanumeric + hyphens; must match directory name
+title: Vector Addition
+difficulty: easy           # easy | medium | hard
 track: cuda                # cuda | ml-systems | kubernetes-ai | foundations
 tags:
   - memory
   - threads
-status: PUBLISHED
+status: published          # published | draft
 xp: 100
+author: community
 
 # Execution runtime (determines which judge queue receives this problem)
 runtime: cuda              # cpp | cuda
@@ -295,12 +301,17 @@ compute_cap: "sm_120"      # cuda only
 
 For C++ problems omit `cuda_version` and `compute_cap`.
 
-### Adding a new problem
+### Adding a problem
 
-1. Create `problems/{track}/{slug}/index.mdx` following the format above
-2. Add a matching entry to `PROBLEMS` in `apps/web/prisma/seed.ts` with the correct `executionRuntime`, `cppStandard`, and (for CUDA) `cudaVersion` + `computeCap` enum values
-3. Run `pnpm --filter @leetscuda/web db:seed`
-4. The problem will appear at `/problems/{slug}`
+1. Create `problems/{track}/{slug}/index.mdx` following the frontmatter schema above
+2. Write the description, starter code, test cases, and solution sections
+3. Open a PR — CI validates frontmatter on merge
+4. On merge to main, GitHub Actions automatically syncs the problem to the DB
+
+```bash
+# Manual sync for local development
+pnpm --filter @leetscuda/web db:sync
+```
 
 ---
 

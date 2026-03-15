@@ -11,8 +11,9 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "judge:token": "tsx scripts/create-judge-token.ts",
-    "theory:sync": "tsx scripts/sync-theory.ts"
+    "db:sync": "tsx --env-file=.env scripts/sync-problems.ts",
+    "judge:token": "tsx --env-file=.env scripts/create-judge-token.ts",
+    "theory:sync": "tsx --env-file=.env scripts/sync-theory.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "latest",

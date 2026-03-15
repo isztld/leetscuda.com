@@ -29,23 +29,7 @@ export type TestCase = {
   expected: string
 }
 
-export type ProblemMeta = {
-  slug: string
-  title: string
-  difficulty: 'EASY' | 'MEDIUM' | 'HARD'
-  track: string
-  tags: string[]
-  execution: string
-  status: string
-  xp: number
-  runtime: 'cpp' | 'cuda'
-  cpp_standard: string
-  cuda_version?: string
-  compute_cap?: string
-}
-
 export type ProblemContent = {
-  meta: ProblemMeta
   descriptionHtml: string
   starterCode: string
   testCases: TestCase[]
@@ -65,7 +49,7 @@ export async function loadProblemContent(
     throw new Error(`Problem content not found: ${trackSlug}/${problemSlug}`)
   }
 
-  const { data, content } = matter(raw)
+  const { content } = matter(raw)
 
   // Split body on section delimiters
   const [descPart = '', rest1 = ''] = content.split('---starter-code---')
@@ -87,7 +71,6 @@ export async function loadProblemContent(
   }
 
   return {
-    meta: data as ProblemMeta,
     descriptionHtml,
     starterCode: starterPart.trim(),
     testCases,
