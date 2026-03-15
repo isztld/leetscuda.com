@@ -129,3 +129,34 @@ void load(int layer, int head, int pos, float* k_out, float* v_out) const {
     std::memcpy(k_out, &key_cache_[base],   head_dim_ * sizeof(float));
     std::memcpy(v_out, &value_cache_[base], head_dim_ * sizeof(float));
 }
+
+---editorial---
+## Approach
+
+Implement the KV cache as two flat arrays (key and value), indexed by `[layer, head, pos, dim]` in row-major order. The flat index for a given `(layer, head, pos, d)` is:
+
+```cpp
+size_t idx(int layer, int head, int pos, int d) const {
+    return ((size_t)layer * num_heads_ * max_seq_len_ + head * max_seq_len_ + pos) * head_dim_ + d;
+}
+```
+
+**`store`**: compute the base index for `(layer, head, pos, 0)` and `memcpy` head_dim floats for both K and V. Update `current_size_` if `pos + 1 > current_size_`.
+
+**`load`**: same index computation, `memcpy` in the opposite direction.
+
+## Complexity
+
+- **store/load**: O(head_dim) — just a memcpy of head_dim floats
+- **Space**: O(num_layers × num_heads × max_seq_len × head_dim) — pre-allocated on construction
+
+## Key Insight
+
+The flat layout `[layer][head][pos][dim]` is chosen so that all `head_dim` values for a given `(layer, head, pos)` are contiguous in memory. This makes the memcpy for a single position a single cache-line-aligned copy, avoiding scatter-gather penalties.
+
+## Common Mistakes
+
+- **Using 32-bit size_t**: When `num_layers * num_heads * max_seq_len * head_dim` exceeds 2³², a 32-bit intermediate overflows silently. Cast to `size_t` before multiplying.
+- **Forgetting to allocate**: The vectors must be resized in the constructor; leaving them empty makes every access undefined behaviour.
+- **Wrong `current_size_` update**: Track the high watermark with `if (pos + 1 > current_size_) current_size_ = pos + 1`. Don't just always set `current_size_ = pos + 1`, which would regress on out-of-order stores (though the problem says positions are monotonically increasing).
+---end---

@@ -163,3 +163,31 @@ void step(int req_id) {
         }
     }
 }
+
+---editorial---
+## Approach
+
+Continuous batching maintains two data structures: a **running set** (vector of active requests, bounded by `max_batch_size`) and a **waiting queue** (FIFO of pending requests).
+
+**`schedule()`**:
+1. Scan the running set and preempt any request whose `prompt_len + tokens_generated >= max_seq_len` — move it back to the front of the waiting queue
+2. Fill empty slots from the waiting queue until running size == max_batch_size or queue is empty
+3. Return the vector of req_ids in the running set
+
+**`step(req_id)`**: find the request in running_, increment its token count, and remove it if done.
+
+## Complexity
+
+- **schedule()**: O(B + W) where B = max_batch_size, W = waiting queue size (both small in practice)
+- **Space**: O(B + W)
+
+## Key Insight
+
+The difference from static batching is that `schedule()` is called at every generation step, not once per batch. Finished requests are replaced immediately, so the batch stays full and GPU utilisation stays high even when requests have different lengths.
+
+## Common Mistakes
+
+- **Checking `tokens_generated == max_new_tokens` instead of `>=`**: Use `>=` to avoid missing the termination condition if tokens_generated somehow overshoots.
+- **Preempting after filling instead of before**: Preemption should happen first so that freed slots are available for new requests in the same `schedule()` call.
+- **Not handling the waiting queue FIFO property**: Requests added earlier should be scheduled earlier. `std::queue` gives FIFO naturally.
+---end---

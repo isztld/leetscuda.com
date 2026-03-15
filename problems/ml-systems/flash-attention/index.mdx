@@ -146,3 +146,37 @@ void flash_attention_forward(
             out[d] = o_row[d] / l;
     }
 }
+
+---editorial---
+## Approach
+
+Flash Attention avoids materialising the N×N attention matrix by using the **online softmax** recurrence. For each query row `Q_i`, iterate over KV tiles while maintaining running statistics `m` (max score so far) and `l` (normalisation factor):
+
+```
+For each KV tile j:
+  Compute S = Q_i · K_j^T / sqrt(d)          [block scores]
+  m_new = max(m, rowmax(S))
+  l_new = exp(m - m_new) * l + rowsum(exp(S - m_new))
+  O     = (exp(m - m_new) * O + exp(S - m_new) · V_j) / l_new  [rescale + accumulate]
+  m = m_new; l = l_new
+Final: O_i = O  (already normalised)
+```
+
+The `exp(m - m_new)` correction rescales the previously accumulated output when a new maximum is found, keeping numerical stability without a second pass over the data.
+
+## Complexity
+
+- **Time**: O(N² × D) — same as standard attention
+- **Memory**: O(N × D) — no N×N matrix materialised, only the output and per-query running state
+- **HBM reads**: O(N × D) vs O(N²) for standard — the key practical win
+
+## Key Insight
+
+The online softmax trick works because `softmax(x)_i = exp(x_i - max(x)) / sum(exp(x_j - max(x)))`. As we tile over the sequence, we can update the max and sum incrementally, correcting previous partial outputs by multiplying by `exp(m_old - m_new)` whenever the max increases.
+
+## Common Mistakes
+
+- **Dividing by l at each step instead of at the end**: Don't normalise intermediate O by l_new; only divide once at the end. If you divide at each step, the correction factor doesn't work correctly.
+- **Initialising m = 0 instead of -inf**: With m = 0, the first tile's scores may all be negative, causing exp(S - m) to be very small and l underflows. Start with `m = -infinity`.
+- **Not resetting m and l per query**: Each query row has independent running statistics. These must be initialised fresh for each `i`.
+---end---

@@ -156,3 +156,41 @@ double benchmark_padded(int T, long long N) {
     auto t1 = std::chrono::high_resolution_clock::now();
     return std::chrono::duration<double, std::milli>(t1 - t0).count();
 }
+
+---editorial---
+## Approach
+
+The benchmark launches T threads, each incrementing its own counter N times, and measures total wall-clock duration. The only difference between the two versions is the data layout.
+
+```cpp
+double benchmark_naive(int T, long long N) {
+    NaiveCounters c = {};
+    std::vector<std::thread> threads;
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (int tid = 0; tid < T; ++tid)
+        threads.emplace_back([&c, tid, N]{
+            for (long long i = 0; i < N; ++i) c.values[tid]++;
+        });
+    for (auto& t : threads) t.join();
+    auto t1 = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration<double, std::milli>(t1 - t0).count();
+}
+```
+
+The padded version is identical except `c.slots[tid].value`. The `static_assert` verifies the layout is correct at compile time.
+
+## Complexity
+
+- **Time**: O(T × N) — each thread does N increments
+- **Space**: O(T × 64) bytes for padded, O(T × 8) bytes for naive
+
+## Key Insight
+
+In the naive layout, 8 `long long` counters fit in one 64-byte cache line. When thread 0 writes `values[0]`, it invalidates the entire cache line in all other cores' L1 caches — even though threads 1–7 are writing different values. With padding, each counter occupies a full cache line, so writes never interfere.
+
+## Common Mistakes
+
+- **Wrong pad size**: `char pad[64 - sizeof(long long)]` = 56 bytes on 64-bit systems. Verify with `sizeof(PaddedCounter) == 64`.
+- **Capturing tid by reference in the lambda**: Use `[&c, tid, N]` (tid by value). Capturing by reference means all threads share the same tid variable and may all read its final value.
+- **Inconsistent timing scope**: Start the timer after thread creation is complete, or include thread creation in both benchmarks to keep the comparison fair.
+---end---

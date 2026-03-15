@@ -145,3 +145,27 @@ spec:
     - port: "8000"
       path: /metrics
       interval: 15s
+
+---editorial---
+## Approach
+
+**HPA manifest (`autoscaling/v2`):**
+- `scaleTargetRef` points to the Deployment you want to scale
+- Under `metrics`, use `type: Pods` with `pods.metric.name: dcgm_fi_dev_gpu_util` and `target.type: AverageValue` with `averageValue: "60"` — the HPA scales pods until the average GPU utilisation across all pods is 60%
+- `behavior.scaleDown.stabilizationWindowSeconds: 300` prevents flapping by requiring 5 minutes of low utilisation before scaling down
+
+**PodMonitor:**
+- Must be in the `monitoring` namespace (where the Prometheus Operator watches for CRDs)
+- `namespaceSelector.matchNames: [inference]` tells Prometheus to scrape pods in the inference namespace
+- `podMetricsEndpoints` specifies port `8000` and path `/metrics`
+
+## Key Insight
+
+The stabilisation window asymmetry (`scaleDown=300, scaleUp=0`) is intentional: scale up fast (don't queue requests), scale down slow (avoid thrashing when load fluctuates). A GPU pod takes 60+ seconds to start, so premature scale-down is expensive.
+
+## Common Mistakes
+
+- **Using `autoscaling/v1` or `autoscaling/v2beta2`**: Custom metrics require `autoscaling/v2`.
+- **PodMonitor in wrong namespace**: The PodMonitor itself goes in `monitoring`, not `inference`. The `namespaceSelector` tells Prometheus which namespace to scrape.
+- **Using `targetAverageValue` (old API)**: In `autoscaling/v2`, use `target.type: AverageValue` and `target.averageValue`, not the v1-style `targetAverageValue` field.
+---end---

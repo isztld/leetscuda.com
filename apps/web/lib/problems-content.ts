@@ -34,6 +34,7 @@ export type ProblemContent = {
   starterCode: string
   testCases: TestCase[]
   harness: string
+  editorial: string | null
 }
 
 export async function loadProblemContent(
@@ -55,7 +56,16 @@ export async function loadProblemContent(
   const [descPart = '', rest1 = ''] = content.split('---starter-code---')
   const [starterPart = '', rest2 = ''] = rest1.split('---test-cases---')
   const [testCasesPart = '', rest3 = ''] = rest2.split('---solution---')
-  const [, harnessPart = ''] = rest3.split('---harness---')
+  const [, rest4 = ''] = rest3.split('---harness---')
+  const harnessPart = rest4.split('---editorial---')[0]
+
+  // Search for editorial anywhere after the solution section
+  const editorialMarkerIdx = content.indexOf('---editorial---')
+  let editorialContent = ''
+  if (editorialMarkerIdx !== -1) {
+    const afterMarker = content.slice(editorialMarkerIdx + '---editorial---'.length)
+    editorialContent = afterMarker.split('---end---')[0].trim()
+  }
 
   const descriptionHtml = await renderMarkdown(descPart.trim())
 
@@ -70,10 +80,15 @@ export async function loadProblemContent(
     }
   }
 
+  const editorial = editorialContent
+    ? await renderMarkdown(editorialContent)
+    : null
+
   return {
     descriptionHtml,
     starterCode: starterPart.trim(),
     testCases,
     harness: harnessPart.trim(),
+    editorial,
   }
 }

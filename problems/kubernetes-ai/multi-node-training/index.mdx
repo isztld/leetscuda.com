@@ -204,3 +204,26 @@ spec:
             - name: training-data
               persistentVolumeClaim:
                 claimName: training-data
+
+---editorial---
+## Approach
+
+A `PyTorchJob` is a Kubeflow custom resource that manages multi-node distributed training. It injects `MASTER_ADDR` and `MASTER_PORT` environment variables and handles pod lifecycle.
+
+**Key fields:**
+- `hostNetwork: true` + `dnsPolicy: ClusterFirstWithHostNet` — bypasses pod network for RDMA; without this, RoCE/InfiniBand traffic goes through slow virtual ethernet
+- `rdma/hca: 1` — requests an RDMA Host Channel Adapter; without this, NCCL falls back to TCP
+- Both Master and Worker specs must be identical; the operator adds role-specific env vars automatically
+
+**PVC mount:** The `volumes` entry defines the PVC, and `volumeMounts` references it by name.
+
+## Key Insight
+
+`hostNetwork: true` is essential for RDMA performance. Without it, inter-node GPU-to-GPU communication goes through the kernel's virtual ethernet (~10 Gbps) instead of InfiniBand or RoCE (100–400 Gbps).
+
+## Common Mistakes
+
+- **Missing `rdma/hca` resource**: Without requesting the RDMA device, NCCL silently falls back to TCP.
+- **Mismatched Master/Worker specs**: Both specs must be identical — same image, command, resources, volumes.
+- **Wrong `dnsPolicy`**: With `hostNetwork: true`, set `dnsPolicy: ClusterFirstWithHostNet` or DNS resolution fails inside the pod.
+---end---

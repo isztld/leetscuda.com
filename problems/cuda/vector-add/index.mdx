@@ -123,3 +123,37 @@ int main() {
     printf("\n");
     return 0;
 }
+
+---editorial---
+## Approach
+
+This is the canonical "Hello, CUDA" problem. Each thread independently computes one output element: `c[i] = a[i] + b[i]`. The key steps are:
+
+1. Compute the global thread index: `int i = blockIdx.x * blockDim.x + threadIdx.x`
+2. Guard against out-of-bounds: `if (i < n)` — the last block may have threads beyond the array length when `n` is not a multiple of `blockDim.x`
+3. Perform the addition and write to output
+
+```cpp
+__global__ void vecAdd(const float* a, const float* b, float* c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        c[i] = a[i] + b[i];
+    }
+}
+```
+
+## Complexity
+
+- **Time**: O(n/P) where P is the number of GPU threads executing in parallel
+- **Memory**: O(n) — three arrays of size n on the GPU
+
+## Key Insight
+
+The 1D indexing formula `blockIdx.x * blockDim.x + threadIdx.x` is the CUDA equivalent of a loop index. With 256 threads per block and a grid of `ceil(n/256)` blocks, every element in `[0, n)` gets exactly one thread. The out-of-bounds guard is critical — without it, the last partial block would write garbage to memory beyond the array.
+
+## Common Mistakes
+
+- **Forgetting the bounds check**: If n=5 and blockDim.x=256, block 0 has 256 threads but only indices 0–4 are valid. Threads 5–255 must not write to `c`.
+- **Wrong grid size**: Use `(n + blockSize - 1) / blockSize`, not `n / blockSize`, to handle non-multiples. The host code already does this for you here.
+- **Missing `cudaMemcpy` back**: Results on the device are not visible to the host until copied back with `cudaMemcpyDeviceToHost`.
+---end---

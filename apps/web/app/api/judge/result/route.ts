@@ -1,9 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { authenticateJudge } from '@/lib/judge-auth'
 import { prisma } from '@/lib/prisma'
 import { updateStreak } from '@/lib/streak'
 import { toCppStandard, toCudaVersion, toComputeCap } from '@/lib/runtime-maps'
+
+const SubmissionTestResultSchema = z.object({
+  index: z.number().int().nonnegative(),
+  passed: z.boolean(),
+  input: z.string(),
+  expected: z.string(),
+  actual: z.string(),
+  runtimeMs: z.number().int().nonnegative(),
+})
 
 const ResultSchema = z.object({
   submissionId: z.string(),
@@ -11,6 +21,7 @@ const ResultSchema = z.object({
   runtimeMs: z.number().int().nonnegative(),
   output: z.string().optional(),
   errorMsg: z.string().optional(),
+  testResults: z.array(SubmissionTestResultSchema).optional(),
   cppStandard: z.string().optional(),
   cudaVersion: z.string().optional(),
   computeCap: z.string().optional(),
@@ -47,6 +58,9 @@ export async function POST(req: NextRequest) {
       runtimeMs: result.runtimeMs,
       output: result.output ?? null,
       errorMsg: result.errorMsg ?? null,
+      testResults: result.testResults
+        ? (result.testResults as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
       cppStandard: toCppStandard(result.cppStandard),
       cudaVersion: toCudaVersion(result.cudaVersion),
       computeCap: toComputeCap(result.computeCap),
@@ -56,6 +70,7 @@ export async function POST(req: NextRequest) {
   console.log(`[judge-result] ${result.submissionId} → ${result.status} in ${result.runtimeMs}ms (judge: ${judge.name})`)
 
   // 4. On ACCEPTED: award XP on first solve, update streak
+  let firstSolve = false
   if (result.status === 'ACCEPTED') {
     const submission = await prisma.submission.findUnique({
       where: { id: result.submissionId },
@@ -83,6 +98,7 @@ export async function POST(req: NextRequest) {
       })
 
       if (!existingProgress) {
+        firstSolve = true
         await prisma.user.update({
           where: { id: userId },
           data: { xp: { increment: problem.xpReward } },
@@ -94,5 +110,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ received: true, firstSolve })
 }

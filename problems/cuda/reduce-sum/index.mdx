@@ -162,3 +162,38 @@ int main() {
     printf("%.4f\n", result);
     return 0;
 }
+
+---editorial---
+## Approach
+
+Parallel reduction folds N inputs into one result using two kernel passes. Each block independently reduces its chunk to one partial sum, then a second pass reduces the array of partial sums.
+
+**Within a block, use warp-shuffle intrinsics:**
+
+```cpp
+// Warp-level reduction (no shared memory needed within a warp)
+for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+    val += __shfl_down_sync(0xffffffff, val, offset);
+```
+
+After the warp reduction, lane 0 of each warp holds the warp partial sum. Write these to shared memory, then have the first warp reduce across all warp sums.
+
+**Two-pass structure:**
+- `reduceBlock`: each block reduces its slice to `partials[blockIdx.x]`
+- `reducePartials`: a single block (gridSize=1) reduces the partials array
+
+## Complexity
+
+- **Time**: O(N/P) where P is total threads (two passes: O(N/256) + O(gridSize/256))
+- **Shared memory**: BLOCK_SIZE/WARP_SIZE floats = 8 floats per block
+
+## Key Insight
+
+`__shfl_down_sync(mask, val, offset)` exchanges register values between threads in the same warp without touching shared memory. This is faster than a shared-memory tree reduction because it avoids memory latency and bank conflicts. The mask `0xffffffff` means all 32 lanes participate.
+
+## Common Mistakes
+
+- **Out-of-bounds load**: Use `(idx < n) ? in[idx] : 0.0f` to handle arrays whose size isn't a multiple of BLOCK_SIZE.
+- **Wrong warp count in shared memory**: The shared array needs `BLOCK_SIZE / WARP_SIZE` entries (= 8 for BLOCK_SIZE=256, WARP_SIZE=32), not WARP_SIZE entries.
+- **Missing sync before first-warp reduction**: Thread divergence means the warp partial sums are written to shared memory by one thread per warp. `__syncthreads()` ensures all writes complete before the first warp reads them.
+---end---

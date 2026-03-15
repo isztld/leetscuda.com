@@ -177,3 +177,40 @@ int main() {
     }
     return 0;
 }
+
+---editorial---
+## Approach
+
+Tiled matrix multiplication is the canonical CUDA optimisation: replace expensive global memory reads with cheap shared memory accesses. The naïve approach has O(N) global reads per output element; tiling reduces this to O(N/TILE).
+
+**Algorithm:**
+1. Each thread computes one output element `C[row][col]`
+2. Loop over tiles of the shared dimension in steps of `TILE`
+3. Load one element of A and one element of B into shared memory; synchronise; accumulate dot product over the tile; synchronise before next tile
+4. Write the final accumulated value to `C`
+
+```cpp
+for (int t = 0; t < N / TILE; t++) {
+    sA[threadIdx.y][threadIdx.x] = A[row * N + t * TILE + threadIdx.x];
+    sB[threadIdx.y][threadIdx.x] = B[(t * TILE + threadIdx.y) * N + col];
+    __syncthreads();
+    for (int k = 0; k < TILE; k++) acc += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+    __syncthreads();
+}
+```
+
+## Complexity
+
+- **Global memory reads**: O(N³ / TILE) — a TILE× reduction vs. naïve
+- **Shared memory per block**: 2 × TILE² × 4 bytes = 2 KB at TILE=16
+
+## Key Insight
+
+The two `__syncthreads()` calls have distinct roles: the first ensures the tile is fully loaded before any thread reads from shared memory; the second ensures all threads finish reading before the next iteration overwrites shared memory. Missing either causes data races.
+
+## Common Mistakes
+
+- **Wrong A/B indexing**: A is accessed by column offset (`t*TILE + threadIdx.x`), B by row offset (`t*TILE + threadIdx.y`). Swapping these transposes one operand.
+- **Missing the second `__syncthreads()`**: Without it, fast threads in iteration t+1 overwrite sA/sB while slow threads are still reading from it in iteration t.
+- **Non-multiple-of-TILE N**: This solution assumes N % TILE == 0. Production kernels need bounds checks on the load.
+---end---

@@ -8,6 +8,12 @@ import { CPP_STANDARD, CUDA_VERSION, COMPUTE_CAP } from '@/lib/runtime-maps'
 import { validateSubmission } from '@/lib/submission-validator'
 import { SubmissionConfig } from '@/lib/submission-config'
 
+/** Returns `submission:daily:${userId}:${YYYY-MM-DD}` using UTC date. */
+function dailyKey(userId: string): string {
+  const today = new Date().toISOString().slice(0, 10)
+  return `submission:daily:${userId}:${today}`
+}
+
 export const submissionsRouter = router({
   create: protectedProcedure
     .input(
@@ -72,12 +78,19 @@ export const submissionsRouter = router({
         `[api] Submission created ${submission.id} for ${input.problemSlug} by ${userId}`,
       )
 
+      // Increment the Redis daily count key
+      const redis = getRedis()
+      if (redis) {
+        const key = dailyKey(userId)
+        await redis.incr(key)
+        await redis.expire(key, 86400)
+      }
+
       // Enqueue job to the correct queue based on execution runtime
       const isCuda = problem.executionRuntime === ExecutionRuntime.CUDA
       const cudaVerStr = problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : '13.0'
       const queueName = isCuda ? `judge:queue:cuda:${cudaVerStr}` : 'judge:queue:cpp'
 
-      const redis = getRedis()
       if (redis) {
         try {
           await redis.rpush(
@@ -112,6 +125,17 @@ export const submissionsRouter = router({
     .query(async ({ ctx, input }) => {
       const submission = await prisma.submission.findUnique({
         where: { id: input.submissionId },
+        select: {
+          id: true,
+          userId: true,
+          problemId: true,
+          status: true,
+          runtimeMs: true,
+          output: true,
+          errorMsg: true,
+          testResults: true,
+          submittedAt: true,
+        },
       })
       if (!submission) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Submission not found' })
@@ -119,12 +143,31 @@ export const submissionsRouter = router({
       if (submission.userId !== ctx.session.user.id) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Not your submission' })
       }
+
+      // Check if this is the user's first solve (only relevant for ACCEPTED)
+      let firstSolve = false
+      if (submission.status === 'ACCEPTED') {
+        const progress = await prisma.userProgress.findUnique({
+          where: {
+            userId_problemId: { userId: submission.userId, problemId: submission.problemId },
+          },
+          select: { solvedAt: true, attempts: true },
+        })
+        if (progress) {
+          const diffMs = Math.abs(progress.solvedAt.getTime() - submission.submittedAt.getTime())
+          // Consider it firstSolve if attempts == 1 and solved very recently (within 10 minutes)
+          firstSolve = progress.attempts === 1 && diffMs < 600_000
+        }
+      }
+
       return {
         id: submission.id,
         status: submission.status,
         runtimeMs: submission.runtimeMs,
         output: submission.output,
         errorMsg: submission.errorMsg,
+        testResults: submission.testResults,
+        firstSolve,
         submittedAt: submission.submittedAt,
       }
     }),
@@ -139,11 +182,21 @@ export const submissionsRouter = router({
       })
       if (!problem) return null
 
-      const submission = await prisma.submission.findFirst({
-        where: { userId: ctx.session.user.id, problemId: problem.id },
-        orderBy: { submittedAt: 'desc' },
-      })
-      if (!submission) return null
+      const userId = ctx.session.user.id
+
+      const [submission, progress] = await Promise.all([
+        prisma.submission.findFirst({
+          where: { userId, problemId: problem.id },
+          orderBy: { submittedAt: 'desc' },
+        }),
+        prisma.userProgress.findUnique({
+          where: { userId_problemId: { userId, problemId: problem.id } },
+        }),
+      ])
+
+      const isSolved = !!progress
+
+      if (!submission) return { submissionId: null, isSolved }
 
       return {
         submissionId: submission.id,
@@ -151,26 +204,73 @@ export const submissionsRouter = router({
         runtimeMs: submission.runtimeMs,
         output: submission.output,
         errorMsg: submission.errorMsg,
+        isSolved,
       }
     }),
 
   /** Returns today's submission count and limit for the current user. */
   getDailyCount: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id
-    const startOfDay = new Date()
-    startOfDay.setUTCHours(0, 0, 0, 0)
 
-    const [used, user] = await Promise.all([
-      prisma.submission.count({ where: { userId, submittedAt: { gte: startOfDay } } }),
-      prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
-    ])
-
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } })
     const isPaid = user?.role === 'ADMIN'
     const limit = isPaid ? SubmissionConfig.dailyLimitPaid : SubmissionConfig.dailyLimitFree
     const unlimited = isPaid && limit === 0
 
+    // Read daily count from Redis if available, fall back to DB
+    const redis = getRedis()
+    let used = 0
+    if (redis) {
+      const val = await redis.get(dailyKey(userId))
+      used = val ? Math.max(0, parseInt(val, 10)) : 0
+    } else {
+      const startOfDay = new Date()
+      startOfDay.setUTCHours(0, 0, 0, 0)
+      used = await prisma.submission.count({
+        where: {
+          userId,
+          submittedAt: { gte: startOfDay },
+          status: { not: 'CANCELLED' },
+        },
+      })
+    }
+
     return { used, limit, unlimited }
   }),
+
+  /** Returns the last 20 submissions for this user + problem, most recent first. */
+  getHistoryForProblem: protectedProcedure
+    .input(z.object({ problemSlug: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const problem = await prisma.problem.findUnique({
+        where: { slug: input.problemSlug },
+        select: { id: true },
+      })
+      if (!problem) return []
+
+      const submissions = await prisma.submission.findMany({
+        where: { userId: ctx.session.user.id, problemId: problem.id },
+        orderBy: { submittedAt: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          status: true,
+          runtimeMs: true,
+          submittedAt: true,
+          code: true,
+        },
+      })
+
+      // Assign submission numbers (1 = first ever) by fetching total count
+      const total = await prisma.submission.count({
+        where: { userId: ctx.session.user.id, problemId: problem.id },
+      })
+
+      return submissions.map((s, i) => ({
+        ...s,
+        number: total - i, // most recent is `total`, descending
+      }))
+    }),
 
   /**
    * Attempts to cancel a PENDING submission by removing it from the Redis queue.
@@ -236,6 +336,16 @@ export const submissionsRouter = router({
           where: { id: submission.id },
           data: { status: 'CANCELLED' },
         })
+
+        // Decrement the daily count key — floor at 0
+        const userId = ctx.session.user.id
+        const key = dailyKey(userId)
+        const current = await redis.get(key)
+        if (current && parseInt(current, 10) > 0) {
+          await redis.decr(key)
+        }
+        await redis.expire(key, 86400)
+
         return { cancelled: true as const }
       }
 

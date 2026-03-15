@@ -171,6 +171,7 @@ model Submission {
   runtimeMs   Int?
   output      String?
   errorMsg    String?
+  testResults Json?
   submittedAt DateTime         @default(now())
   cppStandard CppStandard?
   cudaVersion CudaVersion?

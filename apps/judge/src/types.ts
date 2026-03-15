@@ -22,12 +22,22 @@ export const JudgeJobSchema = z.object({
 export type TestCase = z.infer<typeof TestCaseSchema>
 export type JudgeJob = z.infer<typeof JudgeJobSchema>
 
+export type SubmissionTestResult = {
+  index: number
+  passed: boolean
+  input: string
+  expected: string
+  actual: string
+  runtimeMs: number
+}
+
 export type JudgeResult = {
   submissionId: string
   status: 'ACCEPTED' | 'WRONG_ANSWER' | 'RUNTIME_ERROR' | 'TIME_LIMIT'
   runtimeMs: number
   output?: string
   errorMsg?: string
+  testResults?: SubmissionTestResult[]
   cppStandard?: string
   cudaVersion?: string
   computeCap?: string

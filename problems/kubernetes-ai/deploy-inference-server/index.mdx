@@ -168,3 +168,38 @@ spec:
     - port: 8000
       targetPort: 8000
   type: ClusterIP
+
+---editorial---
+## Approach
+
+A minimal vLLM deployment requires two Kubernetes resources: a `Deployment` and a `Service`.
+
+**Deployment key points:**
+- `namespace: inference` in both Deployment and Service metadata
+- GPU resource request/limit must use the extended resource name `nvidia.com/gpu` with equal request and limit (GPUs are not time-shared)
+- The liveness probe uses `httpGet` so kubelet makes an HTTP GET to `/health:8000`; `initialDelaySeconds: 60` gives the model time to load before health checks begin
+
+**Service:** A `ClusterIP` Service with matching `app: vllm` selector routes cluster traffic to the pods.
+
+```yaml
+resources:
+  requests:
+    nvidia.com/gpu: "1"
+    memory: 20Gi
+    cpu: "4"
+  limits:
+    nvidia.com/gpu: "1"
+    memory: 20Gi
+    cpu: "4"
+```
+
+## Key Insight
+
+GPU resources in Kubernetes are **non-divisible** extended resources. Unlike CPU (millicores) or memory (bytes), a GPU is either assigned to a pod entirely or not at all. Setting request == limit is required; Kubernetes rejects a pod with mismatched GPU request/limit.
+
+## Common Mistakes
+
+- **Using `requests` without matching `limits` for GPUs**: Kubernetes requires these to be equal for extended resources.
+- **Missing namespace on Service**: Both `Deployment` and `Service` must independently specify `namespace: inference`.
+- **Wrong liveness probe path**: The vLLM OpenAI API server exposes `/health`, not `/healthz` or `/ready`.
+---end---

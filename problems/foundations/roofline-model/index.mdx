@@ -160,3 +160,44 @@ RooflineResult analyse_kernel(
         ridge_point(peak_gflops, peak_gbps),
     };
 }
+
+---editorial---
+## Approach
+
+Each function is a direct translation of the roofline model equations:
+
+```cpp
+double arithmetic_intensity(double flops, double bytes_moved) {
+    return flops / bytes_moved;   // FLOP/byte
+}
+
+double ridge_point(double peak_gflops, double peak_gbps) {
+    return peak_gflops / peak_gbps;   // FLOP/byte at which lines intersect
+}
+
+bool is_compute_bound(double ai, double peak_gflops, double peak_gbps) {
+    return ai >= ridge_point(peak_gflops, peak_gbps);
+}
+
+double attainable_perf(double ai, double peak_gflops, double peak_gbps) {
+    return std::min(peak_gflops, ai * peak_gbps);
+}
+```
+
+`ai * peak_gbps` is the memory-bandwidth-limited throughput (how many GFLOP/s you can sustain given the available bytes/s and the computation density). It's capped at `peak_gflops` — you can't exceed peak compute regardless of how much data you feed.
+
+## Complexity
+
+All functions are O(1).
+
+## Key Insight
+
+The ridge point `peak_gflops / peak_gbps` has units of FLOP/byte. It's the arithmetic intensity at which the two constraints are exactly equal: a kernel at this AI saturates both compute and memory simultaneously. Kernels left of the ridge are memory-bound; right of the ridge are compute-bound.
+
+For the A100 SXM4 (FP32): ridge = 19,500 / 2,000 = **9.75 FLOP/byte**. A simple vector addition (AI ≈ 0.17) is ~57× below the ridge — clearly memory-bound.
+
+## Common Mistakes
+
+- **Units**: The function takes `peak_gflops` (GFLOP/s) and `peak_gbps` (GB/s), so the ratio is already in FLOP/byte. Don't convert to raw FLOP/s or bytes/s.
+- **Not capping at peak_gflops**: A highly compute-bound kernel's theoretical performance is `ai * peak_gbps`, but it can never exceed the hardware's peak throughput.
+---end---

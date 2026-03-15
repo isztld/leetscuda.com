@@ -157,3 +157,31 @@ int main() {
     }
     return 0;
 }
+
+---editorial---
+## Approach
+
+The key problem with a naïve transpose (`out[col * N + row] = in[row * N + col]`) is that either reads or writes will be uncoalesced. If we read rows (coalesced) and write columns (uncoalesced), we get one global memory transaction per thread instead of one per warp — up to 32× worse.
+
+The shared memory solution stages through SRAM:
+1. Load `in[row][col]` into `smem[ty][tx]` — reads are coalesced (consecutive threads read consecutive addresses)
+2. `__syncthreads()` — wait for the full tile
+3. Write `smem[tx][ty]` to `out[blockIdx.x*TILE+tx][blockIdx.y*TILE+ty]` — writes are coalesced (consecutive threads write consecutive addresses in the transposed output)
+
+The `+1` padding on shared memory (`float smem[TILE][TILE+1]`) shifts each row by one element, ensuring that threads in a warp access different banks when reading the transposed tile, eliminating shared memory bank conflicts.
+
+## Complexity
+
+- **Memory transactions**: O(N²/warpSize) — same as a simple copy, optimal
+- **Shared memory**: TILE × (TILE+1) × 4 bytes per block (e.g., 4 KB for TILE=32)
+
+## Key Insight
+
+Without the `+1` padding, reading `smem[tx][ty]` accesses elements with stride TILE in memory. For 32-element warps and 32-bank shared memory, all 32 threads in a warp access the same bank — a 32-way bank conflict. The padding breaks the alignment.
+
+## Common Mistakes
+
+- **Forgetting the `+1` padding**: The transpose runs but is up to 16× slower due to bank conflicts.
+- **Wrong output index**: The output block position swaps x and y: `blockIdx.x*TILE+tx` for the transposed row, `blockIdx.y*TILE+ty` for the transposed column.
+- **Omitting `__syncthreads()`**: Without it, threads that write to smem fast may be overwritten before slow threads read.
+---end---

@@ -40,4 +40,30 @@ export const problemsRouter = router({
       if (!problem) throw new TRPCError({ code: 'NOT_FOUND' })
       return problem
     }),
+
+  getStats: publicProcedure
+    .input(z.object({ slug: z.string() }))
+    .query(async ({ input }) => {
+      const problem = await prisma.problem.findUnique({
+        where: { slug: input.slug },
+        select: { id: true },
+      })
+      if (!problem) return { totalAccepted: 0, totalSubmissions: 0, acceptanceRate: 0 }
+
+      const [totalAccepted, totalSubmissions] = await Promise.all([
+        prisma.submission.count({
+          where: { problemId: problem.id, status: 'ACCEPTED' },
+        }),
+        prisma.submission.count({
+          where: { problemId: problem.id, status: { not: 'CANCELLED' } },
+        }),
+      ])
+
+      const acceptanceRate =
+        totalSubmissions > 0
+          ? Math.round((totalAccepted / totalSubmissions) * 1000) / 10
+          : 0
+
+      return { totalAccepted, totalSubmissions, acceptanceRate }
+    }),
 })

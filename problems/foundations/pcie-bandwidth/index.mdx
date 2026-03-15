@@ -135,3 +135,35 @@ BandwidthResult measureBandwidth(size_t bytes, int iterations) {
     cudaFree(d_buf);
     return result;
 }
+
+---editorial---
+## Approach
+
+Measuring PCIe bandwidth correctly requires three things: pinned host memory, CUDA event timing, and warm-up transfers.
+
+**Why pinned memory?** `malloc`'d memory is pageable — the GPU DMA engine cannot access it directly. CUDA internally copies pageable memory to a pinned staging buffer before the transfer, adding latency and roughly halving bandwidth. `cudaMallocHost` allocates physically pinned pages the DMA engine can access directly.
+
+**Why CUDA events?** CPU-side clocks (`clock()`, `chrono`) measure wall time including scheduling jitter. CUDA events are recorded on the GPU command stream and their elapsed time reflects only the GPU's view of the transfer duration — accurate to ~0.5 µs.
+
+**Bandwidth formula:**
+```
+bandwidth = (bytes × iterations) / (elapsed_ms / 1000) / 1e9  [GB/s]
+```
+
+**Warm-up:** The PCIe link negotiates its state on first use. The first few transfers are slower while the link ramps up. Three warm-up transfers are sufficient to prime the link.
+
+## Complexity
+
+- **Time**: O(iterations) per direction
+- **Accuracy**: grows with iterations (averaging reduces clock noise)
+
+## Key Insight
+
+H2D and D2H bandwidth are independently measured because they use separate DMA engines and can differ by 5–15% depending on the system. PCIe is full-duplex but most systems cannot achieve full bidirectional bandwidth simultaneously due to credit-based flow control.
+
+## Common Mistakes
+
+- **Using pageable malloc instead of `cudaMallocHost`**: Bandwidth will be ~50% of the correct value.
+- **Not calling `cudaEventSynchronize(stop)` before `cudaEventElapsedTime`**: Without sync, elapsed time is undefined (the stop event may not have been recorded yet).
+- **Forgetting to destroy events and free memory**: CUDA events consume device resources; leaking them across repeated calls accumulates overhead.
+---end---

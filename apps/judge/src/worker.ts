@@ -4,7 +4,7 @@ import { execSync } from 'child_process'
 import { pollForJob, submitResult } from './api-client.js'
 import { runInSandbox } from './sandbox.js'
 import { verify } from './verifier.js'
-import type { JudgeJob, JudgeResult } from './types.js'
+import type { JudgeJob, JudgeResult, SubmissionTestResult } from './types.js'
 import { env } from './env.js'
 
 /** Kill any containers from a previous crashed judge session before starting. */
@@ -40,15 +40,17 @@ async function runJob(job: JudgeJob): Promise<JudgeResult> {
   let maxRuntimeMs = 0
   let lastStdout = ''
   let firstStderr = ''
+  const testResults: SubmissionTestResult[] = []
 
-  for (const tc of job.testCases) {
+  for (let tcIdx = 0; tcIdx < job.testCases.length; tcIdx++) {
+    const tc = job.testCases[tcIdx]
     const sandboxResult = await runInSandbox(job.code + '\n' + job.harness, tc.input, {
       runtime: job.runtime,
       cppStandard: job.cppStandard,
       cudaVersion: job.cudaVersion,
       computeCap: job.computeCap,
       timeoutMs: effectiveTimeout,
-      submissionId: `${job.submissionId}-${job.testCases.indexOf(tc)}`,
+      submissionId: `${job.submissionId}-${tcIdx}`,
     })
 
     if (sandboxResult.runtimeMs > maxRuntimeMs) maxRuntimeMs = sandboxResult.runtimeMs
@@ -57,13 +59,38 @@ async function runJob(job: JudgeJob): Promise<JudgeResult> {
 
     if (sandboxResult.exitCode === 124) {
       finalStatus = 'TIME_LIMIT'
+      testResults.push({
+        index: tcIdx,
+        passed: false,
+        input: tc.input,
+        expected: tc.expected,
+        actual: sandboxResult.stdout?.trim() ?? '',
+        runtimeMs: sandboxResult.runtimeMs,
+      })
       break
     }
     if (sandboxResult.exitCode !== 0) {
       finalStatus = 'RUNTIME_ERROR'
+      testResults.push({
+        index: tcIdx,
+        passed: false,
+        input: tc.input,
+        expected: tc.expected,
+        actual: sandboxResult.stderr?.trim() ?? '',
+        runtimeMs: sandboxResult.runtimeMs,
+      })
       break
     }
-    if (!verify(sandboxResult.stdout, tc.expected)) {
+    const passed = verify(sandboxResult.stdout, tc.expected)
+    testResults.push({
+      index: tcIdx,
+      passed,
+      input: tc.input,
+      expected: tc.expected,
+      actual: sandboxResult.stdout?.trim() ?? '',
+      runtimeMs: sandboxResult.runtimeMs,
+    })
+    if (!passed) {
       finalStatus = 'WRONG_ANSWER'
       break
     }
@@ -75,6 +102,7 @@ async function runJob(job: JudgeJob): Promise<JudgeResult> {
     runtimeMs: maxRuntimeMs,
     output: lastStdout || undefined,
     errorMsg: firstStderr || undefined,
+    testResults,
     cppStandard: job.cppStandard,
     cudaVersion: job.cudaVersion,
     computeCap: job.computeCap,

@@ -41,6 +41,7 @@ export default async function ProblemPage({ params }: Props) {
       descriptionHtml={content.descriptionHtml}
       starterCode={content.starterCode}
       testCases={content.testCases}
+      editorialHtml={content.editorial}
     />
   )
 }
