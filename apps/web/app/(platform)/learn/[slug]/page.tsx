@@ -5,7 +5,8 @@ import { auth } from '@/lib/auth'
 import { loadTheoryContent, extractHeadings, addHeadingIds } from '@/lib/theory-content'
 import { MarkReadButton } from './MarkReadButton'
 import type { Metadata } from 'next'
-import type { RoadmapNode } from '@prisma/client'
+
+type TrackNode = Awaited<ReturnType<typeof prisma.roadmapNode.findMany>>[number]
 
 interface Props {
   params: Promise<{ slug: string }>
@@ -38,7 +39,7 @@ export default async function LearnPage({ params }: Props) {
 
   const isRead = existingRead !== null
 
-  const currentIndex = trackNodes.findIndex((n: RoadmapNode) => n.slug === slug)
+  const currentIndex = trackNodes.findIndex((n: TrackNode) => n.slug === slug)
   const prevNode = currentIndex > 0 ? trackNodes[currentIndex - 1] : null
   const nextNode = currentIndex < trackNodes.length - 1 ? trackNodes[currentIndex + 1] : null
 
@@ -60,7 +61,7 @@ export default async function LearnPage({ params }: Props) {
                 {node.track.title}
               </div>
               <nav className="flex flex-col gap-1">
-                {trackNodes.map((n: RoadmapNode) => (
+                {trackNodes.map((n: TrackNode) => (
                   <Link
                     key={n.id}
                     href={`/learn/${n.slug}`}
