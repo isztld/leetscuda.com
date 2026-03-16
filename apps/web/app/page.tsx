@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { Navbar } from '@/components/Navbar'
+import { Footer } from '@/components/Footer'
 
 const tracks = [
   {
@@ -313,23 +314,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-white border-t border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center gap-4 text-sm text-slate-500">
-          <p>leetscuda.com — built for the interview nobody warns you about</p>
-          <div className="flex items-center gap-5">
-            <a href="#" className="hover:text-slate-700 transition-colors">
-              GitHub
-            </a>
-            <Link href="/roadmap" className="hover:text-slate-700 transition-colors">
-              Roadmap
-            </Link>
-            <Link href="/problems" className="hover:text-slate-700 transition-colors">
-              Problems
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   )
 }
