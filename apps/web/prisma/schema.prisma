@@ -203,15 +203,19 @@ model ConceptRead {
 }
 
 model RoadmapNode {
-  id            String   @id @default(cuid())
-  slug          String   @unique
-  title         String
-  description   String
-  type          NodeType
-  trackId       String
-  track         Track    @relation(fields: [trackId], references: [id])
-  order         Int
-  prerequisites String[]
+  id                 String   @id @default(cuid())
+  slug               String   @unique
+  title              String
+  description        String
+  type               NodeType
+  trackId            String
+  track              Track    @relation(fields: [trackId], references: [id])
+  order              Int
+  prerequisites      String[]
+  cluster            String?
+  difficulty         String?
+  estimatedMinutes   Int?
+  interviewRelevance String?
 }
 
 model Comment {
