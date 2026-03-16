@@ -26,7 +26,9 @@
     "cuda-samples/0_Introduction/UnifiedMemoryStreams/",
     "cuda-mode-lectures/lecture_004/",
     "cuda-mode-lectures/lecture_008/coalesce.cu",
-    "llm.c/dev/cuda/matmul_forward.cu"
+    "llm.c/dev/cuda/matmul_forward.cu",
+    "books/Programming Massively Parallel Processors.pdf (Kirk & Hwu) — Ch5 CUDA Memories, Ch6 Performance Considerations",
+    "books/cuda_by_example.pdf (Sanders & Kandrot) — Ch5 Thread Cooperation, Ch6 Constant Memory and Events, Ch7 Texture Memory"
   ],
   "topics": [
     {
@@ -64,7 +66,7 @@
           "conceptId": "memory-coalescing",
           "title": "Memory Coalescing",
           "preciseDefinition": "When all 32 threads of a warp access memory within the same 128-byte cache line (contiguous, aligned addresses), the hardware services the entire warp in a single memory transaction. Non-coalesced access (e.g., column-major access of a row-major matrix) requires up to 32 separate transactions — a 32× bandwidth degradation.",
-          "source": "gpu-glossary/perf/memory-coalescing.md; cuda-mode-lectures/lecture_008/coalesce.cu",
+          "source": "gpu-glossary/perf/memory-coalescing.md; cuda-mode-lectures/lecture_008/coalesce.cu; books/Programming Massively Parallel Processors Ch6 §6.2 Global Memory Bandwidth",
           "keyFacts": [
             "Ideal: 32 threads × 4B = 128B = one cache line = one transaction",
             "Worst case: 32 threads hitting 32 different cache lines = 32 transactions = 32× slowdown",
@@ -115,7 +117,7 @@
           "conceptId": "shared-memory",
           "title": "Shared Memory",
           "preciseDefinition": "A software-managed SRAM scratchpad local to an SM, shared by all threads in a block. Latency ~4 cycles (vs ~400 for global memory). Organized into 32 banks of 4 bytes each; consecutive 32-bit words map to consecutive banks. Capacity is configurable: on Ampere/Hopper the L1 + shared pool is 228 KB per SM, with shared memory configurable up to 228 KB (minus L1).",
-          "source": "gpu-glossary/device-software/shared-memory.md; docs.nvidia.com/cuda/cuda-c-best-practices-guide/#shared-memory",
+          "source": "gpu-glossary/device-software/shared-memory.md; docs.nvidia.com/cuda/cuda-c-best-practices-guide/#shared-memory; books/Programming Massively Parallel Processors Ch5 §5.2 CUDA Device Memory Types; books/cuda_by_example.pdf Ch5 §5.3 Shared Memory and Synchronization",
           "keyFacts": [
             "Declared with __shared__ qualifier; allocated per-block; lifetime is the block's lifetime",
             "32 banks, each 4 bytes wide; bank index = (address / 4) % 32",
@@ -162,10 +164,25 @@
           "cudaVersion": "12.6",
           "computeCap": "sm_120",
           "estimatedMinutes": 90,
-          "whatItTeaches": "How tiling GEMM into TILE×TILE blocks reduces global memory traffic by a factor of TILE; shared memory lifecycle (load → syncthreads → compute); double-buffering technique to overlap loads with computation.",
+          "whatItTeaches": "How tiling GEMM into TILE×TILE blocks reduces global memory traffic by a factor of TILE (CGMA ratio improves from 1 to TILE); shared memory lifecycle (load → syncthreads → compute); double-buffering technique to overlap loads with computation.",
           "starterCodeHint": "__shared__ float As[TILE][TILE], Bs[TILE][TILE]; for (int t=0; t<K/TILE; t++) { As[ty][tx]=A[row*K+t*TILE+tx]; Bs[ty][tx]=B[(t*TILE+ty)*N+col]; __syncthreads(); for(int k=0;k<TILE;k++) sum+=As[ty][k]*Bs[k][tx]; __syncthreads(); }",
-          "testCaseHint": "Compare against CPU reference at M=N=K=512; benchmark vs cuBLAS at M=N=K=1024/2048/4096",
-          "source": "cuda-samples/0_Introduction/matrixMul/; llm.c/dev/cuda/matmul_forward.cu",
+          "testCaseHint": "Compare against CPU reference at M=N=K=512; benchmark vs cuBLAS at M=N=K=1024/2048/4096; verify CGMA = TILE for shared memory version vs CGMA=1 for naive",
+          "source": "cuda-samples/0_Introduction/matrixMul/; llm.c/dev/cuda/matmul_forward.cu; books/Programming Massively Parallel Processors Ch5 §5.3 A Strategy for Reducing Global Memory Traffic; Ch5 Exercise 5.2",
+          "prerequisites": ["matrix-transpose"]
+        },
+        {
+          "exerciseId": "constant-memory-ray-tracer",
+          "title": "Constant Memory Ray Tracer (CUDA by Example)",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 60,
+          "whatItTeaches": "When and how to use constant memory (__constant__) for read-only broadcast data; why constant memory is faster than global memory when all threads in a warp read the same address (broadcast cache); cudaMemcpyToSymbol usage; measuring speedup vs global memory version.",
+          "starterCodeHint": "__constant__ Sphere dev_spheres[SPHERE_COUNT]; // cudaMemcpyToSymbol(dev_spheres, spheres, sizeof(Sphere)*SPHERE_COUNT); // In kernel: access dev_spheres[i] — broadcast if all threads read same i",
+          "testCaseHint": "Render 20 spheres, 1024×1024 pixels; measure frame time with constant vs global memory; verify identical pixel output",
+          "source": "books/cuda_by_example.pdf Ch6 §6.1 Constant Memory Ray Tracing with Constant Memory",
           "prerequisites": ["matrix-transpose"]
         }
       ]
@@ -300,10 +317,30 @@
       "roadmapNodeType": "CONCEPT",
       "concepts": [
         {
+          "conceptId": "cgma-ratio",
+          "title": "Compute to Global Memory Access (CGMA) Ratio",
+          "preciseDefinition": "The number of floating-point operations performed per global memory access in a CUDA kernel (PMPP Ch5 §5.1). CGMA directly controls whether a kernel is memory-bound or compute-bound. A naïve matrix multiply has CGMA=1 (1 FP multiply + 1 FP add per 2 float reads). Tiled matrix multiply with TILE_WIDTH=16 achieves CGMA=16 by reusing each loaded element across 16 computations via shared memory. The GPU's peak CGMA for compute-bound operation (the 'ridge point') is ~295 FLOPs/byte on H100.",
+          "source": "books/Programming Massively Parallel Processors Ch5 §5.1 Importance of Memory Access Efficiency",
+          "keyFacts": [
+            "CGMA=1 (naïve matmul): each thread reads 2 floats and does 2 FLOPs — deeply memory-bound on any GPU",
+            "CGMA=TILE_WIDTH (tiled matmul): each loaded element reused TILE_WIDTH times — CGMA=32 achieves compute-bound on H100",
+            "H100 ridge point: ~989 TFLOPS / 3.35 TB/s ≈ 295 FLOPs/byte — CGMA must exceed this to be compute-bound",
+            "CGMA analysis: count FLOPs and bytes in the innermost loop to predict whether kernel is memory- or compute-bound",
+            "Increasing CGMA is the primary goal of all memory optimization techniques (tiling, caching, reuse)"
+          ],
+          "commonMisconceptions": [
+            "Higher CGMA always means better performance — CGMA above the ridge point just means more idle memory bandwidth",
+            "CGMA is only for matrix multiply — any kernel with data reuse (convolution, reduction) can analyze CGMA",
+            "CGMA is fixed by the algorithm — it depends on implementation: tiling, caching, and register reuse all improve CGMA"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["memory-bandwidth", "tiled-gemm", "shared-memory", "register-pressure"]
+        },
+        {
           "conceptId": "memory-bandwidth",
           "title": "Memory Bandwidth",
           "preciseDefinition": "The rate at which data can be transferred between the GPU's compute units and DRAM, measured in bytes/second. Peak memory bandwidth is set by the HBM specification. Achieved bandwidth = (bytes read + bytes written) / kernel_time. The roofline model plots achieved bandwidth against peak to identify memory-bound kernels. A memory-bound kernel's execution time is dominated by DRAM access time, not arithmetic.",
-          "source": "gpu-glossary/perf/memory-bandwidth.md; gpu-glossary/perf/memory-bound.md",
+          "source": "gpu-glossary/perf/memory-bandwidth.md; gpu-glossary/perf/memory-bound.md; books/Programming Massively Parallel Processors Ch6 §6.2",
           "keyFacts": [
             "H100 SXM HBM3 peak: 3.35 TB/s; A100 HBM2e: 2.0 TB/s; B200 HBM3e: 8.0 TB/s",
             "Ridge point = arithmetic bandwidth / memory bandwidth (FLOPs/byte); above ridge = compute-bound, below = memory-bound",
@@ -360,9 +397,9 @@
     }
   ],
   "coverageGaps": [
-    "Constant memory and texture memory — present in CUDA programming guide but no dedicated topic or exercise",
+    "Constant memory now has an exercise (constant-memory-ray-tracer); texture memory still not covered — low priority for modern ML workloads",
     "cudaMemcpy2D / pitched allocation for 2D arrays — useful for coalescing, not planned",
-    "Pinned (page-locked) memory for H2D transfer optimization — mentioned in best practices but no exercise"
+    "Pinned (page-locked) memory for H2D transfer optimization — mentioned in best practices and CUDA by Example Ch10; no exercise yet"
   ],
   "interviewFrequency": {
     "high": ["global-memory", "memory-coalescing", "shared-memory", "bank-conflict", "register-pressure", "memory-bandwidth"],

@@ -1,10 +1,10 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "generated": "2026-03-16T00:00:00Z",
   "totalClusters": 7,
-  "totalTopics": 37,
-  "totalConcepts": 57,
-  "totalExercises": 21,
+  "totalTopics": 39,
+  "totalConcepts": 72,
+  "totalExercises": 25,
   "totalRoadmapNodes": 8,
   "sources": [
     {
@@ -110,58 +110,58 @@
     {
       "id": "paper-flash-attention-1",
       "path": "resources/papers/flash-attention-1.pdf",
-      "description": "FlashAttention paper (Dao et al. 2022)",
-      "status": "skipped",
-      "reason": "pdftoppm not installed; cannot render PDF",
-      "itemsExtracted": 0
+      "description": "FlashAttention paper (Dao et al. 2022) — 4094 lines extracted via pdftotext",
+      "status": "complete",
+      "itemsExtracted": 8,
+      "notes": "Extracted: IO complexity theorem (Θ(N²d²M⁻¹)), Algorithm 1 tiling, block sizes (Bc=4M/d, Br=min(4M/d,d)), recomputation backward pass, optimality lower bound, benchmark speedups (7.6× GPT-2, 15% BERT MLPerf)"
     },
     {
       "id": "paper-flash-attention-2",
       "path": "resources/papers/flash-attention-2.pdf",
-      "description": "FlashAttention-2 paper (Dao, 2023)",
-      "status": "skipped",
-      "reason": "pdftoppm not installed; cannot render PDF",
-      "itemsExtracted": 0
+      "description": "FlashAttention-2 paper (Dao, 2023) — extracted via pdftotext",
+      "status": "complete",
+      "itemsExtracted": 6,
+      "notes": "Extracted: sequence-length parallelism (§3.2), warp work partitioning split-Q vs split-K (§3.3), causal masking block skipping 1.7-1.8× speedup (§3.1.1), non-matmul FLOP reduction, logsumexp L unification, 225 TFLOPs/s training benchmark"
     },
     {
       "id": "paper-flash-attention-3",
       "path": "resources/papers/flash-attention-3.pdf",
-      "description": "FlashAttention-3 paper (Shah et al., 2024)",
-      "status": "skipped",
-      "reason": "pdftoppm not installed; cannot render PDF",
-      "itemsExtracted": 0
+      "description": "FlashAttention-3 paper (Shah et al., 2024) — extracted via pdftotext",
+      "status": "complete",
+      "itemsExtracted": 6,
+      "notes": "Extracted: WGMMA warp-specialization producer/consumer (§3.1), 2-stage GEMM-softmax pipeline Algorithm 2 (§3.2), FP8 layout conformance + in-kernel transpose (§3.3), block quantization, incoherent processing, 740 TFLOPs/s FP16 / 1.2 PFLOPs/s FP8 on H100"
     },
     {
       "id": "paper-megatron-lm",
       "path": "resources/papers/megatron-lm.pdf",
-      "description": "Megatron-LM paper (Shoeybi et al., 2019)",
-      "status": "skipped",
-      "reason": "pdftoppm not installed; cannot render PDF",
-      "itemsExtracted": 0
+      "description": "Megatron-LM paper (Shoeybi et al., 2019) — extracted via pdftotext",
+      "status": "complete",
+      "itemsExtracted": 5,
+      "notes": "Extracted: column/row parallel linear layers (§3), f/g conjugate operators (§3 Code 1), attention head parallelism, 4 all-reduces per transformer layer, 76% scaling efficiency 512 GPUs / 8.3B parameters"
     },
     {
       "id": "paper-zero",
       "path": "resources/papers/zero.pdf",
-      "description": "ZeRO paper (Rajbhandari et al., 2020)",
-      "status": "skipped",
-      "reason": "pdftoppm not installed; cannot render PDF",
-      "itemsExtracted": 0
+      "description": "ZeRO paper (Rajbhandari et al., 2020) — extracted via pdftotext",
+      "status": "complete",
+      "itemsExtracted": 5,
+      "notes": "Extracted: Stage 1/2/3 memory equations (§5), communication volume analysis (§7), 16Ψ mixed-precision Adam memory breakdown, Table 1 per-device memory consumption, super-linear speedup 64-400 GPUs"
     },
     {
       "id": "book-pmpp",
       "path": "resources/books/Programming Massively Parallel Processors.pdf",
-      "description": "Programming Massively Parallel Processors (Kirk & Hwu)",
-      "status": "skipped",
-      "reason": "pdftoppm not installed; cannot render PDF",
-      "itemsExtracted": 0
+      "description": "Programming Massively Parallel Processors (Kirk & Hwu) — 12 chapters extracted via pdftotext",
+      "status": "complete",
+      "itemsExtracted": 12,
+      "notes": "Chapters extracted: Ch1 Introduction, Ch2 GPU History, Ch3 CUDA (data parallelism, CGMA ratio, matrix multiply), Ch4 CUDA Threads (warp execution, exercises 4.2/4.3 on tiling correctness), Ch5 Memories (tiled matmul, CGMA, exercises 5.1-5.4), Ch6 Performance (branch divergence, occupancy, bandwidth, exercises 6.6-6.9), Ch8 MRI case study, Ch9 Molecular Visualization (coalescing), Ch10 Problem Decomposition, Ch11 OpenCL, Ch12 Conclusion"
     },
     {
       "id": "book-cuda-by-example",
       "path": "resources/books/cuda_by_example.pdf",
-      "description": "CUDA by Example (Sanders & Kandrot)",
-      "status": "skipped",
-      "reason": "pdftoppm not installed; cannot render PDF",
-      "itemsExtracted": 0
+      "description": "CUDA by Example (Sanders & Kandrot) — 12 chapters + appendix extracted via pdftotext",
+      "status": "complete",
+      "itemsExtracted": 12,
+      "notes": "Chapters extracted: Ch1 Why CUDA, Ch2 Getting Started, Ch3 CUDA C (kernel launch, passing params, device query), Ch4 Parallel Programming (vector add, fun example), Ch5 Thread Cooperation (shared memory, dot product, synchronization), Ch6 Constant Memory + Events (ray tracer, cudaEventElapsedTime), Ch7 Texture Memory (heat transfer simulation), Ch8 Graphics Interop, Ch9 Atomics (histogram), Ch10 Streams (page-locked memory, CUDA streams, multi-stream), Ch11 Multiple GPUs (zero-copy), Ch12 Final Countdown (cuFFT, cuBLAS, profiling tools), Appendix A Advanced Atomics (hash table)"
     }
   ],
   "clusters": [
@@ -170,16 +170,16 @@
       "file": "cluster-foundations.json",
       "clusterOrder": 1,
       "topics": 4,
-      "concepts": 11,
-      "exercises": 3
+      "concepts": 12,
+      "exercises": 5
     },
     {
       "clusterId": "memory",
       "file": "cluster-memory.json",
       "clusterOrder": 2,
       "topics": 6,
-      "concepts": 8,
-      "exercises": 4
+      "concepts": 9,
+      "exercises": 5
     },
     {
       "clusterId": "execution",
@@ -217,13 +217,18 @@
       "clusterId": "llm-kernels",
       "file": "cluster-llm-kernels.json",
       "clusterOrder": 7,
-      "topics": 8,
-      "concepts": 11,
-      "exercises": 5
+      "topics": 10,
+      "concepts": 24,
+      "exercises": 6
     }
   ],
   "ingestionNotes": [
-    "PDF files (5 papers, 2 books) could not be read: pdftoppm (poppler-utils) not installed. Install with: apt-get install poppler-utils. Papers referenced indirectly via FlashAttention README/code and CUTLASS README.",
+    "Phase A addendum (2026-03-16): 7 PDF files successfully ingested via pdftotext (poppler-utils). All 5 papers and 2 books now marked complete.",
+    "FlashAttention 1/2/3 papers: precise IO complexity theorems, algorithm pseudocode, Hopper-specific optimizations (TMA, WGMMA, FP8) extracted and added to cluster-llm-kernels.json as 9 new concepts.",
+    "Megatron-LM paper: column/row parallel linear layers and f/g conjugate operators extracted; new tensor-parallelism topic added to cluster-llm-kernels.json.",
+    "ZeRO paper: Stage 1/2/3 memory equations and communication analysis extracted; new distributed-memory-optimization topic added to cluster-llm-kernels.json.",
+    "PMPP (Kirk & Hwu, 12 chapters): CGMA ratio concept, data parallelism concept, PMPP citations added to existing memory/execution/algorithms/linear-algebra/profiling concepts; 2 new exercises added (naive matrix multiply, tiled matmul with CGMA analysis).",
+    "CUDA by Example (Sanders & Kandrot, 12 chapters + appendix): constant memory exercise, kernel timing with CUDA Events exercise added; citations added to foundations and memory clusters.",
     "Nsight Compute HTML not present locally (only referenced in llms.txt). Nsight Compute section relies on GPU Mode Lecture 1/8 code and gpu-glossary/perf entries.",
     "PTX ISA HTML not present locally. PTX concepts derived from gpu-glossary/device-software/parallel-thread-execution.md and gpu-glossary/host-software/nvcc.md.",
     "CUTLASS docs/ directory contains generated HTML Doxygen — structure too dense for direct extraction; CUTLASS concepts extracted from README.md which is comprehensive.",

@@ -26,7 +26,8 @@
     "docs.nvidia.com/cuda/cuda-c-best-practices-guide/#performance-metrics",
     "cuda-mode-lectures/lecture_001/",
     "cuda-mode-lectures/lecture_008/",
-    "llm.c/dev/cuda/benchmark_on_modal.py"
+    "llm.c/dev/cuda/benchmark_on_modal.py",
+    "books/Programming Massively Parallel Processors.pdf (Kirk & Hwu) — Ch6 Performance Considerations §6.1-6.8, §6.2 Global Memory Bandwidth, §6.3 Dynamic Partitioning of SM Resources, §6.7 Measured Performance and Summary"
   ],
   "topics": [
     {

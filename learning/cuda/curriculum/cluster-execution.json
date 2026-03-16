@@ -29,7 +29,9 @@
     "cuda-mode-lectures/lecture_008/divergence.cu",
     "cuda-mode-lectures/lecture_008/occupancy.cu",
     "cuda-mode-lectures/lecture_009/multistream-reduce.cu",
-    "llm.c/dev/cuda/nccl_all_reduce.cu"
+    "llm.c/dev/cuda/nccl_all_reduce.cu",
+    "books/Programming Massively Parallel Processors.pdf (Kirk & Hwu) — Ch4 CUDA Threads, Ch6 Performance Considerations §6.1 More on Thread Execution, §6.3 Dynamic Partitioning of SM Resources",
+    "books/cuda_by_example.pdf (Sanders & Kandrot) — Ch5 Thread Cooperation, Ch9 Atomics, Ch10 Streams"
   ],
   "topics": [
     {

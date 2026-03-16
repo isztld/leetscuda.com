@@ -23,7 +23,8 @@
     "cuda-mode-lectures/lecture_057/",
     "llm.c/dev/cuda/matmul_forward.cu",
     "llm.c/dev/cuda/matmul_backward.cu",
-    "flash-attention/hopper/"
+    "flash-attention/hopper/",
+    "books/Programming Massively Parallel Processors.pdf (Kirk & Hwu) — Ch3 §3.3 Matrix Multiplication Example, Ch5 §5.3 Tiled Matrix Multiply, Ch6 §6.6 Thread Granularity"
   ],
   "topics": [
     {

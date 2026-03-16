@@ -18,7 +18,9 @@
     "docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html",
     "llm.c/dev/cuda/softmax_forward.cu",
     "llm.c/dev/cuda/global_norm.cu",
-    "llm.c/dev/cuda/crossentropy_forward.cu"
+    "llm.c/dev/cuda/crossentropy_forward.cu",
+    "books/Programming Massively Parallel Processors.pdf (Kirk & Hwu) — Ch10 Parallel Programming and Computational Thinking §10.2 Problem Decomposition",
+    "books/cuda_by_example.pdf (Sanders & Kandrot) — Ch5 Thread Cooperation §5.3 Shared Memory and Synchronization (dot product reduction); Ch9 Atomics §9.4 Computing Histograms; Appendix A Advanced Atomics (hash table)"
   ],
   "topics": [
     {

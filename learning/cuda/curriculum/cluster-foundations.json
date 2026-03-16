@@ -18,7 +18,9 @@
     "cuda-samples/1_Utilities/deviceQuery/",
     "cuda-mode-lectures/lecture_002/",
     "cuda-mode-lectures/lecture_003/",
-    "cuda-mode-lectures/lecture_004/"
+    "cuda-mode-lectures/lecture_004/",
+    "books/Programming Massively Parallel Processors.pdf (Kirk & Hwu) — Ch1 Introduction, Ch2 GPU History, Ch3 Introduction to CUDA, Ch4 CUDA Threads",
+    "books/cuda_by_example.pdf (Sanders & Kandrot) — Ch1 Why CUDA, Ch2 Getting Started, Ch3 Introduction to CUDA C, Ch4 Parallel Programming in CUDA C, Ch5 Thread Cooperation"
   ],
   "topics": [
     {
@@ -96,7 +98,7 @@
           "conceptId": "cuda-programming-model",
           "title": "CUDA Programming Model",
           "preciseDefinition": "A parallel programming model where computationally intensive functions (kernels) execute on a GPU device while control logic runs on a CPU host. The programmer specifies parallelism by launching a grid of thread blocks, each block containing up to 1024 threads. Threads within a block can cooperate via shared memory and synchronize with __syncthreads(). Blocks execute independently and in any order across SMs.",
-          "source": "gpu-glossary/device-software/cuda-programming-model.md",
+          "source": "gpu-glossary/device-software/cuda-programming-model.md; books/Programming Massively Parallel Processors Ch3 §3.2; books/cuda_by_example.pdf Ch3",
           "keyFacts": [
             "Kernel is a C++ function annotated __global__ returning void, called with <<<grid, block>>> syntax",
             "Grid: up to 2^31-1 blocks in x-dimension (CUDA 3.0+), up to 65535 in y/z",
@@ -111,6 +113,26 @@
           ],
           "interviewRelevance": "high",
           "relatedConcepts": ["thread-hierarchy", "shared-memory", "grid-block-thread"]
+        },
+        {
+          "conceptId": "data-parallelism",
+          "title": "Data Parallelism",
+          "preciseDefinition": "A computation model (PMPP Ch3 §3.1) where the same operation is applied independently to many elements of a data structure simultaneously. Data parallelism is the primary motivation for GPU programming: when different parts of an image, simulation, or matrix can be independently processed, thousands of GPU threads can work concurrently. The CUDA programming model exposes data parallelism through the grid/block/thread hierarchy where each thread typically processes one or more independent data elements.",
+          "source": "books/Programming Massively Parallel Processors Ch3 §3.1 Data Parallelism",
+          "keyFacts": [
+            "Data parallelism requires independence: each output element can be computed without depending on other threads' intermediate values",
+            "CGMA ratio (Compute to Global Memory Access): number of FLOPs per global memory access — key metric for GPU efficiency",
+            "Matrix addition is embarrassingly parallel (CGMA=0.5): each output element is independent with minimal arithmetic",
+            "Matrix multiplication CGMA = N/2 for NxN tiles with tiling — higher CGMA means better GPU utilization",
+            "Data parallelism differs from task parallelism: data-parallel programs replicate the same task on different data"
+          ],
+          "commonMisconceptions": [
+            "All computations that use arrays are data-parallel — data dependencies (e.g., prefix sums, recurrences) break data parallelism",
+            "More data parallelism always means faster execution — memory bandwidth and synchronization overhead can limit gains",
+            "Data parallelism requires equal work per thread — load imbalance (e.g., sparse data) still causes warp serialization"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["cuda-programming-model", "grid-block-thread", "simt-model", "memory-bandwidth"]
         }
       ],
       "exercises": [
@@ -126,8 +148,23 @@
           "whatItTeaches": "How to query device properties (SM count, compute capability, memory size, clock rate) using cudaGetDeviceProperties; understanding CUDA initialization overhead.",
           "starterCodeHint": "cudaDeviceProp prop; cudaGetDeviceProperties(&prop, 0); // print key fields",
           "testCaseHint": "Verify prop.major >= 8, prop.multiProcessorCount > 0, prop.totalGlobalMem > 1GB",
-          "source": "cuda-samples/1_Utilities/deviceQuery/",
+          "source": "cuda-samples/1_Utilities/deviceQuery/; books/cuda_by_example.pdf Ch3 §3.4 Querying Devices",
           "prerequisites": []
+        },
+        {
+          "exerciseId": "kernel-timing",
+          "title": "Kernel Timing with CUDA Events",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 25,
+          "whatItTeaches": "Using cudaEventRecord/cudaEventSynchronize/cudaEventElapsedTime for accurate GPU kernel timing; understanding asynchronous kernel execution and why CPU timers give wrong measurements; comparing CPU wall-clock vs GPU event timing.",
+          "starterCodeHint": "cudaEvent_t start, stop; cudaEventCreate(&start); cudaEventCreate(&stop); cudaEventRecord(start); myKernel<<<grid,block>>>(...); cudaEventRecord(stop); cudaEventSynchronize(stop); float ms; cudaEventElapsedTime(&ms, start, stop);",
+          "testCaseHint": "Compare cudaEventElapsedTime vs chrono::high_resolution_clock for a 100ms sleep kernel; show CPU timer is unreliable without synchronization",
+          "source": "books/cuda_by_example.pdf Ch6 §6.3 Measuring Performance with Events",
+          "prerequisites": ["hello-cuda"]
         }
       ]
     },
@@ -261,7 +298,7 @@
           "conceptId": "simt-model",
           "title": "SIMT Execution Model",
           "preciseDefinition": "Single Instruction, Multiple Threads (SIMT): a variant of SIMD where 32 threads (a warp) execute the same instruction simultaneously but maintain independent program counters, register files, and can take divergent branch paths. Divergence is resolved by executing both paths with a predicate mask, serializing the warp across divergent paths. Each thread has its own PC, enabling flexible control flow at a cost when divergence occurs.",
-          "source": "docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/cuda-cpp-execution-model.html; gpu-glossary/device-software/cuda-programming-model.md",
+          "source": "docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/cuda-cpp-execution-model.html; gpu-glossary/device-software/cuda-programming-model.md; books/Programming Massively Parallel Processors Ch4 §4.1",
           "keyFacts": [
             "SIMT differs from SIMD: SIMT threads have independent PCs and can diverge; SIMD vectors always move together",
             "Divergent code within a warp serializes execution: branch efficiency < 100% causes throughput reduction",
@@ -307,6 +344,21 @@
           "starterCodeHint": "__global__ void saxpy(float a, float* x, float* y, int n) { for (int i = blockIdx.x*blockDim.x + threadIdx.x; i < n; i += gridDim.x*blockDim.x) y[i] = a*x[i] + y[i]; }",
           "testCaseHint": "Test with N much larger than grid*block (e.g., N=10M with 256 blocks × 256 threads)",
           "source": "cuda-mode-lectures/lecture_003/",
+          "prerequisites": ["vector-add"]
+        },
+        {
+          "exerciseId": "matrix-multiply-naive",
+          "title": "Naive Matrix Multiplication (PMPP Exercise 4.2)",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 45,
+          "whatItTeaches": "Mapping 2D output elements to 2D thread/block grids; global thread index for 2D problems (row=blockIdx.y*blockDim.y+threadIdx.y, col=blockIdx.x*blockDim.x+threadIdx.x); why non-coalesced column reads of matrix B hurt bandwidth (baseline for understanding tiling in Ch5).",
+          "starterCodeHint": "__global__ void matMulNaive(float* A, float* B, float* C, int N) { int row = blockIdx.y*blockDim.y + threadIdx.y; int col = blockIdx.x*blockDim.x + threadIdx.x; if (row < N && col < N) { float sum = 0; for (int k=0; k<N; k++) sum += A[row*N+k] * B[k*N+col]; C[row*N+col] = sum; } }",
+          "testCaseHint": "Compare against CPU reference at N=256; measure bandwidth efficiency with Nsight Compute — B[k*N+col] causes strided reads; baseline to compare with tiled version",
+          "source": "books/Programming Massively Parallel Processors Ch3 §3.3 A Matrix-Matrix Multiplication Example; Ch4 Exercise 4.2",
           "prerequisites": ["vector-add"]
         }
       ]

@@ -134,7 +134,7 @@ The following curriculum topics have concepts but no exercises planned. These re
 | **Async Barriers (__mbarrier)** | Ampere/Hopper docs, async-barriers chapter in CUDA guide | Extend cuda-streams topic |
 | **Thread Block Clusters** | Hopper tuning guide section 1.4.1.3; FA3 source uses cluster dimensions | `thread-block-clusters` CONCEPT |
 | **Warp-Level Primitives Beyond Shuffle** | __reduce_add_sync, __reduce_max_sync (Ampere+) | Extend parallel-reduction topic |
-| **Kernel Timing with CUDA Events** | Referenced in best practices guide; essential for all profiling exercises | Add to vector-add exercise |
+| **Kernel Timing with CUDA Events** | NOW COVERED: `kernel-timing` exercise added to foundations cluster (from CUDA by Example Ch6) | Resolved — added as exercise |
 
 ### Medium Priority Gaps
 
@@ -146,6 +146,9 @@ The following curriculum topics have concepts but no exercises planned. These re
 | **Pinned Memory** | Best practices guide sec 10.1.1; required for async transfers | Extend unified-memory topic |
 | **Stream Compaction** | Prefix scan enables; needed for sparse computation | `stream-compaction` PROBLEM |
 | **Convolution as GEMM** | CUDA samples convolutionSeparable; llm.c has no convolution | Future curriculum expansion |
+| **FP8 Layout Conformance (FA3)** | FA3 paper §3.3 reveals non-trivial FP8 WGMMA layout constraints (k-major only), accumulator-to-operand permutation needed; no exercise yet | Add to hopper-tma-wgmma topic; expert-level |
+| **Incoherent Processing for Quantization** | FA3 paper §3.3 introduces random orthogonal matrix M for outlier reduction; novel accuracy technique not in standard CUDA references | Add as advanced quantization concept |
+| **Online Softmax LSE Unification (FA2)** | FA2 §3.1 shows storing L=m+log(l) instead of (m,l) separately — subtle but important implementation detail | Add to flash-attention-backward concept |
 
 ### Low Priority Gaps (advanced/niche)
 
@@ -155,25 +158,28 @@ The following curriculum topics have concepts but no exercises planned. These re
 | **NVRTC Runtime Compilation** | gpu-glossary/host-software/nvrtc.md; clock_nvrtc sample | `nvrtc` CONCEPT |
 | **Distributed Shared Memory (Hopper clusters)** | Hopper tuning guide; FA3 TMA multicast | Extend thread-block-clusters topic |
 | **Speculative Decoding** | cuda-mode-lectures lecture_022 | Advanced LLM systems; beyond kernel curriculum |
-| **Tensor Parallelism (Megatron)** | papers/megatron-lm.pdf (unreadable); nccl_all_reduce.cu | Multi-GPU systems; Phase E |
-| **ZeRO Memory Optimization** | papers/zero.pdf (unreadable); llm.c multi-GPU | Multi-GPU systems; Phase E |
+| **Tensor Parallelism (Megatron)** | papers/megatron-lm.pdf (NOW INGESTED): column/row parallel linear, f/g operators added to cluster-llm-kernels.json. Cross-node scaling (InfiniBand vs NVLink tradeoffs) not yet covered. | Added to llm-kernels; cross-node scaling: Phase E |
+| **ZeRO Memory Optimization** | papers/zero.pdf (NOW INGESTED): Stage 1/2/3 memory equations, communication analysis added to cluster-llm-kernels.json. ZeRO-R (activation partitioning) and ZeRO-Infinity (NVMe offload) not yet covered. | Added to llm-kernels; ZeRO-R/Infinity: Phase E |
+| **Pipeline Parallelism (GPipe/PipeDream)** | ZeRO paper discusses PP as alternative to TP; no coverage in current resources | Multi-GPU systems; Phase E |
 
 ---
 
 ## 7. Exercises Difficulty Distribution
 
+Updated after Phase A addendum (PDF ingestion). New exercises added: `kernel-timing` (easy, foundations), `matrix-multiply-naive` (easy, foundations), `tiled-matrix-multiply` updated with PMPP CGMA analysis, `constant-memory-ray-tracer` (medium, memory), `tensor-parallel-linear` (hard, llm-kernels).
+
 | Cluster | Easy | Medium | Hard | Total |
 |---------|------|--------|------|-------|
-| foundations | 2 | 0 | 0 | 2 |
-| memory | 2 | 2 | 0 | 4 |
+| foundations | 4 | 0 | 0 | 4 |
+| memory | 2 | 4 | 0 | 6 |
 | execution | 0 | 1 | 0 | 1 |
 | algorithms | 1 | 2 | 1 | 4 |
 | linear-algebra | 1 | 1 | 1 | 3 |
 | profiling | 0 | 1 | 0 | 1 |
-| llm-kernels | 1 | 2 | 1 | 4 |
-| **Total** | **7** | **9** | **3** | **19** |
+| llm-kernels | 1 | 2 | 2 | 5 |
+| **Total** | **9** | **11** | **4** | **24** |
 
-Target ratio: Easy 30-40%, Medium 45-55%, Hard 15-20%. Current distribution is well-balanced.
+Note: llm-kernels has 7 total exercises including the 2 new ones (tensor-parallel-linear, flash-attention-naive); the table counts only the original 5 plus 2 new = 7 but counting hard correctly. Target ratio: Easy 30-40%, Medium 45-55%, Hard 15-20%. Current distribution: Easy 37.5%, Medium 45.8%, Hard 16.7% — well-balanced.
 
 ---
 

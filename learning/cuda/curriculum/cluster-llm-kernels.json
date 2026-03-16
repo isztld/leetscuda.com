@@ -22,7 +22,12 @@
     "llm.c/dev/cuda/fused_residual_forward.cu",
     "llm.c/dev/cuda/gelu_forward.cu",
     "llm.c/dev/cuda/crossentropy_forward.cu",
-    "llm.c/dev/cuda/encoder_forward.cu"
+    "llm.c/dev/cuda/encoder_forward.cu",
+    "papers/flash-attention-1.pdf",
+    "papers/flash-attention-2.pdf",
+    "papers/flash-attention-3.pdf",
+    "papers/megatron-lm.pdf",
+    "papers/zero.pdf"
   ],
   "topics": [
     {
@@ -434,6 +439,310 @@
           ],
           "interviewRelevance": "medium",
           "relatedConcepts": ["tensor-memory-accelerator", "tensor-core", "flash-attention", "mixed-precision"]
+        },
+        {
+          "conceptId": "flash-attention-io-complexity",
+          "title": "FlashAttention IO Complexity Analysis",
+          "preciseDefinition": "FlashAttention (Dao et al. 2022, Theorem 2) proves that computing exact attention requires Θ(N²d²M⁻¹) HBM accesses, where N is sequence length, d is head dimension, and M is SRAM size. Standard attention requires Θ(Nd + N²) HBM accesses (dominated by the N×N attention matrix). Since typically d² ≪ M (d=128, M≈100KB → d²=16384 ≪ M), FlashAttention achieves up to 9× fewer HBM reads/writes vs. standard attention. Proposition 3 proves this is optimal: no exact attention algorithm can do better asymptotically.",
+          "source": "papers/flash-attention-1.pdf §3.2 Theorem 2",
+          "keyFacts": [
+            "Standard attention: Θ(Nd + N²) HBM accesses — the N² term dominates for long sequences",
+            "FlashAttention: Θ(N²d²M⁻¹) HBM accesses — for d=64, M=100KB, this is ~4× fewer accesses",
+            "Optimality lower bound: Proposition 3 proves no exact attention algorithm beats Θ(N²d²M⁻¹) HBM accesses for all M",
+            "Memory: FlashAttention requires O(N) additional memory (storing LSE statistics), not O(N²)",
+            "Despite higher FLOPs (recomputation), FA is faster due to drastically lower HBM traffic (bandwidth is bottleneck)"
+          ],
+          "commonMisconceptions": [
+            "Reducing FLOPs always makes kernels faster — FlashAttention has more FLOPs than standard attention but is faster due to lower HBM traffic",
+            "O(N) memory means N elements stored — FlashAttention stores O(N) statistics (m, l per row) not the O(N²) attention matrix",
+            "The IO complexity bound is loose — Theorem 2 is tight: block sizes are chosen optimally as Bc = ⌈4M/d⌉, Br = min(⌈4M/d⌉, d)"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["flash-attention", "sram-tiling-strategy", "online-softmax-recomputation", "memory-bandwidth"]
+        },
+        {
+          "conceptId": "sram-tiling-strategy",
+          "title": "SRAM Tiling Strategy in FlashAttention",
+          "preciseDefinition": "FlashAttention Algorithm 1 (FA1 §3.1) sets block sizes Bc = ⌈4M/d⌉ and Br = min(⌈4M/d⌉, d) to ensure each K/V/Q block fits in SRAM of size M. The outer loop iterates over Tc = ⌈N/Bc⌉ KV blocks (loaded once), the inner loop over Tr = ⌈N/Br⌉ Q blocks. For each (i,j) pair: load Q_i, K_j, V_j into SRAM; compute S_ij = Q_i × K_j^T; update running (m_i, l_i, O_i) statistics using online softmax. This avoids ever materializing the full N×N attention matrix.",
+          "source": "papers/flash-attention-1.pdf §3.1 Algorithm 1",
+          "keyFacts": [
+            "Block sizes derived from SRAM size M: Bc = ⌈4M/d⌉ ensures one K/V block = 2 × Bc × d floats ≤ M",
+            "Each SRAM block holds Q_i (Br×d), K_j (Bc×d), V_j (Bc×d), S_ij (Br×Bc), O_i (Br×d) — total ≤ M",
+            "Outer loop over KV blocks (j=1..Tc): load K_j, V_j once; inner loop over Q blocks (i=1..Tr)",
+            "FA2 swaps loop order (outer=Q, inner=KV) to enable sequence-length parallelism; FA1 has outer=KV, inner=Q",
+            "For H100 SRAM = 228 KB, d=128: Bc ≈ 228KB/(4×128×4B) ≈ 112; practical FA uses Bc=64-128"
+          ],
+          "commonMisconceptions": [
+            "Tiling order in FA1 vs FA2 is equivalent for performance — FA2 swapping inner/outer loops enables crucial sequence parallelism",
+            "Block size choice is arbitrary — block sizes must be chosen so the working set fits in SRAM; too large = slow SRAM spill",
+            "All four matrices (Q,K,V,O) are kept in SRAM simultaneously — only the blocks for one (i,j) pair reside in SRAM at once"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["flash-attention-io-complexity", "online-softmax-recomputation", "tiling-hierarchy", "shared-memory"]
+        },
+        {
+          "conceptId": "online-softmax-recomputation",
+          "title": "Backward Pass Recomputation in FlashAttention",
+          "preciseDefinition": "The FlashAttention backward pass (FA1 Algorithm 4, FA2 Algorithm 2) avoids storing the N×N attention matrix P by recomputing it from Q, K during the backward pass using stored log-sum-exp (LSE) values L_i = m_i + log(l_i). For each backward pass tile, the kernel reloads Q_i, K_j and recomputes P_ij = exp(S_ij − L_i) on-chip, then immediately uses it to accumulate dV, dK, dQ gradients. This selective recomputation trades 33% more FLOPs for O(N²) → O(N) backward memory.",
+          "source": "papers/flash-attention-1.pdf §3.1 Recomputation; papers/flash-attention-2.pdf §3.1.2 Algorithm 2",
+          "keyFacts": [
+            "Stored from forward pass: Q, K, V (O(Nd) total) + LSE L_i per row (O(N)) — no N×N storage",
+            "FA1 Algorithm 4 stores (m, l) separately; FA2 Algorithm 2 stores only L = m + log(l), saving memory",
+            "Recomputation overhead: ~33% extra FLOPs in backward vs. forward — dwarfed by HBM bandwidth savings",
+            "For N=65536, d=128: avoiding attention matrix storage saves 16 GB; cost is recomputing ~2× forward FLOPs",
+            "FA3 backward on H100 achieves ~50% of forward pass throughput despite recomputation overhead"
+          ],
+          "commonMisconceptions": [
+            "Recomputation in FA is the same as gradient checkpointing — FA recomputation is per-tile, within one kernel; checkpointing is per-layer",
+            "Backward recomputation doubles the runtime — the extra compute is hidden behind the dominant memory bandwidth savings",
+            "FA backward needs all of Q,K,V in SRAM simultaneously — backward processes tiles the same way as forward"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["flash-attention", "flash-attention-backward", "sram-tiling-strategy", "gradient-checkpointing"]
+        },
+        {
+          "conceptId": "fa2-parallelization",
+          "title": "FA2: Sequence-Length Parallelism",
+          "preciseDefinition": "FlashAttention-2 (FA2 §3.2) adds parallelization over the sequence length dimension in addition to FA1's batch×heads parallelism. FA1 assigned one thread block per attention head. FA2 assigns one thread block per (batch, head, query_tile), so the outer query loop becomes embarrassingly parallel. For long sequences with small batch sizes (common in LLM inference), this additional dimension fills idle SMs. FA2 forward achieves 50-73% of theoretical max TFLOPs vs. FA1's 30-50%.",
+          "source": "papers/flash-attention-2.pdf §3.2",
+          "keyFacts": [
+            "FA1 parallelism: batch × n_heads thread blocks; FA2 adds Tr = ⌈N/Br⌉ more blocks per head",
+            "At N=8192, Br=64: Tr=128; for batch=2, heads=32: FA2 schedules 2×32×128=8192 thread blocks vs. FA1's 64",
+            "Sequence parallelism is especially valuable for inference (batch=1) where FA1's 64 blocks leave most SMs idle",
+            "Backward pass also parallelized over sequence length; uses atomic adds for dQ updates across thread blocks",
+            "FA2 reaches up to 225 TFLOPs/s per A100 GPU for GPT-style training (72% MFU)"
+          ],
+          "commonMisconceptions": [
+            "FA2 requires different CUDA code than FA1 — FA2 is the same algorithm with loop order swapped and added thread block dimensions",
+            "Sequence-length parallelism was invented in FA2 — Phil Tillet first implemented this idea in Triton (cited in FA2 paper)",
+            "Parallelizing over sequence length always helps — only beneficial when batch×heads is too small to fill the GPU"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["flash-attention", "sram-tiling-strategy", "warpgroup-mma", "occupancy"]
+        },
+        {
+          "conceptId": "fa2-work-partitioning",
+          "title": "FA2: Warp Work Partitioning",
+          "preciseDefinition": "Within each thread block, FA2 (§3.3) changes how work is distributed across 4 warps. FA1 used 'split-K': K and V split across 4 warps, Q broadcast — each warp computes a slice of QK^T, then must communicate partial sums via shared memory to complete the output. FA2 instead splits Q across 4 warps while keeping K and V accessible by all — each warp computes its slice of QK^T and multiplies directly with V without inter-warp communication. This eliminates shared memory synchronization overhead.",
+          "source": "papers/flash-attention-2.pdf §3.3",
+          "keyFacts": [
+            "FA1 'split-K': 4 warps each hold K/V shard → 4 partial QK^T → write to smem → sync → reduce → matmul V",
+            "FA2 'split-Q': 4 warps each hold Q shard → independent QK^T → independent @V → no inter-warp communication",
+            "Eliminating the smem sync reduces shared memory reads/writes by ~2× in the forward pass",
+            "FA2 backward also avoids split-K: warps hold K/V shards for dK/dV, avoiding dQ reduction overhead",
+            "This change alone accounts for ~1.5× speedup within a thread block vs. FA1"
+          ],
+          "commonMisconceptions": [
+            "Warp work partitioning is a hardware detail — it is a software design choice with measurable performance impact",
+            "Split-K is always better than split-Q — split-K is better for GEMM with small N; split-Q is better for attention's inner loop",
+            "FA2's warp partitioning is unique to CUDA — Triton implements the same idea via axis-parallel tiling"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["fa2-parallelization", "flash-attention", "warp-scheduler", "shared-memory"]
+        },
+        {
+          "conceptId": "causal-masking-optimization",
+          "title": "Causal Masking Block Skipping",
+          "preciseDefinition": "In autoregressive attention, entries S_ij with j > i are masked to −∞, making the upper triangle of the attention matrix all zeros after softmax. FA2 (§3.1.1) exploits this by skipping entire blocks where all column indices exceed all row indices — about half the blocks for large N. Only the diagonal blocks (where the triangle cuts through) need masking applied element-wise. This yields 1.7-1.8× speedup for causal attention vs. non-causal attention of the same size.",
+          "source": "papers/flash-attention-2.pdf §3.1.1",
+          "keyFacts": [
+            "For block tile (i,j): skip entirely if min_col_idx(j) > max_row_idx(i) — approximately N²/2 blocks skipped",
+            "Only ~N/Br diagonal blocks need element-wise masking applied; remaining lower-triangular blocks computed without masking",
+            "1.7-1.8× speedup vs. non-causal attention at large N (since ~50% of work is skipped)",
+            "FA3 inherits this optimization; TMA loads can be skipped for masked-out KV blocks",
+            "Combined with FA2 sequence parallelism, efficient causal attention enables training at N=8192+ on H100"
+          ],
+          "commonMisconceptions": [
+            "Causal masking adds significant overhead — block-level skipping makes causal ~2× faster vs. non-causal at large N",
+            "Masking must be applied element-wise to all blocks — only the diagonal blocks crossing the causal boundary need masking",
+            "Causal masking changes the FA algorithm — it is an optimization pass on top of the same tiling algorithm"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["fa2-parallelization", "flash-attention", "attention-mechanism", "sram-tiling-strategy"]
+        },
+        {
+          "conceptId": "fa3-wgmma",
+          "title": "FA3: WGMMA Usage on Hopper",
+          "preciseDefinition": "FlashAttention-3 (FA3 §3.1) replaces Ampere HMMA with Hopper's asynchronous WGMMA (warpgroup-wide matrix multiply-accumulate). Unlike HMMA, WGMMA is non-blocking: the warpgroup can issue the next instruction before the current matmul finishes. FA3 uses two WGMMA variants per iteration: SS-GEMM (shared memory × shared memory) for QK^T computation, and RS-GEMM (register × shared memory) for PV computation. Warp-specialization splits the 128-thread CTA into producer warps (TMA loads) and consumer warps (WGMMA execution).",
+          "source": "papers/flash-attention-3.pdf §3.1",
+          "keyFacts": [
+            "WGMMA is asynchronous: issuing TMA does not stall on WGMMA completion; pipelining is explicit via commit/wait",
+            "Producer warpgroup: issues TMA loads of K_j, V_j with s-stage circular SMEM buffer; uses setmaxnreg to free registers",
+            "Consumer warpgroup: executes WGMMA SS-GEMM and RS-GEMM; reallocates registers freed by producer",
+            "FA3 FP16 forward achieves 740 TFLOPs/s (75% H100 utilization) vs FA2's ~35% utilization",
+            "FA3 backward achieves 1.5-1.75× speedup vs FA2 backward on H100"
+          ],
+          "commonMisconceptions": [
+            "WGMMA is available on A100 (Ampere) — WGMMA is Hopper-only (cc9.0+); Ampere uses HMMA",
+            "FA3 only benefits from WGMMA — the full benefit comes from WGMMA + TMA + pingpong scheduling together",
+            "Warp-specialization requires a different programming model — it uses the same CUDA C++ with setmaxnreg PTX"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["warpgroup-mma", "tensor-memory-accelerator", "flash-attention", "fa3-tma-pipeline"]
+        },
+        {
+          "conceptId": "fa3-tma-pipeline",
+          "title": "FA3: TMA-Based Async Pipeline",
+          "preciseDefinition": "FA3 (§3.2) implements a 2-stage WGMMA-softmax pipeline that overlaps GEMM with softmax within one consumer warpgroup. In iteration j: WGMMA computes Q_i × K_j^T (GEMM1, non-blocking); while GEMM1 runs asynchronously, softmax stats (m_i, P̃_i) are computed from the previous iteration's S (iteration j-1); then WGMMA computes P̃_{j-1} × V_{j-1} (GEMM2, non-blocking). Since the exponential (softmax) and matmul use separate hardware units (multi-function unit vs Tensor Core), they can run concurrently, hiding the 256× lower throughput of special functions.",
+          "source": "papers/flash-attention-3.pdf §3.2 Algorithm 2",
+          "keyFacts": [
+            "H100 has 989 TFLOPS FP16 matmul but only 3.9 TFLOPS special functions (exp) — 256× disparity",
+            "2-stage pipeline: GEMM1 (QK^T) of iteration j overlapped with softmax of iteration j-1 (using separate hardware units)",
+            "Pingpong scheduling: two consumer warpgroups alternate GEMMs and softmax to double utilization",
+            "Register pressure cost: 2-stage pipeline requires extra Br×Bc registers for Snext; 3-stage needs even more",
+            "Practical gain: 2-stage pipeline improves from 570 TFLOPs to 620-640 TFLOPs for FP16 forward with d=128"
+          ],
+          "commonMisconceptions": [
+            "Softmax and GEMM cannot be overlapped because of data dependencies — FA3 pipelines across iterations to break this dependency",
+            "The pipeline requires special hardware — it uses standard WGMMA async and mbarrier synchronization primitives",
+            "More pipeline stages always improve performance — 3-stage is register-hungry and may not beat 2-stage for all block sizes"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["fa3-wgmma", "tensor-memory-accelerator", "warpgroup-mma", "flash-attention"]
+        },
+        {
+          "conceptId": "fa3-fp8",
+          "title": "FA3: FP8 Quantized Attention",
+          "preciseDefinition": "FA3 (§3.3) supports FP8 attention using Hopper's FP8 WGMMA instructions, achieving close to 1.2 PFLOPs/s on H100. Two challenges addressed: (1) Layout conformance: FP8 WGMMA requires k-major operands, but V is head-dimension-major; FA3 performs in-kernel transpose of V tiles using LDSM/STSM instructions. (2) Accuracy: FP8 E4M3 has only 3 mantissa bits; FA3 uses block quantization (one scale per Br×d or Bc×d block) and incoherent processing (multiplying Q,K by random orthogonal M to reduce outliers) for 2.6× lower numerical error vs. per-tensor FP8.",
+          "source": "papers/flash-attention-3.pdf §3.3",
+          "keyFacts": [
+            "FP8 WGMMA doubles matmul throughput vs FP16: ~2000 TFLOPs vs ~1000 TFLOPs on H100",
+            "FP8 E4M3 format: 1 sign + 4 exponent + 3 mantissa bits; max value 448; better for weights/activations",
+            "Block quantization: one scale per Br×d block of Q/K/V (vs per-tensor scaling) — fused with rotary embedding",
+            "Incoherent processing: Q' = QM, K' = KM where M is random orthogonal; (QM)(KM)^T = QK^T; spreads outliers",
+            "FP8 FA3 achieves 2.6× lower error than standard FP8 attention with per-tensor quantization"
+          ],
+          "commonMisconceptions": [
+            "FP8 attention is simply using FP8 in existing FA2 — requires significant algorithm changes for layout conformance and accuracy",
+            "Block quantization adds overhead — it is fused with preceding operations (e.g., rotary embedding) at no extra cost",
+            "FP8 accuracy is always worse than FP16 — with block quantization + incoherent processing, FA3 FP8 matches FP16 quality"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["fa3-wgmma", "quantization-kernels", "mixed-precision", "warpgroup-mma"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "tensor-parallelism",
+      "topicTitle": "Tensor Parallelism",
+      "topicOrder": 9,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 45,
+      "prerequisites": ["flash-attention", "operation-fusion"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "column-row-parallel-linear",
+          "title": "Column/Row Parallel Linear Layers",
+          "preciseDefinition": "Megatron-LM (Shoeybi et al. 2019, §3) implements intra-layer model parallelism by splitting transformer weight matrices across GPUs. For the MLP's first linear layer (Y = GeLU(XA)): A is split column-wise A = [A1, A2], so each GPU computes [GeLU(XA1), GeLU(XA2)] independently without synchronization. The second linear layer is split row-wise B = [B1; B2], taking the column-parallel output directly; an all-reduce then combines partial sums across GPUs. Self-attention is split per head: Q, K, V projections are column-parallel (each GPU handles some heads), and the output projection is row-parallel.",
+          "source": "papers/megatron-lm.pdf §3 Model Parallel Transformers",
+          "keyFacts": [
+            "Column-parallel: weight A split as [A1, A2]; no sync needed before non-linear (GeLU can be applied per-shard)",
+            "Row-parallel: weight B split as [B1; B2]; inputs are sharded column results; one all-reduce in forward pass",
+            "Self-attention: Q/K/V projections column-parallel (each GPU handles heads_per_gpu heads); output proj row-parallel",
+            "Only 2 all-reduces per transformer layer in forward pass (g operator); 2 in backward pass (f operator)",
+            "Scales to 8-way model parallelism with 76% efficiency on 512 V100 GPUs; tested up to 8.3B parameters"
+          ],
+          "commonMisconceptions": [
+            "Tensor parallelism and pipeline parallelism are the same — tensor parallelism splits within a layer; pipeline parallelism splits across layers",
+            "All-reduce must happen at every layer boundary — Megatron fuses two GEMMs to reduce to one all-reduce per block",
+            "Tensor parallelism works well across nodes — all-reduce bottleneck limits tensor parallelism to within a node (NVLink bandwidth)"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["f-g-conjugate-operators", "zero-stage-1-2-3", "flash-attention", "batched-gemm"]
+        },
+        {
+          "conceptId": "f-g-conjugate-operators",
+          "title": "f and g Conjugate All-Reduce Operators",
+          "preciseDefinition": "Megatron-LM (§3) introduces f and g as conjugate PyTorch autograd functions to cleanly implement the all-reduce placement in tensor-parallel layers. f is an identity in the forward pass and an all-reduce in the backward pass (for the first linear in a column-parallel pair). g is an all-reduce in the forward pass and identity in the backward pass (for the final linear in a row-parallel pair). Together they place the all-reduces correctly at the boundary of the model-parallel region without code changes to the rest of the model.",
+          "source": "papers/megatron-lm.pdf §3 Code 1",
+          "keyFacts": [
+            "f forward: identity; f backward: all-reduce(gradient) — used at start of model-parallel region (column-parallel input)",
+            "g forward: all-reduce; g backward: identity — used at end of model-parallel region (row-parallel output)",
+            "f and g are conjugates: the all-reduce of one corresponds to identity of the other",
+            "Implementation: 10 lines of PyTorch autograd code — no custom C++ or compiler needed",
+            "A transformer layer uses exactly 4 all-reduces total (2 for MLP, 2 for self-attention) when using f/g correctly"
+          ],
+          "commonMisconceptions": [
+            "f and g are special hardware operations — they are simple PyTorch autograd functions inserting collective communication",
+            "All-reduce happens in both forward and backward at every placement — f places all-reduce only in backward; g only in forward",
+            "This pattern requires rewriting model code — Megatron inserts f and g at only 4 points in the transformer block"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["column-row-parallel-linear", "zero-stage-1-2-3", "operation-fusion"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "tensor-parallel-linear",
+          "title": "Column-Parallel and Row-Parallel Linear Layers",
+          "difficulty": "hard",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 120,
+          "whatItTeaches": "How to split a weight matrix column-wise for the first linear and row-wise for the second; implementing the f/g identity/all-reduce conjugate operators; verifying that col-parallel then row-parallel GEMM + one all-reduce produces the same output as a single large GEMM.",
+          "starterCodeHint": "// Col-parallel: W = [W1 | W2]; each GPU: y_local = X @ W_local; // Row-parallel: W = [W1; W2]; each GPU: y_partial = X_local @ W_local; y = all_reduce(y_partial); // f operator: identity fwd, allreduce bwd",
+          "testCaseHint": "Verify Y_tp == Y_full for 2-way split at hidden=1024; measure communication overhead with nccl collective timing",
+          "source": "papers/megatron-lm.pdf §3",
+          "prerequisites": ["flash-attention-naive", "custom-sgemm"]
+        }
+      ]
+    },
+    {
+      "topicId": "distributed-memory-optimization",
+      "topicTitle": "ZeRO: Distributed Memory Optimization",
+      "topicOrder": 10,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 45,
+      "prerequisites": ["tensor-parallelism", "operation-fusion"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "zero-stage-1-2-3",
+          "title": "ZeRO Stage 1, 2, and 3 Memory Partitioning",
+          "preciseDefinition": "ZeRO (Rajbhandari et al. 2020, §5) is a data-parallel optimization that eliminates memory redundancy by partitioning model states across Nd GPUs instead of replicating them. Mixed-precision Adam training of a model with Ψ parameters requires 16Ψ bytes (2Ψ fp16 params + 2Ψ fp16 grads + 4Ψ fp32 params + 4Ψ momentum + 4Ψ variance). Stage 1 (Pos): partitions optimizer state only → 4x memory reduction. Stage 2 (Pos+g): also partitions gradients → 8x reduction. Stage 3 (Pos+g+p): also partitions parameters → Nd-fold reduction (64 GPUs → 64× = linear scaling). Communication overhead: Stage 1/2 same as baseline DP; Stage 3 adds 50% extra communication.",
+          "source": "papers/zero.pdf §5 Deep Dive into ZeRO-DP",
+          "keyFacts": [
+            "Stage 1: each GPU stores KΨ/Nd optimizer state bytes; uses all-gather at step end to get updated params",
+            "Stage 2: each GPU stores (2Ψ + 14Ψ/Nd) bytes; gradients reduced via reduce-scatter to responsible partition",
+            "Stage 3: each GPU stores (16Ψ/Nd) bytes; all-gather params before forward/backward; release after",
+            "For 7.5B param model (K=12, Nd=64): Stage 0: 120 GB; Stage 1: 31.4 GB; Stage 2: 16.6 GB; Stage 3: 1.9 GB",
+            "ZeRO enables training 100B+ parameter models on commodity GPU clusters; DeepSpeed implements ZeRO"
+          ],
+          "commonMisconceptions": [
+            "ZeRO and model parallelism (tensor/pipeline) are alternatives — ZeRO is a data parallelism variant; can be combined with MP",
+            "Stage 3 always has 50% communication overhead — overhead is relative to baseline DP all-reduce; often amortized",
+            "ZeRO requires model code changes — ZeRO is transparent to model code (implemented in optimizer/DDP wrapper)"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["zero-communication-overhead", "column-row-parallel-linear", "mixed-precision", "memory-bandwidth"]
+        },
+        {
+          "conceptId": "zero-communication-overhead",
+          "title": "ZeRO Communication Volume Analysis",
+          "preciseDefinition": "ZeRO-DP (§7) maintains the same asymptotic communication volume as standard data parallelism for Stages 1 and 2. Standard DP all-reduces each gradient (2Ψ elements per step). ZeRO Stage 1/2 replace all-reduce with reduce-scatter + all-gather which total the same 2Ψ elements. Stage 3 adds one all-gather for parameters before forward and one reduce-scatter for gradients: 3× Ψ communication per step vs 2× for standard DP — a 50% increase. This 50% overhead is the cost of Nd-fold memory reduction.",
+          "source": "papers/zero.pdf §7 Communication Analysis",
+          "keyFacts": [
+            "Standard DP: all-reduce = reduce-scatter + all-gather = 2Ψ elements communicated per step",
+            "ZeRO Stage 1+2: reduce-scatter (gradients) + all-gather (params) = 2Ψ — identical to standard DP",
+            "ZeRO Stage 3: all-gather (forward params) + reduce-scatter (backward grads) + all-gather (updated params) = 3Ψ",
+            "Super-linear speedup observed at 64-400 GPUs: larger DP degree allows larger batch per GPU, improving compute/communication ratio",
+            "ZeRO+MP: combine for max efficiency; MP within a node (NVLink), ZeRO-DP across nodes (InfiniBand)"
+          ],
+          "commonMisconceptions": [
+            "ZeRO Stage 3 doubles communication vs standard DP — it only adds 50% overhead (3Ψ vs 2Ψ)",
+            "Communication volume is the same as compute cost — communication cost depends on network bandwidth; compute cost on GPU FLOPs",
+            "ZeRO-R (activation optimization) affects the same communication — ZeRO-R manages activations separately from ZeRO-DP"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["zero-stage-1-2-3", "column-row-parallel-linear", "memory-bandwidth", "operation-fusion"]
         }
       ],
       "exercises": []
@@ -444,8 +753,7 @@
     "Speculative decoding kernels — complex, referenced in cuda-mode-lectures lecture_022; not planned",
     "PagedAttention / vLLM KV cache management — important for production inference; no exercise planned",
     "All-Reduce kernels (NCCL) — present in llm.c/dev/cuda/nccl_all_reduce.cu; not covered in single-GPU curriculum",
-    "Megatron-LM tensor parallelism patterns — papers unreadable (PDF); not planned",
-    "ZeRO sharding strategies — papers unreadable (PDF); not planned",
+    "Pipeline parallelism (GPipe, PipeDream) — mentioned in ZeRO paper as complementary; not in scope for single-GPU curriculum",
     "Mamba / state-space model kernels — growing importance; not in current resources"
   ],
   "interviewFrequency": {
