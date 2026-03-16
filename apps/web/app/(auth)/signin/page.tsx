@@ -10,6 +10,9 @@ export default async function SignInPage({ searchParams }: Props) {
   const raw = rawParam ?? ''
   const callbackUrl = raw.startsWith('/') ? raw : '/roadmap'
 
+  const hasGitHub = !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET)
+  const hasGoogle = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)
+
   async function signInWithGitHub() {
     'use server'
     await signIn('github', { redirectTo: callbackUrl })
@@ -32,26 +35,30 @@ export default async function SignInPage({ searchParams }: Props) {
           <h2 className="text-base font-semibold text-slate-900 text-center mb-5">Sign in</h2>
 
           {/* GitHub */}
-          <form action={signInWithGitHub}>
-            <button
-              type="submit"
-              className="w-full flex items-center justify-center gap-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg px-4 py-3 text-sm font-medium transition-colors"
-            >
-              <GitHubIcon />
-              Sign in with GitHub
-            </button>
-          </form>
+          {hasGitHub && (
+            <form action={signInWithGitHub}>
+              <button
+                type="submit"
+                className="w-full flex items-center justify-center gap-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg px-4 py-3 text-sm font-medium transition-colors"
+              >
+                <GitHubIcon />
+                Sign in with GitHub
+              </button>
+            </form>
+          )}
 
           {/* Google */}
-          <form action={signInWithGoogle}>
-            <button
-              type="submit"
-              className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg px-4 py-3 text-sm font-medium transition-colors"
-            >
-              <GoogleIcon />
-              Sign in with Google
-            </button>
-          </form>
+          {hasGoogle && (
+            <form action={signInWithGoogle}>
+              <button
+                type="submit"
+                className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg px-4 py-3 text-sm font-medium transition-colors"
+              >
+                <GoogleIcon />
+                Sign in with Google
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </main>
