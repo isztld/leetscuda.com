@@ -16,10 +16,21 @@ function navClass(pathname: string, href: string) {
   ].join(' ')
 }
 
+function mobileNavClass(pathname: string, href: string) {
+  const active = pathname === href || (href !== '/' && pathname.startsWith(href))
+  return [
+    'block px-4 py-2.5 text-sm rounded-lg transition-colors',
+    active
+      ? 'text-slate-900 font-medium bg-slate-100'
+      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50',
+  ].join(' ')
+}
+
 export function Navbar() {
   const { data: session } = useSession()
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -31,6 +42,9 @@ export function Navbar() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  // Close mobile menu on route change
+  useEffect(() => { setMobileOpen(false) }, [pathname])
 
   const user = session?.user
 
@@ -45,8 +59,8 @@ export function Navbar() {
           leetscuda
         </Link>
 
-        {/* Nav links */}
-        <div className="flex items-center gap-1 flex-1">
+        {/* Nav links — hidden on mobile */}
+        <div className="hidden sm:flex items-center gap-1 flex-1">
           <Link href="/problems" className={navClass(pathname, '/problems')}>
             Problems
           </Link>
@@ -57,6 +71,9 @@ export function Navbar() {
             Learn
           </Link>
         </div>
+
+        {/* Spacer on mobile so auth stays right-aligned */}
+        <div className="flex-1 sm:hidden" />
 
         {/* Auth */}
         {user ? (
@@ -114,7 +131,40 @@ export function Navbar() {
             Sign in
           </Link>
         )}
+
+        {/* Hamburger — mobile only */}
+        <button
+          className="sm:hidden shrink-0 p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+          onClick={() => setMobileOpen((v) => !v)}
+          aria-label="Toggle menu"
+          aria-expanded={mobileOpen}
+        >
+          {mobileOpen ? (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          )}
+        </button>
       </div>
+
+      {/* Mobile menu */}
+      {mobileOpen && (
+        <div className="sm:hidden border-t border-slate-100 bg-white px-4 py-3 space-y-1">
+          <Link href="/problems" className={mobileNavClass(pathname, '/problems')}>
+            Problems
+          </Link>
+          <Link href="/roadmap" className={mobileNavClass(pathname, '/roadmap')}>
+            Roadmap
+          </Link>
+          <Link href="/learn" className={mobileNavClass(pathname, '/learn')}>
+            Learn
+          </Link>
+        </div>
+      )}
     </nav>
   )
 }
