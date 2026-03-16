@@ -5,6 +5,7 @@ import { auth } from '@/lib/auth'
 import { loadTheoryContent, extractHeadings, addHeadingIds } from '@/lib/theory-content'
 import { MarkReadButton } from './MarkReadButton'
 import type { Metadata } from 'next'
+import type { RoadmapNode } from '@prisma/client'
 
 interface Props {
   params: Promise<{ slug: string }>
@@ -37,7 +38,7 @@ export default async function LearnPage({ params }: Props) {
 
   const isRead = existingRead !== null
 
-  const currentIndex = trackNodes.findIndex((n: { slug: string }) => n.slug === slug)
+  const currentIndex = trackNodes.findIndex((n: RoadmapNode) => n.slug === slug)
   const prevNode = currentIndex > 0 ? trackNodes[currentIndex - 1] : null
   const nextNode = currentIndex < trackNodes.length - 1 ? trackNodes[currentIndex + 1] : null
 
@@ -59,7 +60,7 @@ export default async function LearnPage({ params }: Props) {
                 {node.track.title}
               </div>
               <nav className="flex flex-col gap-1">
-                {trackNodes.map((n) => (
+                {trackNodes.map((n: RoadmapNode) => (
                   <Link
                     key={n.id}
                     href={`/learn/${n.slug}`}
@@ -123,7 +124,7 @@ export default async function LearnPage({ params }: Props) {
                   On this page
                 </summary>
                 <nav className="mt-3 flex flex-col gap-1">
-                  {headings.map((h) => (
+                  {headings.map((h: { id: string; text: string; level: 2 | 3 }) => (
                     <a
                       key={h.id}
                       href={`#${h.id}`}
@@ -152,7 +153,7 @@ export default async function LearnPage({ params }: Props) {
             {/* Tags */}
             {content?.meta.tags && content.meta.tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-6">
-                {content.meta.tags.map((tag) => (
+                {content.meta.tags.map((tag: string) => (
                   <span
                     key={tag}
                     className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-medium"
@@ -193,7 +194,7 @@ export default async function LearnPage({ params }: Props) {
                   On this page
                 </p>
                 <nav className="flex flex-col gap-1">
-                  {headings.map((h) => (
+                  {headings.map((h: { id: string; text: string; level: 2 | 3 }) => (
                     <a
                       key={h.id}
                       href={`#${h.id}`}
