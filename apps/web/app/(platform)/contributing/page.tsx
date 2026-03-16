@@ -12,14 +12,35 @@ export default function ContributingPage() {
         The leetscuda curriculum is open source. Problems, theory articles, and track structures
         live in the{' '}
         <a
-          href="https://github.com/[YOUR_USERNAME]/leetscuda"
+          href="https://github.com/isztld/leetscuda.com/tree/master/learning"
           target="_blank"
           rel="noopener noreferrer"
         >
-          GitHub repository
+          learning/ directory on GitHub
         </a>{' '}
         under <code>learning/</code>, licensed MIT. Community contributions are welcome and
         credited.
+      </p>
+
+      <p>
+        Read the{' '}
+        <a
+          href="https://github.com/isztld/leetscuda.com/blob/master/learning/README.md"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          contribution guide
+        </a>{' '}
+        for full frontmatter schema, content standards, and examples. Report bugs or request
+        problems via{' '}
+        <a
+          href="https://github.com/isztld/leetscuda.com/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GitHub Issues
+        </a>
+        .
       </p>
 
       <h2>Adding a problem</h2>
@@ -27,11 +48,11 @@ export default function ContributingPage() {
         <li>
           Fork{' '}
           <a
-            href="https://github.com/[YOUR_USERNAME]/leetscuda"
+            href="https://github.com/isztld/leetscuda.com"
             target="_blank"
             rel="noopener noreferrer"
           >
-            github.com/[YOUR_USERNAME]/leetscuda
+            github.com/isztld/leetscuda.com
           </a>
         </li>
         <li>
@@ -104,7 +125,15 @@ export default function ContributingPage() {
 
       <h2>Questions</h2>
       <p>
-        Open a GitHub issue or see the <a href="/faq">FAQ</a>.
+        Open a{' '}
+        <a
+          href="https://github.com/isztld/leetscuda.com/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GitHub issue
+        </a>{' '}
+        or see the <a href="/faq">FAQ</a>.
       </p>
     </article>
   )

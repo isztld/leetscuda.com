@@ -26,15 +26,9 @@ export default function SupportPage() {
               Support via GitHub Sponsors. Monthly or one-time, whatever works for you.
             </p>
           </div>
-          <a
-            href="https://github.com/sponsors/[YOUR_USERNAME]"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-700 text-white text-sm font-medium transition-colors"
-          >
-            GitHub Sponsors ↗
-          </a>
-          <p className="text-xs text-slate-400">[PLACEHOLDER — add your GitHub Sponsors link]</p>
+          <span className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed">
+            Coming soon
+          </span>
         </div>
 
         {/* Bitcoin */}
@@ -44,16 +38,8 @@ export default function SupportPage() {
               Bitcoin
             </p>
             <h2 className="text-lg font-semibold text-slate-900">One-time, no account needed</h2>
-            <p className="mt-2 text-sm text-slate-600 font-mono break-all">
-              bc1q[YOUR_BTC_ADDRESS]
-            </p>
-            <p className="mt-1 text-xs text-slate-400">[PLACEHOLDER — add your Bitcoin address]</p>
-          </div>
-          {/* QR code placeholder */}
-          <div className="w-32 h-32 bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-center">
-            <p className="text-xs text-slate-400 text-center px-2 leading-snug">
-              QR code — add Bitcoin address
-            </p>
+            {/* TODO: replace with your Bitcoin address */}
+            <p className="mt-2 text-sm text-slate-400 italic">Bitcoin address coming soon</p>
           </div>
         </div>
       </div>

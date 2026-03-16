@@ -77,6 +77,7 @@ export default function TermsPage() {
       <h2>9. Contact</h2>
       <p>
         For questions about these terms:{' '}
+        {/* TODO: replace [YOUR EMAIL ADDRESS] with your contact email */}
         <a href="mailto:[YOUR EMAIL ADDRESS]">[YOUR EMAIL ADDRESS]</a>
       </p>
     </article>

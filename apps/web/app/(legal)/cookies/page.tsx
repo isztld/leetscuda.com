@@ -70,6 +70,7 @@ export default function CookiesPage() {
       <h2>Questions</h2>
       <p>
         For questions about our cookie use, contact{' '}
+        {/* TODO: replace [YOUR EMAIL ADDRESS] with your contact email */}
         <a href="mailto:[YOUR EMAIL ADDRESS]">[YOUR EMAIL ADDRESS]</a>.
       </p>
     </article>

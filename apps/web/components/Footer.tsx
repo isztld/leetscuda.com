@@ -15,7 +15,7 @@ const columns = [
     links: [
       { label: 'Contributing', href: '/contributing' },
       { label: 'FAQ', href: '/faq' },
-      { label: 'GitHub ↗', href: 'https://github.com/[YOUR_USERNAME]/leetscuda', external: true },
+      { label: 'GitHub ↗', href: 'https://github.com/isztld/leetscuda.com', external: true },
       { label: 'Discord ↗', href: '#', external: true },
     ],
   },

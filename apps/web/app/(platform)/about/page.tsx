@@ -49,7 +49,7 @@ export default function AboutPage() {
       <p>
         The entire curriculum is open source under the{' '}
         <a
-          href="https://github.com/[YOUR_USERNAME]/leetscuda"
+          href="https://github.com/isztld/leetscuda.com/tree/master/learning"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -61,7 +61,8 @@ export default function AboutPage() {
 
       <h2>The founder</h2>
       <p>
-        I&apos;m [YOUR NAME]. I work in AI infrastructure. I built this platform after spending
+        {/* TODO: replace with your name */}
+        I&apos;m the founder. I work in AI infrastructure. I built this platform after spending
         months preparing for roles at AI companies and finding no adequate single resource. The
         platform is the resource I wish had existed.
       </p>
@@ -79,7 +80,7 @@ export default function AboutPage() {
         </li>
         <li>
           <a
-            href="https://github.com/[YOUR_USERNAME]/leetscuda"
+            href="https://github.com/isztld/leetscuda.com"
             target="_blank"
             rel="noopener noreferrer"
           >

@@ -65,6 +65,7 @@ const faqs = [
     items: [
       {
         q: 'How do I delete my account?',
+        // TODO: replace [YOUR EMAIL ADDRESS] with your contact email
         a: 'Email [YOUR EMAIL ADDRESS] with your username and we will delete your data within 30 days per GDPR Art. 17.',
       },
       {

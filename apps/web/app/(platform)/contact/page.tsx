@@ -18,12 +18,12 @@ export default function ContactPage() {
             GitHub Issues is the best place for bugs, incorrect test cases, or editorial errors.
           </p>
           <a
-            href="https://github.com/[YOUR_USERNAME]/leetscuda/issues"
+            href="https://github.com/isztld/leetscuda.com/issues"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-blue-600 hover:text-blue-700 font-medium"
           >
-            github.com/[YOUR_USERNAME]/leetscuda/issues ↗
+            github.com/isztld/leetscuda.com/issues ↗
           </a>
         </div>
 
@@ -34,12 +34,8 @@ export default function ContactPage() {
           <p className="text-sm text-slate-600 mb-3">
             Requests for access, deletion, or portability of your personal data under GDPR.
           </p>
-          <a
-            href="mailto:[YOUR EMAIL ADDRESS]"
-            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-          >
-            [YOUR EMAIL ADDRESS]
-          </a>
+          {/* TODO: replace [YOUR EMAIL ADDRESS] with your contact email */}
+          <span className="text-sm text-slate-500 italic">[YOUR EMAIL ADDRESS]</span>
         </div>
 
         <div className="border border-slate-200 rounded-xl p-6">
@@ -47,12 +43,8 @@ export default function ContactPage() {
           <p className="text-sm text-slate-600 mb-3">
             Questions, feedback, partnership enquiries, or anything else.
           </p>
-          <a
-            href="mailto:[YOUR EMAIL ADDRESS]"
-            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-          >
-            [YOUR EMAIL ADDRESS]
-          </a>
+          {/* TODO: replace [YOUR EMAIL ADDRESS] with your contact email */}
+          <span className="text-sm text-slate-500 italic">[YOUR EMAIL ADDRESS]</span>
         </div>
       </div>
 

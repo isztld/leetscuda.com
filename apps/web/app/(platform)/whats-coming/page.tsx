@@ -63,7 +63,7 @@ export default function WhatsComingPage() {
         No fake dates. This is an honest view of where the platform is and what is being built.
         Community suggestions welcome — open a{' '}
         <a
-          href="https://github.com/[YOUR_USERNAME]/leetscuda/issues"
+          href="https://github.com/isztld/leetscuda.com/issues"
           target="_blank"
           rel="noopener noreferrer"
           className="text-blue-600 hover:text-blue-700"

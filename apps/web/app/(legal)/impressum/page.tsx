@@ -9,6 +9,7 @@ export default function ImpressumPage() {
     <article className="max-w-2xl mx-auto py-16 px-6 prose prose-slate">
       <h1>Impressum</h1>
 
+      {/* TODO: replace all [YOUR FULL LEGAL NAME], [YOUR STREET ADDRESS], [YOUR POSTAL CODE], [YOUR CITY], [YOUR EMAIL ADDRESS] with real legal details */}
       <h2>Angaben gemäß § 5 TMG</h2>
       <p>
         Name: [YOUR FULL LEGAL NAME]

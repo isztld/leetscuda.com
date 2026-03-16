@@ -1,8 +1,12 @@
 # leetscuda.com
 
+**Live at [https://www.leetscuda.com](https://www.leetscuda.com)**
+
 AI Infrastructure Interview Prep Platform — practice CUDA/GPU programming, ML systems, Kubernetes for AI, and systems foundations through real coding problems in your browser.
 
 Targeted at senior/staff-level interviews at GPU-cloud and AI infrastructure companies (Nebius, Groq, Crusoe, Lambda Labs, Anyscale, etc.).
+
+**Contributing content?** See [`learning/README.md`](learning/README.md) for the full contribution guide — problems, theory articles, and track definitions are open for community PRs.
 
 ---
 
@@ -31,7 +35,7 @@ Problems are written in MDX, compiled and executed on distributed judge nodes, a
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/your-org/leetscuda.git
+git clone https://github.com/isztld/leetscuda.com.git
 cd leetscuda
 pnpm install
 ```

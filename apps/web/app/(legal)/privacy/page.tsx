@@ -14,6 +14,7 @@ export default function PrivacyPage() {
         </em>
       </p>
 
+      {/* TODO: replace all [YOUR FULL LEGAL NAME], [YOUR STREET ADDRESS], [YOUR POSTAL CODE], [YOUR CITY], [YOUR EMAIL ADDRESS] with real legal details */}
       <h2>1. Verantwortlicher</h2>
       <p>
         [YOUR FULL LEGAL NAME]
