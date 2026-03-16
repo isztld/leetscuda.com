@@ -472,6 +472,7 @@ export function ProblemDetail({
   const [pollError, setPollError] = useState<string | null>(null)
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [infoMsg, setInfoMsg] = useState<string | null>(null)
+  const [stats, setStats] = useState(initialStats)
   const [isSolved, setIsSolved] = useState(initialIsSolved)
   const [showSolvedBanner, setShowSolvedBanner] = useState(false)
   const [viewingCode, setViewingCode] = useState<{
@@ -609,6 +610,18 @@ export function ProblemDetail({
     if (!submissionStatus) return
     if (TERMINAL_STATUSES.includes(submissionStatus.status)) {
       setIsPolling(false)
+
+      if (submissionStatus.status !== 'CANCELLED') {
+        setStats((prev) => {
+          const newTotal = prev.totalSubmissions + 1
+          const newAccepted = prev.totalAccepted + (submissionStatus.status === 'ACCEPTED' ? 1 : 0)
+          return {
+            totalSubmissions: newTotal,
+            totalAccepted: newAccepted,
+            acceptanceRate: newTotal > 0 ? Math.round((newAccepted / newTotal) * 1000) / 10 : 0,
+          }
+        })
+      }
 
       if (submissionStatus.status === 'ACCEPTED') {
         setIsSolved(true)
@@ -752,11 +765,11 @@ export function ProblemDetail({
               </div>
 
               {/* Problem stats row */}
-              {initialStats.totalSubmissions > 0 && (
+              {stats.totalSubmissions > 0 && (
                 <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
-                  <span>Accepted: {initialStats.totalAccepted}</span>
-                  <span>Submissions: {initialStats.totalSubmissions}</span>
-                  <span>Acceptance: {initialStats.acceptanceRate}%</span>
+                  <span>Accepted: {stats.totalAccepted}</span>
+                  <span>Submissions: {stats.totalSubmissions}</span>
+                  <span>Acceptance: {stats.acceptanceRate}%</span>
                 </div>
               )}
             </div>
