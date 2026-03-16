@@ -1,0 +1,312 @@
+{
+  "clusterId": "algorithms",
+  "clusterTitle": "Parallel Algorithms & Patterns",
+  "clusterOrder": 4,
+  "description": "Fundamental GPU-parallel algorithmic patterns: reduction, prefix scan, histogram, sorting, and the work-efficiency vs step-efficiency tradeoff that governs all parallel algorithm design.",
+  "prerequisites": ["foundations", "memory", "execution"],
+  "sources": [
+    "cuda-samples/2_Concepts_and_Techniques/reduction/",
+    "cuda-samples/2_Concepts_and_Techniques/scan/",
+    "cuda-samples/2_Concepts_and_Techniques/histogram/",
+    "cuda-samples/2_Concepts_and_Techniques/sortingNetworks/",
+    "cuda-samples/2_Concepts_and_Techniques/radixSortThrust/",
+    "cuda-samples/2_Concepts_and_Techniques/shfl_scan/",
+    "cuda-samples/2_Concepts_and_Techniques/reductionMultiBlockCG/",
+    "cuda-samples/2_Concepts_and_Techniques/threadFenceReduction/",
+    "cuda-samples/3_CUDA_Features/warpAggregatedAtomicsCG/",
+    "cuda-mode-lectures/lecture_009/",
+    "docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html",
+    "llm.c/dev/cuda/softmax_forward.cu",
+    "llm.c/dev/cuda/global_norm.cu",
+    "llm.c/dev/cuda/crossentropy_forward.cu"
+  ],
+  "topics": [
+    {
+      "topicId": "parallel-reduction",
+      "topicTitle": "Parallel Reduction",
+      "topicOrder": 1,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 40,
+      "prerequisites": ["shared-memory-bank-conflicts", "warp-execution-divergence"],
+      "roadmapNodeSlug": "reduce-sum",
+      "roadmapNodeTitle": "Parallel Reduction Sum",
+      "roadmapNodeType": "PROBLEM",
+      "concepts": [
+        {
+          "conceptId": "parallel-reduction",
+          "title": "Parallel Reduction",
+          "preciseDefinition": "An algorithm that reduces N elements to a single value using a binary associative operation (sum, max, min) in O(log N) steps by having threads pair up and combine, halving active threads each step. A naïve GPU reduction with N threads has step complexity O(log N) but work complexity O(N log N) — work-inefficient. The optimized version (Mark Harris / NVIDIA) achieves O(N) work with careful warp shuffle and shared memory patterns.",
+          "source": "cuda-samples/2_Concepts_and_Techniques/reduction/; cuda-mode-lectures/lecture_009/reduce_coarsening.cu",
+          "keyFacts": [
+            "Step 1 (naïve): threads reduce pairs in shared memory with stride; has warp divergence and bank conflicts",
+            "Step 2: reversed indexing eliminates divergence (lower-indexed threads always active)",
+            "Step 3: sequential addressing with stride halving — coalesced shared memory access",
+            "Step 4: unroll last warp (warp-synchronous execution, no __syncthreads needed for 32 threads)",
+            "Step 5: warp-level primitives __shfl_down_sync — avoid shared memory entirely for final warp",
+            "Step 6: thread coarsening — each thread first reduces multiple elements before warp reduction"
+          ],
+          "commonMisconceptions": [
+            "The simplest reduction tree is work-efficient — stride-1 reduction with active high-indexed threads causes divergence",
+            "Atomic operations can replace reduction kernels — atomicAdd is slower than tree reduction for large N",
+            "__syncthreads() is needed inside warp reduction — threads in the same warp execute synchronously (pre-Volta)"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["warp-shuffle", "shared-memory", "work-efficiency", "thread-coarsening"]
+        },
+        {
+          "conceptId": "warp-shuffle",
+          "title": "Warp Shuffle Instructions",
+          "preciseDefinition": "Hardware instructions (__shfl_sync, __shfl_down_sync, __shfl_xor_sync, __shfl_up_sync) that allow threads within the same warp to directly read each other's registers without shared memory. Available on cc3.0+. A warp-level reduction using __shfl_down_sync requires 5 instructions (log2(32)=5 steps) and zero shared memory for the final warp.",
+          "source": "docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/device-callable-apis.html; cuda-samples/2_Concepts_and_Techniques/shfl_scan/",
+          "keyFacts": [
+            "__shfl_down_sync(0xffffffff, val, offset): thread i receives val from thread i+offset",
+            "__shfl_xor_sync(0xffffffff, val, mask): butterfly exchange for prefix operations",
+            "mask parameter: bitmask of participating threads (use 0xffffffff for all 32)",
+            "Width parameter limits exchange to sub-warp groups (e.g., width=8 for 8-thread groups)",
+            "Warp reduction pattern: for (int offset=16; offset>0; offset>>=1) val += __shfl_down_sync(0xffffffff, val, offset);"
+          ],
+          "commonMisconceptions": [
+            "Shuffle works across different warps — shuffles are strictly intra-warp",
+            "Older __shfl (without _sync) is safe — deprecated; use _sync variants with explicit mask to avoid undefined behavior on Volta+",
+            "Shuffle requires shared memory — shuffles use the warp's own register file, no shared memory"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["parallel-reduction", "warp", "cooperative-groups"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "reduce-sum",
+          "title": "Parallel Reduction Sum",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 90,
+          "whatItTeaches": "Iterative optimization of a reduction: naïve → divergence-free → __shfl_down_sync → thread coarsening. Understanding why each step improves performance. Two-pass reduction for large arrays.",
+          "starterCodeHint": "// Warp reduction: for(int s=warpSize/2; s>0; s>>=1) val+=__shfl_down_sync(0xffffffff,val,s); // Then store to smem[warpLane] and do block-level reduction",
+          "testCaseHint": "Test N=1 to N=128M; compare result vs CPU reference sum; measure vs cuBLAS cublasSasum",
+          "source": "cuda-samples/2_Concepts_and_Techniques/reduction/; cuda-mode-lectures/lecture_009/",
+          "prerequisites": ["tiled-matrix-multiply"]
+        },
+        {
+          "exerciseId": "max-reduction",
+          "title": "Parallel Max Reduction",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 30,
+          "whatItTeaches": "Applying the reduction pattern to non-commutative-but-associative operations (max); atomic max as alternative; how to template reduction kernels for different operators.",
+          "starterCodeHint": "val = __reduce_max_sync(0xffffffff, val); // Ampere+ warp primitive",
+          "testCaseHint": "Compare against std::max_element on CPU; test with all-equal, monotone, and random arrays",
+          "source": "docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/device-callable-apis.html",
+          "prerequisites": ["reduce-sum"]
+        }
+      ]
+    },
+    {
+      "topicId": "prefix-scan",
+      "topicTitle": "Prefix Scan (Inclusive/Exclusive)",
+      "topicOrder": 2,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 40,
+      "prerequisites": ["parallel-reduction"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "prefix-scan",
+          "title": "Parallel Prefix Scan",
+          "preciseDefinition": "An algorithm that computes the running prefix sum (or other binary associative operation) of N elements. Inclusive scan: output[i] = input[0] + ... + input[i]. Exclusive scan: output[i] = input[0] + ... + input[i-1]. The Blelloch algorithm achieves O(N) work and O(log N) steps using an upsweep (reduce) phase followed by a downsweep (broadcast) phase.",
+          "source": "cuda-samples/2_Concepts_and_Techniques/scan/; cuda-samples/2_Concepts_and_Techniques/shfl_scan/",
+          "keyFacts": [
+            "Blelloch scan: upsweep (reduce tree) + downsweep (distribute) — O(2N) work, O(2 log N) steps",
+            "Naïve Hillis-Steele scan: O(N log N) work, O(log N) steps — not work-efficient",
+            "Large arrays: single-block scan + inter-block scan + add offsets (3-pass pattern)",
+            "Thrust library: thrust::inclusive_scan / exclusive_scan — use for production code",
+            "Applications: stream compaction, radix sort, histogram equalization, variable-length data indexing"
+          ],
+          "commonMisconceptions": [
+            "Prefix scan is equivalent to reduction — reduction collapses to one value; scan preserves all prefix results",
+            "Hillis-Steele is always better because it has fewer steps — it has O(N log N) work which hurts large N",
+            "CUDA has a built-in prefix scan — must use Thrust or CUB; no single CUDA intrinsic for block scan"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["parallel-reduction", "warp-shuffle", "work-efficiency"]
+        },
+        {
+          "conceptId": "work-efficiency",
+          "title": "Work Efficiency vs Step Efficiency",
+          "preciseDefinition": "Work complexity is the total number of operations across all processors; step complexity (depth) is the number of parallel rounds. A work-efficient algorithm performs O(N) total operations (same as the sequential algorithm); a step-efficient algorithm minimizes the number of rounds. The ideal parallel algorithm is both: work-efficient AND step-efficient. GPU performance depends on both because work-inefficient algorithms waste CUDA Core throughput.",
+          "source": "cuda-mode-lectures/lecture_009/; docs.nvidia.com/cuda/cuda-c-best-practices-guide/",
+          "keyFacts": [
+            "Naïve reduction tree: O(N log N) work (work-inefficient), O(log N) steps",
+            "Optimal parallel reduction: O(N) work, O(log N) steps — achieved with per-thread sequential partial reduction + tree",
+            "Hillis-Steele scan: O(N log N) work, O(log N) steps — step-efficient but work-inefficient",
+            "Blelloch scan: O(N) work, O(2 log N) steps — work-efficient",
+            "On GPU with P processors: optimal if N/P ≥ log N (sufficient parallelism for work-efficient algorithm)"
+          ],
+          "commonMisconceptions": [
+            "The fastest parallel algorithm always has the fewest steps — work-inefficient algorithms can be slower due to wasted compute",
+            "Work efficiency only matters for CPUs — on GPUs with limited arithmetic bandwidth, work-inefficient algorithms saturate the compute units unnecessarily"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["parallel-reduction", "prefix-scan", "thread-coarsening"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "exclusive-prefix-scan",
+          "title": "Exclusive Prefix Scan",
+          "difficulty": "hard",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 120,
+          "whatItTeaches": "Blelloch upsweep/downsweep algorithm; two-level (block + grid) scan for large arrays; why the naive approach is work-inefficient; using warp shuffles for the final warp.",
+          "starterCodeHint": "// Upsweep: for(int stride=1; stride<blockDim.x; stride<<=1) { if (tid%(2*stride)==2*stride-1) smem[tid]+=smem[tid-stride]; } // Then downsweep",
+          "testCaseHint": "Verify exclusive_scan(input)[i] == sum(input[0..i-1]) for all i; test N=1024, 65536, 10M",
+          "source": "cuda-samples/2_Concepts_and_Techniques/scan/",
+          "prerequisites": ["reduce-sum"]
+        }
+      ]
+    },
+    {
+      "topicId": "histogram",
+      "topicTitle": "Histogram",
+      "topicOrder": 3,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 25,
+      "prerequisites": ["parallel-reduction"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "histogram",
+          "title": "Parallel Histogram",
+          "preciseDefinition": "Computing a frequency distribution of N elements into B bins on a GPU. Challenge: atomic update contention when multiple threads write to the same bin simultaneously. Solution: privatization — each block maintains a shared memory histogram; blocks then atomically merge partial histograms into global memory.",
+          "source": "cuda-samples/2_Concepts_and_Techniques/histogram/; cuda-samples/3_CUDA_Features/warpAggregatedAtomicsCG/",
+          "keyFacts": [
+            "Naïve: atomicAdd on global memory — high contention for small B (e.g., 256 bins, thousands of threads hit same bin)",
+            "Privatization: shared memory per-block histogram → bank conflicts possible if bin count < 32",
+            "Inter-block merge: atomicAdd on global with per-block partial results",
+            "Warp aggregation: coalesce atomic operations from threads in same warp hitting same bin — reduces atomic pressure by up to 32×",
+            "CUB DeviceHistogram for production use — handles all strategies automatically"
+          ],
+          "commonMisconceptions": [
+            "Atomic operations are always slow — atomics to L2 cache (Ampere+) are much faster than global atomics",
+            "More bins always mean fewer conflicts — with 256 bins and 65536 threads, expected 256 threads per bin on average"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["parallel-reduction", "prefix-scan", "shared-memory"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "histogram-privatized",
+          "title": "Privatized Histogram",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 60,
+          "whatItTeaches": "Atomic operations in shared and global memory; privatization pattern; contention analysis; comparison of naïve vs privatized vs warp-aggregated approaches.",
+          "starterCodeHint": "__shared__ unsigned int smem_hist[NUM_BINS]; atomicAdd(&smem_hist[bin], 1); __syncthreads(); atomicAdd(&global_hist[tid_in_block], smem_hist[tid_in_block]);",
+          "testCaseHint": "Verify histogram correctness vs CPU reference; benchmark N=10M with B=64,256,1024 bins",
+          "source": "cuda-samples/2_Concepts_and_Techniques/histogram/",
+          "prerequisites": ["reduce-sum"]
+        }
+      ]
+    },
+    {
+      "topicId": "sorting",
+      "topicTitle": "Parallel Sorting",
+      "topicOrder": 4,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 30,
+      "prerequisites": ["prefix-scan", "histogram"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "radix-sort",
+          "title": "Radix Sort on GPU",
+          "preciseDefinition": "A non-comparison-based sort that processes integer keys digit-by-digit (radix), performing one stable counting sort pass per digit. GPU radix sort uses: (1) per-block digit histogram, (2) exclusive prefix scan over histograms, (3) scatter to output. With 4-bit digits (base-16), 8 passes sort 32-bit integers. Step complexity O(k) where k=num_digits; work complexity O(kN).",
+          "source": "cuda-samples/2_Concepts_and_Techniques/radixSortThrust/",
+          "keyFacts": [
+            "CUB DeviceRadixSort and Thrust sort_by_key are the standard production implementations",
+            "GPU radix sort: ~3-5 GB/s throughput for 32-bit integers on modern GPUs",
+            "Digit size tradeoff: larger digit (8-bit) = fewer passes but larger histogram (256 bins) and more shared memory",
+            "NVIDIA's best radix sort achieves ~95% of HBM bandwidth on H100",
+            "Sorting networks (bitonic, odd-even merge) are used for small arrays (<= 1M elements)"
+          ],
+          "commonMisconceptions": [
+            "GPU sorting is always faster than CPU sorting — for small N (<10K), CPU sort is faster due to launch overhead",
+            "Radix sort handles all data types — only works natively on fixed-width unsigned integers; float requires bit manipulation"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["prefix-scan", "histogram", "thrust"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "parallel-patterns",
+      "topicTitle": "Map, Scatter, Gather Patterns",
+      "topicOrder": 5,
+      "difficulty": "introductory",
+      "estimatedTheoryMinutes": 20,
+      "prerequisites": ["thread-hierarchy"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "map-scatter-gather",
+          "title": "Map, Scatter, Gather",
+          "preciseDefinition": "Three fundamental data-parallel primitives. Map: apply a function f to every element independently — trivially parallel, embarrassingly so. Scatter: each thread writes to a computed destination index — contention risk when multiple threads scatter to same address. Gather: each thread reads from a computed source index — non-coalesced access pattern, often cache-friendly if indices are clustered.",
+          "source": "docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html",
+          "keyFacts": [
+            "Map is the basis of vectorAdd, SAXPY, and most element-wise neural network operations",
+            "Gather with random indices: memory access is random — use texture memory for read-only gather with spatial locality",
+            "Scatter with conflicts requires atomic operations or privatization",
+            "Compaction (stream compaction) = gather of elements satisfying a predicate: uses prefix scan to compute output indices"
+          ],
+          "commonMisconceptions": [
+            "Scatter and gather are symmetric in performance — scatter can cause write conflicts; gather cannot",
+            "Map always achieves peak memory bandwidth — only if accesses are coalesced"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["parallel-reduction", "prefix-scan", "memory-coalescing"]
+        }
+      ],
+      "exercises": []
+    }
+  ],
+  "roadmapNodes": [
+    {
+      "slug": "reduce-sum",
+      "title": "Parallel Reduction Sum",
+      "type": "PROBLEM",
+      "coveredByTopics": ["parallel-reduction"]
+    }
+  ],
+  "coverageGaps": [
+    "Merge sort GPU implementation — classic parallel algorithm, good for teaching parallel pattern composition",
+    "Stream compaction exercise — important building block for sparse operations, not yet planned as standalone exercise",
+    "Atomic operations deep dive — hardware atomics, CAS loops, lock-free data structures — referenced but no exercise"
+  ],
+  "interviewFrequency": {
+    "high": ["parallel-reduction", "warp-shuffle", "prefix-scan"],
+    "medium": ["work-efficiency", "histogram", "map-scatter-gather"],
+    "low": ["radix-sort"]
+  }
+}

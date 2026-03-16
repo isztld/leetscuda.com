@@ -1,0 +1,372 @@
+{
+  "clusterId": "memory",
+  "clusterTitle": "Memory Hierarchy & Optimization",
+  "clusterOrder": 2,
+  "description": "CUDA's multi-level memory system: global memory coalescing, shared memory bank conflicts, L1/L2 caching, register pressure, constant/texture memory, and unified memory. Memory optimization is the single most impactful class of CUDA optimizations.",
+  "prerequisites": ["foundations"],
+  "sources": [
+    "gpu-glossary/device-software/global-memory.md",
+    "gpu-glossary/device-software/shared-memory.md",
+    "gpu-glossary/device-software/registers.md",
+    "gpu-glossary/device-hardware/register-file.md",
+    "gpu-glossary/device-hardware/l1-data-cache.md",
+    "gpu-glossary/device-hardware/tensor-memory.md",
+    "gpu-glossary/device-hardware/tensor-memory-accelerator.md",
+    "gpu-glossary/perf/bank-conflict.md",
+    "gpu-glossary/perf/memory-coalescing.md",
+    "gpu-glossary/perf/memory-bandwidth.md",
+    "gpu-glossary/perf/register-pressure.md",
+    "docs.nvidia.com/cuda/cuda-programming-guide/02-basics/understanding-memory.html",
+    "docs.nvidia.com/cuda/cuda-c-best-practices-guide/#memory-optimizations",
+    "docs.nvidia.com/cuda/hopper-tuning-guide/#memory-system",
+    "docs.nvidia.com/cuda/ampere-tuning-guide/#asynchronous-data-copy",
+    "cuda-samples/0_Introduction/matrixMul/",
+    "cuda-samples/2_Concepts_and_Techniques/transpose/",
+    "cuda-samples/6_Performance/transpose/",
+    "cuda-samples/0_Introduction/UnifiedMemoryStreams/",
+    "cuda-mode-lectures/lecture_004/",
+    "cuda-mode-lectures/lecture_008/coalesce.cu",
+    "llm.c/dev/cuda/matmul_forward.cu"
+  ],
+  "topics": [
+    {
+      "topicId": "global-memory-coalescing",
+      "topicTitle": "Global Memory & Coalescing",
+      "topicOrder": 1,
+      "difficulty": "introductory",
+      "estimatedTheoryMinutes": 30,
+      "prerequisites": ["thread-hierarchy"],
+      "roadmapNodeSlug": "cuda-memory",
+      "roadmapNodeTitle": "Memory Hierarchy",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "global-memory",
+          "title": "Global Memory",
+          "preciseDefinition": "The primary large-capacity off-chip DRAM on the GPU (HBM2e/HBM3 on data-center GPUs). Accessible by all threads in all blocks. H100 SXM: 80 GB, 3.35 TB/s bandwidth. Access latency is 400–800 clock cycles but can be hidden by warp switching. Global memory is organized in 128-byte cache line segments; optimal access requires all threads in a warp to access consecutive addresses (coalescing).",
+          "source": "gpu-glossary/device-software/global-memory.md; gpu-glossary/perf/memory-bandwidth.md",
+          "keyFacts": [
+            "H100 HBM3: 80 GB capacity, 3.35 TB/s bandwidth; A100: 80 GB, 2 TB/s; B200: 192 GB HBM3e, 8 TB/s",
+            "Access latency: ~400 cycles for L2 miss; ~200 cycles for L2 hit",
+            "Cache line size: 128 bytes = 32 FP32 values = one warp's worth of contiguous floats",
+            "ECC (error-correcting code) reduces effective bandwidth by ~6% when enabled",
+            "cudaMalloc returns device memory pointers; cudaMemcpy transfers between host and device"
+          ],
+          "commonMisconceptions": [
+            "Global memory is shared with the CPU — it requires explicit cudaMemcpy or Unified Memory",
+            "All global memory accesses hit at L2 — L2 is 50 MB on H100; working sets larger than L2 thrash",
+            "cudaMalloc is equivalent to malloc in speed — cudaMalloc involves driver calls; prefer pre-allocation"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["memory-coalescing", "l1-l2-cache", "unified-memory"]
+        },
+        {
+          "conceptId": "memory-coalescing",
+          "title": "Memory Coalescing",
+          "preciseDefinition": "When all 32 threads of a warp access memory within the same 128-byte cache line (contiguous, aligned addresses), the hardware services the entire warp in a single memory transaction. Non-coalesced access (e.g., column-major access of a row-major matrix) requires up to 32 separate transactions — a 32× bandwidth degradation.",
+          "source": "gpu-glossary/perf/memory-coalescing.md; cuda-mode-lectures/lecture_008/coalesce.cu",
+          "keyFacts": [
+            "Ideal: 32 threads × 4B = 128B = one cache line = one transaction",
+            "Worst case: 32 threads hitting 32 different cache lines = 32 transactions = 32× slowdown",
+            "Coalescing requires: consecutive thread indices accessing consecutive addresses",
+            "Row-major array[i][j] accessed with i=blockIdx.x*blockDim.x+threadIdx.x is coalesced (row access)",
+            "Column-major access (stride = width) causes non-coalescing; use matrix transpose as intermediate step",
+            "Nsight Compute shows 'Global Load Efficiency' metric (ideal: 100%)"
+          ],
+          "commonMisconceptions": [
+            "Any sequential memory access is coalesced — the warp must access within a single cache line",
+            "Coalescing only matters for reads — write coalescing is equally critical",
+            "Padding arrays never helps coalescing — padding to align rows to 128B enables coalesced column access"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["global-memory", "shared-memory", "memory-bandwidth"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "matrix-transpose",
+          "title": "Matrix Transpose",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 60,
+          "whatItTeaches": "Why naïve column-write transpose achieves only ~1/32 of peak bandwidth; how to use shared memory as a staging buffer for coalesced writes; padding shared memory to avoid bank conflicts.",
+          "starterCodeHint": "__shared__ float tile[TILE][TILE+1]; tile[threadIdx.y][threadIdx.x] = in[row*N+col]; __syncthreads(); out[transposed_pos] = tile[threadIdx.x][threadIdx.y];",
+          "testCaseHint": "Benchmark naïve vs tiled vs tiled+padded at 1024×1024 and 4096×4096; verify out[j][i]==in[i][j]",
+          "source": "cuda-samples/6_Performance/transpose/; cuda-samples/2_Concepts_and_Techniques/transpose/",
+          "prerequisites": ["vector-add"]
+        }
+      ]
+    },
+    {
+      "topicId": "shared-memory-bank-conflicts",
+      "topicTitle": "Shared Memory & Bank Conflicts",
+      "topicOrder": 2,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 35,
+      "prerequisites": ["global-memory-coalescing"],
+      "roadmapNodeSlug": "cuda-memory",
+      "roadmapNodeTitle": "Memory Hierarchy",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "shared-memory",
+          "title": "Shared Memory",
+          "preciseDefinition": "A software-managed SRAM scratchpad local to an SM, shared by all threads in a block. Latency ~4 cycles (vs ~400 for global memory). Organized into 32 banks of 4 bytes each; consecutive 32-bit words map to consecutive banks. Capacity is configurable: on Ampere/Hopper the L1 + shared pool is 228 KB per SM, with shared memory configurable up to 228 KB (minus L1).",
+          "source": "gpu-glossary/device-software/shared-memory.md; docs.nvidia.com/cuda/cuda-c-best-practices-guide/#shared-memory",
+          "keyFacts": [
+            "Declared with __shared__ qualifier; allocated per-block; lifetime is the block's lifetime",
+            "32 banks, each 4 bytes wide; bank index = (address / 4) % 32",
+            "Broadcast exception: if all threads read the same address, it is served in one transaction",
+            "Dynamic allocation: extern __shared__ float smem[]; size passed as 3rd kernel launch parameter",
+            "Ampere: up to 164 KB per block with cudaFuncSetAttribute(f, cudaFuncAttributeMaxDynamicSharedMemorySize, size)"
+          ],
+          "commonMisconceptions": [
+            "Shared memory is automatically L1 cache — they are logically separate; L1 caches global memory, shared memory is explicit",
+            "Bank conflict happens when two threads read the same bank — conflict requires different addresses in same bank",
+            "Shared memory is global to all blocks — it is private to each block; different blocks have independent copies"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["bank-conflict", "l1-l2-cache", "occupancy"]
+        },
+        {
+          "conceptId": "bank-conflict",
+          "title": "Shared Memory Bank Conflict",
+          "preciseDefinition": "A performance serialization that occurs when two or more threads in a warp access different addresses that map to the same shared memory bank. The accesses are serialized, reducing throughput by a factor equal to the maximum number of conflicting accesses (the 'conflict degree'). A 2-way conflict halves throughput; a 32-way conflict (all threads hitting one bank) reduces to 1/32 throughput.",
+          "source": "gpu-glossary/perf/bank-conflict.md",
+          "keyFacts": [
+            "32 banks; bank(addr) = (addr >> 2) & 31",
+            "Addresses 128 bytes apart map to the same bank (32 banks × 4 bytes = 128B period)",
+            "Column access of a 32-wide row-major shared array: all 32 threads hit bank 0 — 32-way conflict",
+            "Padding fix: declare tile[32][33] instead of tile[32][32]; moves columns to different banks",
+            "Nsight Compute: 'Shared Memory Bank Conflicts' counter; ideal = 0"
+          ],
+          "commonMisconceptions": [
+            "Bank conflicts only occur with column accesses — any access pattern with stride=32 causes conflicts",
+            "Padding wastes significant memory — 1 extra element per row (4B per row) is negligible overhead",
+            "Broadcast (all threads same address) causes a bank conflict — broadcast is conflict-free in hardware"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["shared-memory", "matrix-transpose", "tiled-gemm"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "tiled-matrix-multiply",
+          "title": "Tiled Matrix Multiplication",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 90,
+          "whatItTeaches": "How tiling GEMM into TILE×TILE blocks reduces global memory traffic by a factor of TILE; shared memory lifecycle (load → syncthreads → compute); double-buffering technique to overlap loads with computation.",
+          "starterCodeHint": "__shared__ float As[TILE][TILE], Bs[TILE][TILE]; for (int t=0; t<K/TILE; t++) { As[ty][tx]=A[row*K+t*TILE+tx]; Bs[ty][tx]=B[(t*TILE+ty)*N+col]; __syncthreads(); for(int k=0;k<TILE;k++) sum+=As[ty][k]*Bs[k][tx]; __syncthreads(); }",
+          "testCaseHint": "Compare against CPU reference at M=N=K=512; benchmark vs cuBLAS at M=N=K=1024/2048/4096",
+          "source": "cuda-samples/0_Introduction/matrixMul/; llm.c/dev/cuda/matmul_forward.cu",
+          "prerequisites": ["matrix-transpose"]
+        }
+      ]
+    },
+    {
+      "topicId": "l1-l2-cache",
+      "topicTitle": "L1/L2 Cache",
+      "topicOrder": 3,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 20,
+      "prerequisites": ["global-memory-coalescing"],
+      "roadmapNodeSlug": "cuda-memory",
+      "roadmapNodeTitle": "Memory Hierarchy",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "l1-l2-cache",
+          "title": "L1 and L2 Cache",
+          "preciseDefinition": "L1 cache is per-SM (~128 KB on Hopper, shared with shared memory pool), caches global memory accesses transparently. L2 cache is on-chip but shared across all SMs (50 MB on H100). L2 hit latency ~200 cycles; L1 hit ~30 cycles; global ~400 cycles. Hopper introduced L2 residency controls (cudaStreamAttrValue) to pin frequently-accessed data.",
+          "source": "gpu-glossary/device-hardware/l1-data-cache.md; docs.nvidia.com/cuda/hopper-tuning-guide/#increased-l2-capacity",
+          "keyFacts": [
+            "H100 L2: 50 MB; A100: 40 MB; V100: 6 MB — L2 growth enables caching larger working sets",
+            "L1 caches loads by default; stores may bypass L1 (.cs cache streaming hint)",
+            "L1 line size: 128 bytes; L2 line size: 128 bytes",
+            "Hopper L2 residency: cudaStreamGetCaptureInfo to set access policy window",
+            "Ampere/Hopper unified shared memory/L1/texture cache: programmer controls split"
+          ],
+          "commonMisconceptions": [
+            "Making data fit in L2 always speeds up the kernel — only helps if the bottleneck is global memory latency",
+            "L1 cache is always enabled — L1 must be enabled via compiler flag or cudaFuncSetCacheConfig",
+            "L2 cache is per-SM — it is shared across all SMs in the GPU"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["global-memory", "memory-coalescing", "occupancy"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "registers-and-pressure",
+      "topicTitle": "Registers & Register Pressure",
+      "topicOrder": 4,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 25,
+      "prerequisites": ["shared-memory-bank-conflicts"],
+      "roadmapNodeSlug": "cuda-memory",
+      "roadmapNodeTitle": "Memory Hierarchy",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "register-pressure",
+          "title": "Register Pressure",
+          "preciseDefinition": "The constraint imposed by the SM's finite register file on how many warps (and therefore blocks) can be simultaneously resident. Each SM has 65536 32-bit registers. If a kernel uses 64 registers/thread, then (65536 / 64) / 32 = 32 warps = 1 block of 1024 threads max per SM. Excessive register use reduces occupancy; register spilling to local memory (stack) incurs ~400-cycle latency per access.",
+          "source": "gpu-glossary/device-hardware/register-file.md; gpu-glossary/perf/register-pressure.md",
+          "keyFacts": [
+            "SM register file: 65536 × 32-bit registers on Ampere/Hopper (256 KB per SM)",
+            "Registers are per-thread; kernel compilation determines register count per thread",
+            "--maxrregcount=N nvcc flag limits registers, forcing spilling if N is too low",
+            "nvcc -Xptxas=-v reports register usage per kernel",
+            "Register spilling: overflow variables stored in L1-cached local memory (slow: ~30-400 cycle latency)"
+          ],
+          "commonMisconceptions": [
+            "Fewer registers always means better performance — too few triggers spilling which hurts more",
+            "Register spilling uses shared memory — local memory spills go to L1 cache, not shared memory",
+            "Registers are zeroed on kernel launch — register values are undefined unless initialized by the kernel"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["occupancy", "latency-hiding", "shared-memory"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "unified-memory",
+      "topicTitle": "Unified Memory",
+      "topicOrder": 5,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 20,
+      "prerequisites": ["global-memory-coalescing"],
+      "roadmapNodeSlug": "cuda-memory",
+      "roadmapNodeTitle": "Memory Hierarchy",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "unified-memory",
+          "title": "Unified Memory",
+          "preciseDefinition": "A CUDA feature (cc 6.0+, Pascal+) where a single pointer is valid on both CPU and GPU. The CUDA runtime automatically migrates pages between host and device on demand. Under Linux with Pascal+, demand paging uses GPU page faults to trigger migration. cudaMallocManaged() allocates unified memory; cudaMemPrefetchAsync() pre-migrates pages to avoid fault overhead.",
+          "source": "docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/unified-memory.html; cuda-samples/0_Introduction/UnifiedMemoryStreams/",
+          "keyFacts": [
+            "cudaMallocManaged() replaces separate cudaMalloc + cudaMemcpy workflow",
+            "Page fault on GPU: ~10,000 cycle penalty per page (4KB) first access — use prefetch to avoid",
+            "cudaMemAdvise() hints: cudaMemAdviseSetPreferredLocation, cudaMemAdviseSetAccessedBy",
+            "NVLink systems: pages can be directly accessed by GPU at lower latency via 0-copy",
+            "Profiler shows 'Migration Engine' and 'UVM' metrics for unified memory traffic"
+          ],
+          "commonMisconceptions": [
+            "Unified memory is always slower than explicit transfers — with prefetching it can match manual transfer performance",
+            "cudaMallocManaged memory starts on the GPU — it starts on CPU until first GPU access or prefetch",
+            "Unified memory eliminates all data movement — it still moves pages, just automatically"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["global-memory", "cuda-streams", "memory-bandwidth"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "unified-memory-prefetch",
+          "title": "Unified Memory with Prefetching",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 30,
+          "whatItTeaches": "cudaMallocManaged semantics; how page faults impact performance; cudaMemPrefetchAsync to eliminate fault overhead; comparing prefetched vs non-prefetched throughput.",
+          "starterCodeHint": "float *a; cudaMallocManaged(&a, N*sizeof(float)); cudaMemPrefetchAsync(a, N*sizeof(float), device_id);",
+          "testCaseHint": "Measure kernel time with and without prefetch at N=100M; fault count visible in Nsight Systems",
+          "source": "cuda-samples/0_Introduction/UnifiedMemoryStreams/",
+          "prerequisites": ["vector-add"]
+        }
+      ]
+    },
+    {
+      "topicId": "memory-bandwidth-optimization",
+      "topicTitle": "Memory Bandwidth Optimization",
+      "topicOrder": 6,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 25,
+      "prerequisites": ["global-memory-coalescing", "shared-memory-bank-conflicts", "registers-and-pressure"],
+      "roadmapNodeSlug": "cuda-memory",
+      "roadmapNodeTitle": "Memory Hierarchy",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "memory-bandwidth",
+          "title": "Memory Bandwidth",
+          "preciseDefinition": "The rate at which data can be transferred between the GPU's compute units and DRAM, measured in bytes/second. Peak memory bandwidth is set by the HBM specification. Achieved bandwidth = (bytes read + bytes written) / kernel_time. The roofline model plots achieved bandwidth against peak to identify memory-bound kernels. A memory-bound kernel's execution time is dominated by DRAM access time, not arithmetic.",
+          "source": "gpu-glossary/perf/memory-bandwidth.md; gpu-glossary/perf/memory-bound.md",
+          "keyFacts": [
+            "H100 SXM HBM3 peak: 3.35 TB/s; A100 HBM2e: 2.0 TB/s; B200 HBM3e: 8.0 TB/s",
+            "Ridge point = arithmetic bandwidth / memory bandwidth (FLOPs/byte); above ridge = compute-bound, below = memory-bound",
+            "H100 ridge point (BF16 TC): 989 TFLOPS / 3.35 TB/s ≈ 295 FLOPs/byte",
+            "SAXPY (y=ax+y) at 1 FMA per 12 bytes = 0.083 FLOPs/byte — deeply memory-bound on all GPUs",
+            "SGEMM (C=A@B, N×N) at N/8 FLOPs/byte — compute-bound for N ≥ 295×8 ≈ 2360"
+          ],
+          "commonMisconceptions": [
+            "Achieving 100% of peak memory bandwidth is always possible — ECC, non-coalesced access, cache effects limit achievable BW",
+            "Memory bandwidth is independent of access pattern — strided/random access reduces effective bandwidth dramatically",
+            "Adding more computation to a memory-bound kernel slows it down — if memory-bound, compute is free up to the ridge point"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["roofline-model", "arithmetic-intensity", "memory-coalescing", "compute-bound"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "bandwidth-benchmark",
+          "title": "Memory Bandwidth Benchmark Kernel",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 30,
+          "whatItTeaches": "How to measure achieved memory bandwidth with CUDA events; vector copy kernel as bandwidth benchmark; achieving near-peak bandwidth with coalesced access.",
+          "starterCodeHint": "cudaEvent_t start, stop; cudaEventRecord(start); vecCopy<<<grid,block>>>(dst,src,N); cudaEventRecord(stop); cudaEventSynchronize(stop); float ms; cudaEventElapsedTime(&ms, start, stop); float bw = 2.0f*N*sizeof(float)/ms/1e6;",
+          "testCaseHint": "Should achieve >90% of peak HBM bandwidth with coalesced access; compare with nvbandwidthtest",
+          "source": "docs.nvidia.com/cuda/cuda-c-best-practices-guide/#bandwidth",
+          "prerequisites": ["vector-add"]
+        }
+      ]
+    }
+  ],
+  "roadmapNodes": [
+    {
+      "slug": "cuda-memory",
+      "title": "Memory Hierarchy",
+      "type": "CONCEPT",
+      "coveredByTopics": ["global-memory-coalescing", "shared-memory-bank-conflicts", "l1-l2-cache", "registers-and-pressure", "unified-memory", "memory-bandwidth-optimization"]
+    },
+    {
+      "slug": "matrix-multiply",
+      "title": "Tiled Matrix Multiplication",
+      "type": "PROBLEM",
+      "coveredByTopics": ["shared-memory-bank-conflicts"]
+    },
+    {
+      "slug": "matrix-transpose",
+      "title": "Matrix Transpose",
+      "type": "PROBLEM",
+      "coveredByTopics": ["global-memory-coalescing"]
+    }
+  ],
+  "coverageGaps": [
+    "Constant memory and texture memory — present in CUDA programming guide but no dedicated topic or exercise",
+    "cudaMemcpy2D / pitched allocation for 2D arrays — useful for coalescing, not planned",
+    "Pinned (page-locked) memory for H2D transfer optimization — mentioned in best practices but no exercise"
+  ],
+  "interviewFrequency": {
+    "high": ["global-memory", "memory-coalescing", "shared-memory", "bank-conflict", "register-pressure", "memory-bandwidth"],
+    "medium": ["l1-l2-cache", "unified-memory"],
+    "low": []
+  }
+}

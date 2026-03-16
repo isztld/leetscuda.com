@@ -1,0 +1,305 @@
+{
+  "clusterId": "linear-algebra",
+  "clusterTitle": "Linear Algebra & GEMM Optimization",
+  "clusterOrder": 5,
+  "description": "The heart of GPU-accelerated machine learning: matrix multiplication from first principles to Tensor Core utilization. Covers GEMM tiling hierarchies, WMMA API, cuBLAS, CUTLASS abstractions, mixed precision, and batched operations.",
+  "prerequisites": ["foundations", "memory", "algorithms"],
+  "sources": [
+    "resources/cutlass/README.md",
+    "gpu-glossary/device-hardware/tensor-core.md",
+    "gpu-glossary/host-software/cublas.md",
+    "gpu-glossary/perf/arithmetic-intensity.md",
+    "gpu-glossary/perf/arithmetic-bandwidth.md",
+    "docs.nvidia.com/cuda/cublas/index.html",
+    "docs.nvidia.com/cuda/hopper-tuning-guide/#streaming-multiprocessor",
+    "docs.nvidia.com/cuda/ampere-tuning-guide/#improved-tensor-core-operations",
+    "cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/",
+    "cuda-samples/3_CUDA_Features/bf16TensorCoreGemm/",
+    "cuda-samples/3_CUDA_Features/tf32TensorCoreGemm/",
+    "cuda-samples/3_CUDA_Features/immaTensorCoreGemm/",
+    "cuda-samples/3_CUDA_Features/dmmaTensorCoreGemm/",
+    "cuda-samples/3_CUDA_Features/globalToShmemAsyncCopy/",
+    "cuda-mode-lectures/lecture_036/",
+    "cuda-mode-lectures/lecture_057/",
+    "llm.c/dev/cuda/matmul_forward.cu",
+    "llm.c/dev/cuda/matmul_backward.cu",
+    "flash-attention/hopper/"
+  ],
+  "topics": [
+    {
+      "topicId": "gemm-fundamentals",
+      "topicTitle": "GEMM Fundamentals",
+      "topicOrder": 1,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 30,
+      "prerequisites": ["shared-memory-bank-conflicts"],
+      "roadmapNodeSlug": "matrix-multiply",
+      "roadmapNodeTitle": "Tiled Matrix Multiplication",
+      "roadmapNodeType": "PROBLEM",
+      "concepts": [
+        {
+          "conceptId": "gemm-computation",
+          "title": "GEMM: General Matrix Multiply",
+          "preciseDefinition": "C = αA×B + βC where A is M×K, B is K×N, C is M×N. Total FLOPs: 2MNK (one multiply + one accumulate per output element). Arithmetic intensity scales as O(N) for square matrices: 2N³ FLOPs / (4N² bytes × 3 matrices) = N/6 FLOPs/byte. GEMM becomes compute-bound at N > ridge_point × 6 ≈ 1770 for H100 (BF16 Tensor Core).",
+          "source": "gpu-glossary/perf/arithmetic-intensity.md; docs.nvidia.com/cuda/cublas/",
+          "keyFacts": [
+            "FLOPs = 2MNK (multiply + accumulate per element); for square MxM: 2M³",
+            "H100 ridge point (BF16 TC): 989 TFLOPS / 3.35 TB/s = 295 FLOPs/byte → N ≥ 295×6 ≈ 1770",
+            "A100 ridge point (BF16): 312 / 2.0 = 156 FLOPs/byte → N ≥ 936 for compute-bound",
+            "cuBLAS achieves ~95% of Tensor Core peak for large square GEMM",
+            "Column-major convention: cuBLAS uses Fortran column-major; trick: C = A@B ↔ C^T = B^T @ A^T to avoid transposition"
+          ],
+          "commonMisconceptions": [
+            "GEMM is always compute-bound — only for large N; small N (e.g., N<256) is still memory-bound",
+            "Memory-bound GEMM cannot be improved — increasing batch size or fusing operations improves effective arithmetic intensity",
+            "cuBLAS automatically uses Tensor Cores — only for certain data types (FP16/BF16/TF32) and sufficiently large matrices"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["tiled-gemm", "tensor-core", "arithmetic-intensity", "cublas"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "tiled-gemm",
+      "topicTitle": "Tiling for GEMM",
+      "topicOrder": 2,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 40,
+      "prerequisites": ["gemm-fundamentals"],
+      "roadmapNodeSlug": "matrix-multiply",
+      "roadmapNodeTitle": "Tiled Matrix Multiplication",
+      "roadmapNodeType": "PROBLEM",
+      "concepts": [
+        {
+          "conceptId": "tiling-hierarchy",
+          "title": "Three-Level Tiling Hierarchy for GEMM",
+          "preciseDefinition": "High-performance GEMM uses a three-level tiling hierarchy: (1) Grid-level tile (block tile): each thread block computes a BM×BN output tile by streaming over K in BK-sized steps; (2) Warp-level tile: each warp computes a WM×WN subtile using register blocking; (3) Thread-level tile: each thread accumulates a TM×TN fragment. This hierarchy maps to GPU memory levels: global→shared (L1) at block level, shared→register at warp level.",
+          "source": "cuda-samples/0_Introduction/matrixMul/; llm.c/dev/cuda/matmul_forward.cu; resources/cutlass/README.md",
+          "keyFacts": [
+            "Typical H100 block tile: 128×128 with K-tile 32 — loads 128*32*4B = 16KB per matrix into shared memory",
+            "Register blocking: 8×8 register tile per thread × 16 threads/warp = 128×8 warp tile",
+            "Double buffering: preload next K-tile into alternate shared memory buffer while computing current tile",
+            "Shared memory layout: load in column-major for A (to avoid bank conflicts during warp load), row-major for B",
+            "CUTLASS implements all three levels as template parameters: threadblock_shape, warp_shape, instruction_shape"
+          ],
+          "commonMisconceptions": [
+            "Larger tiles always perform better — tile size is limited by shared memory capacity and occupancy",
+            "The tiling is the same for all GPU architectures — optimal tile sizes differ significantly between Ampere and Hopper",
+            "One should always implement GEMM from scratch — cuBLAS or CUTLASS are the right tools except when custom epilogues are needed"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["gemm-computation", "shared-memory", "tensor-core", "cutlass"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "custom-sgemm",
+          "title": "Optimized SGEMM from Scratch",
+          "difficulty": "hard",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 240,
+          "whatItTeaches": "Full optimization journey: naïve → shared memory tiling → register blocking → vectorized loads (float4) → double buffering. Understanding why each step matters by measuring with CUDA events.",
+          "starterCodeHint": "// Thread-block: BM=128, BN=128, BK=32; Warp: WM=64, WN=64; Thread: TM=8, TN=8; // Use float4 ldg for coalesced global loads",
+          "testCaseHint": "Compare vs cuBLAS at M=N=K=512,1024,2048,4096; target: >70% of cuBLAS throughput",
+          "source": "llm.c/dev/cuda/matmul_forward.cu; cuda-samples/0_Introduction/matrixMul/",
+          "prerequisites": ["tiled-matrix-multiply"]
+        }
+      ]
+    },
+    {
+      "topicId": "tensor-cores-wmma",
+      "topicTitle": "Tensor Cores & WMMA API",
+      "topicOrder": 3,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 45,
+      "prerequisites": ["tiled-gemm"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "wmma-api",
+          "title": "WMMA: Warp-Level Matrix Multiply Accumulate API",
+          "preciseDefinition": "The CUDA C++ API for accessing Tensor Cores. A warp collectively loads matrix fragments into registers with wmma::load_matrix_sync(), performs MMA with wmma::mma_sync(), and stores results with wmma::store_matrix_sync(). Fragment layouts are opaque (compiler-defined). Supported shapes (cc7.0+): m16n16k16 (FP16→FP32), m8n32k16, m32n8k16. Fragments are distributed across warp threads.",
+          "source": "gpu-glossary/device-hardware/tensor-core.md; cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/",
+          "keyFacts": [
+            "#include <mma.h>; using namespace nvcuda::wmma;",
+            "fragment<matrix_a, M, N, K, half, row_major> a; load_matrix_sync(a, ptr, lda);",
+            "mma_sync(c, a, b, c); stores result back into c accumulator",
+            "Ampere adds TF32 support: wmma::precision::tf32 for FP32 inputs with TF32 accumulation",
+            "Hopper WGMMA: warpgroup MMA across 4 warps; exposed via cutlass::arch::Wgmma or inline PTX"
+          ],
+          "commonMisconceptions": [
+            "WMMA fragments can be freely read/written per thread — fragment layout is opaque; must use load/store APIs",
+            "WMMA is the only way to use Tensor Cores — cuBLAS, CUTLASS, and inline PTX are alternatives",
+            "TF32 is the same as FP32 — TF32 has FP32 exponent range but only 10 mantissa bits (vs 23 for FP32)"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["tensor-core", "tiling-hierarchy", "mixed-precision", "cutlass"]
+        },
+        {
+          "conceptId": "mixed-precision",
+          "title": "Mixed Precision Training and Inference",
+          "preciseDefinition": "Using lower-precision floating point types (FP16, BF16, FP8, FP4) for compute while accumulating in higher precision (FP32). FP16: 5-bit exponent, 10-bit mantissa — overflow risk. BF16: 8-bit exponent, 7-bit mantissa — same range as FP32, preferred for training. FP8 (E4M3, E5M2): 2× throughput vs FP16; requires loss scaling or quantization. FP4 (Blackwell): 4× vs FP8; for inference.",
+          "source": "gpu-glossary/device-hardware/tensor-core.md; docs.nvidia.com/cuda/ampere-tuning-guide/#improved-tensor-core-operations; resources/cutlass/README.md",
+          "keyFacts": [
+            "Ampere A100: FP16 TC = 312 TFLOPS; TF32 TC = 156 TFLOPS; FP32 CUDA = 19.5 TFLOPS",
+            "Hopper H100: BF16/FP16 = 989 TFLOPS; FP8 = 1979 TFLOPS",
+            "Blackwell B200: BF16 = 2250 TFLOPS; FP8 = 4500 TFLOPS; FP4 = 9000 TFLOPS",
+            "BF16 preferred over FP16 for training: same exponent range as FP32 avoids overflow without loss scaling",
+            "FP8 requires calibration or dynamic scaling to handle range differences (E4M3 vs E5M2 tradeoffs)"
+          ],
+          "commonMisconceptions": [
+            "FP16 and BF16 are interchangeable — BF16 has larger range, FP16 has more precision; training often needs BF16",
+            "Mixed precision always doubles throughput — only when bottleneck is Tensor Core arithmetic, not memory bandwidth",
+            "FP8 training requires no changes to the training loop — FP8 requires careful scaling to avoid underflow"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["tensor-core", "wmma-api", "cublas", "quantization-kernels"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "wmma-hgemm",
+          "title": "HGEMM with WMMA Tensor Core API",
+          "difficulty": "hard",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 180,
+          "whatItTeaches": "Using wmma::load_matrix_sync, wmma::mma_sync, wmma::store_matrix_sync; tiling GEMM at the warp level for WMMA fragments; understanding that fragment layout is opaque; comparing to cuBLAS cublasGemmEx.",
+          "starterCodeHint": "fragment<matrix_a,16,16,16,half,row_major> a; load_matrix_sync(a, A_tile_ptr, K); fragment<accumulator,16,16,16,float> c; fill_fragment(c,0.f); mma_sync(c,a,b,c); store_matrix_sync(C_ptr, c, N, mem_row_major);",
+          "testCaseHint": "Verify result matches cublasGemmEx with CUBLAS_COMPUTE_32F; benchmark at M=N=K=1024/4096",
+          "source": "cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/",
+          "prerequisites": ["custom-sgemm"]
+        }
+      ]
+    },
+    {
+      "topicId": "cublas-usage",
+      "topicTitle": "cuBLAS Usage & Integration",
+      "topicOrder": 4,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 25,
+      "prerequisites": ["gemm-fundamentals"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "cublas",
+          "title": "cuBLAS API",
+          "preciseDefinition": "NVIDIA's closed-source implementation of BLAS on GPU. Key function: cublasGemmEx(handle, trA, trB, M, N, K, alpha, A, CUDA_R_16F, lda, B, CUDA_R_16F, ldb, beta, C, CUDA_R_16F, ldc, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP). Requires column-major layout (Fortran convention); row-major trick: compute C^T = B^T @ A^T by swapping A/B and their dimensions.",
+          "source": "gpu-glossary/host-software/cublas.md; docs.nvidia.com/cuda/cublas/",
+          "keyFacts": [
+            "cublasHandle_t: opaque context; create with cublasCreate(), destroy with cublasDestroy()",
+            "Column-major by default; CUBLAS_OP_T transposes matrix in-place for computation",
+            "cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH) enables Tensor Core usage",
+            "Batched GEMM: cublasGemmBatchedEx or cublasGemmStridedBatchedEx for arrays of matrices",
+            "Workspace: cublasSetWorkspace for tuned algorithms requiring scratch memory"
+          ],
+          "commonMisconceptions": [
+            "cuBLAS always uses Tensor Cores — only with CUBLAS_COMPUTE_16F or CUBLAS_TENSOR_OP_MATH mode",
+            "cuBLAS column-major means slower — row-major matrices can be used with the A↔B swap trick at zero cost",
+            "cuBLAS is always the fastest GEMM — for small matrices or custom epilogues, CUTLASS or custom kernels can be faster"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["gemm-computation", "tensor-core", "mixed-precision", "batched-gemm"]
+        },
+        {
+          "conceptId": "batched-gemm",
+          "title": "Batched GEMM",
+          "preciseDefinition": "Computing multiple independent GEMMs simultaneously in a single cuBLAS call. Two variants: (1) cublasGemmBatchedEx: array of pointers, matrices can be non-contiguous; (2) cublasGemmStridedBatchedEx: strided layout, all matrices at fixed stride. Important for attention heads (B × head_dim × seq_len) and batch processing where each sample has an independent GEMM.",
+          "source": "docs.nvidia.com/cuda/cublas/#cublas-level-3-function-reference",
+          "keyFacts": [
+            "Strided batched: O(batch_size × M × N × K) with stride_A, stride_B, stride_C",
+            "Pointer batched: allows non-uniform matrix sizes across batch",
+            "Multi-head attention: compute Q@K^T as batched GEMM (batch=num_heads, M=seq_len, N=seq_len, K=head_dim)",
+            "cuBLAS picks optimized kernel based on batch_size, M, N, K at runtime",
+            "Small batch (<= 16) with small matrices: often better to fuse into a single custom kernel"
+          ],
+          "commonMisconceptions": [
+            "Batched GEMM is just looping over cublasGemm — a single batched call can be significantly more efficient",
+            "Strided batched requires contiguous memory across batch — strides allow arbitrary layout within the batch"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["cublas", "attention-mechanism", "gemm-computation"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "cublas-gemm-integration",
+          "title": "cuBLAS GEMM Integration",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 45,
+          "whatItTeaches": "cublasHandle lifecycle; cublasGemmEx with FP16 inputs and FP32 accumulation; row-major ↔ column-major transpose trick; measuring vs custom kernel.",
+          "starterCodeHint": "cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_16F, N, A, CUDA_R_16F, K, &beta, C, CUDA_R_16F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);",
+          "testCaseHint": "Verify against CPU reference; benchmark vs custom SGEMM at M=N=K=2048",
+          "source": "docs.nvidia.com/cuda/cublas/; gpu-glossary/host-software/cublas.md",
+          "prerequisites": ["tiled-matrix-multiply"]
+        }
+      ]
+    },
+    {
+      "topicId": "cutlass-abstractions",
+      "topicTitle": "CUTLASS Abstractions",
+      "topicOrder": 5,
+      "difficulty": "expert",
+      "estimatedTheoryMinutes": 60,
+      "prerequisites": ["tensor-cores-wmma", "cublas-usage"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "cutlass",
+          "title": "CUTLASS: CUDA Templates for Linear Algebra Subroutines",
+          "preciseDefinition": "An open-source NVIDIA library of C++ template abstractions for high-performance GEMM at all levels of the GPU memory hierarchy. Decomposes GEMM into: (1) GemmKernel — threadblock-level scheduling, (2) Mma — warp-level MMA pipeline, (3) Epilogue — post-GEMM operations. Version 4 adds CuTe DSL: Python-native, architecture-generic kernel programming for Hopper and Blackwell.",
+          "source": "resources/cutlass/README.md; cuda-mode-lectures/lecture_036/; cuda-mode-lectures/lecture_057/",
+          "keyFacts": [
+            "CUTLASS 4.4.1 (Feb 2026): supports Volta→Blackwell; FP64/FP32/TF32/FP16/BF16/FP8/INT8/INT4/FP4/MXFP6/MXFP8",
+            "CuTe (Cooperating Threads) abstraction: Tensor = Layout + Pointer; Layout = (shape, stride) pair",
+            "Hopper: cutlass::gemm::collective::CollectiveMma with wgmma::MmaOperand for WGMMA",
+            "Epilogue Visitor Tree (EVT): compose post-GEMM operations (bias, activation, quantization) as expression trees",
+            "Block-scaled types: NVFP4, MXFP4, MXFP6, MXFP8 for Blackwell FP4 block-scaled GEMM"
+          ],
+          "commonMisconceptions": [
+            "CUTLASS is just a wrapper around cuBLAS — CUTLASS is source-level; enables custom epilogues, mixed-precision, and new architectures",
+            "CUTLASS is too complex to use directly — CuTe DSL in CUTLASS 4 provides Python-native interface",
+            "CUTLASS only works with specific matrix sizes — CUTLASS handles arbitrary sizes via tilizing and padding"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["tensor-core", "wmma-api", "tiling-hierarchy", "mixed-precision"]
+        }
+      ],
+      "exercises": []
+    }
+  ],
+  "roadmapNodes": [
+    {
+      "slug": "matrix-multiply",
+      "title": "Tiled Matrix Multiplication",
+      "type": "PROBLEM",
+      "coveredByTopics": ["gemm-fundamentals", "tiled-gemm"]
+    }
+  ],
+  "coverageGaps": [
+    "Sparse GEMM (cuSPARSE, structured sparsity) — Ampere 2:4 sparsity doubles Tensor Core throughput; no topic planned",
+    "Conv2D as GEMM (im2col) — important for deep learning; no exercise planned",
+    "CUTLASS hands-on exercise — theory covered but no practice exercise due to complexity"
+  ],
+  "interviewFrequency": {
+    "high": ["gemm-computation", "tiling-hierarchy", "tensor-core", "wmma-api", "mixed-precision", "cublas"],
+    "medium": ["batched-gemm", "cutlass"],
+    "low": []
+  }
+}

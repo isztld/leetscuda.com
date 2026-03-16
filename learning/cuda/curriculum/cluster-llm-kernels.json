@@ -1,0 +1,456 @@
+{
+  "clusterId": "llm-kernels",
+  "clusterTitle": "LLM Kernels & Production Optimization",
+  "clusterOrder": 7,
+  "description": "The kernels that power modern large language models: softmax, layer norm, attention, FlashAttention algorithm, KV cache, quantization, and Hopper-specific optimizations (TMA, warpgroup MMA). Synthesizes all prior clusters in production-grade implementations.",
+  "prerequisites": ["foundations", "memory", "execution", "algorithms", "linear-algebra", "profiling"],
+  "sources": [
+    "flash-attention/README.md",
+    "flash-attention/hopper/flash_fwd_kernel_sm90.h",
+    "flash-attention/csrc/flash_attn/flash_fwd_kernel.h",
+    "gpu-glossary/device-hardware/tensor-memory-accelerator.md",
+    "gpu-glossary/device-hardware/tensor-memory.md",
+    "gpu-glossary/device-software/warpgroup.md",
+    "docs.nvidia.com/cuda/hopper-tuning-guide/#tensor-memory-accelerator",
+    "docs.nvidia.com/cuda/hopper-tuning-guide/#thread-block-clusters",
+    "cuda-mode-lectures/lecture_012/",
+    "cuda-mode-lectures/lecture_018/",
+    "cuda-mode-lectures/lecture_036/",
+    "llm.c/dev/cuda/softmax_forward.cu",
+    "llm.c/dev/cuda/layernorm_forward.cu",
+    "llm.c/dev/cuda/attention_forward.cu",
+    "llm.c/dev/cuda/fused_residual_forward.cu",
+    "llm.c/dev/cuda/gelu_forward.cu",
+    "llm.c/dev/cuda/crossentropy_forward.cu",
+    "llm.c/dev/cuda/encoder_forward.cu"
+  ],
+  "topics": [
+    {
+      "topicId": "softmax-kernel",
+      "topicTitle": "Softmax Kernel",
+      "topicOrder": 1,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 35,
+      "prerequisites": ["parallel-reduction", "memory-bandwidth-optimization"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "softmax-kernel",
+          "title": "GPU Softmax Kernel",
+          "preciseDefinition": "softmax(x)_i = exp(x_i - max(x)) / sum_j(exp(x_j - max(x))). Numerically stable implementation requires two passes: (1) find max, (2) compute exp and sum. The online softmax algorithm (Milakov & Gimelshein, 2018) fuses both passes into one, reducing memory traffic from 2N reads to ~1.5N reads by maintaining running max and sum simultaneously. Used in attention score normalization.",
+          "source": "llm.c/dev/cuda/softmax_forward.cu; cuda-mode-lectures/lecture_012/flash_attention.cu",
+          "keyFacts": [
+            "Naive 3-pass: read x for max → read x for exp/sum → read exp for normalize = 3N reads, 1N write",
+            "Online softmax: 1 pass maintaining (m_i, d_i) running stats — 1N reads for stats + 1N reads for output = 2 passes total",
+            "Numerical stability: subtract max before exp to prevent overflow (exp(x - max) ≤ 1)",
+            "Per-row softmax for attention: each row of Q@K^T scores normalized independently → each warp handles one or more rows",
+            "Flash Attention key insight: online softmax enables chunked attention without materializing full attention matrix"
+          ],
+          "commonMisconceptions": [
+            "Numerically stable softmax requires computing max in a separate pass — online softmax computes max and sum simultaneously",
+            "Softmax is always memory-bound — for small sequence lengths (< 512), compute can be significant",
+            "Subtracting max changes the result — exp(x_i - max) / sum(exp(x_j - max)) = exp(x_i) / sum(exp(x_j)) mathematically"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["online-softmax", "flash-attention", "parallel-reduction", "memory-bandwidth"]
+        },
+        {
+          "conceptId": "online-softmax",
+          "title": "Online Softmax Algorithm",
+          "preciseDefinition": "An algorithm that computes softmax in a single pass over input data by maintaining two running statistics: m_i (running maximum) and d_i (running normalized sum). When processing element x_j: m_i_new = max(m_i, x_j); d_i_new = d_i × exp(m_i - m_i_new) + exp(x_j - m_i_new). The correction factor exp(m_i - m_i_new) rescales previous partial sums when a new maximum is found. First described by Milakov & Gimelshein (2018).",
+          "source": "cuda-mode-lectures/lecture_012/flash_attention.cu; flash-attention/README.md",
+          "keyFacts": [
+            "Only one pass over the data: running update of (max, rescaled_sum) statistics",
+            "Memory traffic: 1 pass read + 1 pass write (vs 3 passes for naive) = 2× bandwidth saving",
+            "FlashAttention extends online softmax to the attention mechanism: tile over key/value blocks maintaining (m, l) statistics",
+            "Rescaling previous partial output O_i: O_i_new = exp(m_i - m_i_new) × O_i + exp(q_i @ k_j - m_i_new) × v_j",
+            "log-sum-exp (LSE) = m + log(d) is stored for use in the backward pass"
+          ],
+          "commonMisconceptions": [
+            "Online softmax produces approximate results — it is numerically exact (within floating point precision)",
+            "Online softmax requires more computation than 2-pass — it requires a correction multiply per step but saves memory passes",
+            "Online softmax only works for vector inputs — it extends to chunked computation across blocks in FlashAttention"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["softmax-kernel", "flash-attention", "memory-bandwidth"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "fused-softmax",
+          "title": "Fused Online Softmax Kernel",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 90,
+          "whatItTeaches": "3-pass naïve softmax → online single-pass softmax; why reduction followed by exp+sum is 3× more reads; implementing running (max, sum) statistics with warp shuffle; per-row parallelism with one warp per row.",
+          "starterCodeHint": "// Each warp handles one row. Phase 1: reduce max with __shfl_down_sync. Phase 2: online_softmax maintaining (m, d) pair. // float m = -INF, d = 0; for each x_j: float m_new = fmaxf(m, x_j); d = d * expf(m - m_new) + expf(x_j - m_new); m = m_new;",
+          "testCaseHint": "Test on rows of length 64, 512, 1024, 4096; compare numerical output against torch.softmax; benchmark vs PyTorch CUDA softmax",
+          "source": "llm.c/dev/cuda/softmax_forward.cu; cuda-mode-lectures/lecture_012/",
+          "prerequisites": ["reduce-sum"]
+        }
+      ]
+    },
+    {
+      "topicId": "layer-norm",
+      "topicTitle": "Layer Normalization",
+      "topicOrder": 2,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 25,
+      "prerequisites": ["softmax-kernel"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "layer-norm",
+          "title": "Layer Normalization Kernel",
+          "preciseDefinition": "LayerNorm(x) = γ × (x - μ) / √(σ² + ε) + β, where μ and σ² are computed over the feature dimension (not batch). Implementation: (1) compute mean μ = (1/D)Σx_i, (2) compute variance σ² = (1/D)Σ(x_i - μ)², (3) normalize. Welford's online algorithm computes mean and variance in a single pass. Memory-bound for typical LLM hidden sizes (D=2048-16384).",
+          "source": "llm.c/dev/cuda/layernorm_forward.cu",
+          "keyFacts": [
+            "Two-pass: pass 1 computes mean, pass 2 computes variance and normalizes — 3 reads, 1 write",
+            "Welford's one-pass: maintain running mean and M2 (sum of squared deviations) — 1 read, 1 write",
+            "Parallelism: one block per sequence position (row), threads reduce over hidden dimension",
+            "D=4096: 16KB of FP32 data per row — fits in L1 cache for reuse across weight γ and β application",
+            "RMSNorm: simplified variant omitting mean subtraction — used in LLaMA family; slightly faster"
+          ],
+          "commonMisconceptions": [
+            "LayerNorm is compute-bound for large D — it is memory-bound for all practical hidden sizes (D < 32768)",
+            "Fusing γ and β into the normalization is complex — they are simple pointwise multiplies after normalization",
+            "LayerNorm and BatchNorm differ only in axes — LayerNorm normalizes over features, making behavior independent of batch size"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["softmax-kernel", "parallel-reduction", "operation-fusion"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "fused-layer-norm",
+          "title": "Fused LayerNorm + Residual",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 60,
+          "whatItTeaches": "Fusing residual addition with LayerNorm computation; Welford's online algorithm for one-pass mean+variance; why fusion eliminates an intermediate global memory write.",
+          "starterCodeHint": "// Fused: x = residual + x_in; then layernorm(x). Single kernel reads residual+x_in once, writes normalized output. // Welford update: n++; float delta = x - mean; mean += delta/n; float delta2 = x - mean; M2 += delta * delta2;",
+          "testCaseHint": "Compare against separate residual+layernorm; verify numerical equivalence; measure bandwidth reduction from fusion",
+          "source": "llm.c/dev/cuda/fused_residual_forward.cu; llm.c/dev/cuda/layernorm_forward.cu",
+          "prerequisites": ["fused-softmax"]
+        }
+      ]
+    },
+    {
+      "topicId": "attention-mechanism",
+      "topicTitle": "Attention Mechanism",
+      "topicOrder": 3,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 40,
+      "prerequisites": ["layer-norm", "tiled-gemm"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "attention-mechanism",
+          "title": "Scaled Dot-Product Attention",
+          "preciseDefinition": "Attention(Q, K, V) = softmax(QK^T / √d_k) × V, where Q,K,V ∈ ℝ^{N×d_k}. Naive implementation: 2 GEMM (QK^T then ×V) + 1 softmax. For sequence length N, FLOPs = 4N²d_k; memory = 4Nd_k + N² (attention matrix). Arithmetic intensity = 4N²d_k / (4Nd_k + N²) ≈ N for large N — becomes memory-bound when N² attention matrix must be read/written to HBM.",
+          "source": "llm.c/dev/cuda/attention_forward.cu; cuda-mode-lectures/lecture_012/",
+          "keyFacts": [
+            "Standard attention materializes N×N attention matrix — O(N²) memory cost prohibits long sequences",
+            "Multi-head attention: h independent attention heads; Q,K,V split to d_k = d_model/h per head",
+            "GQA (Grouped Query Attention): K and V have fewer heads (groups) than Q — used in LLaMA-2/3, Mistral",
+            "MQA (Multi-Query Attention): single K and V head; extreme GQA; fastest KV cache but accuracy tradeoff",
+            "KV cache: store K and V for previously processed tokens; O(N × d_k × 2) memory per layer per token"
+          ],
+          "commonMisconceptions": [
+            "Attention is compute-bound like GEMM — attention is memory-bound for long sequences due to N² attention matrix reads",
+            "Multi-head attention is slower than single-head — batched GEMM makes it equivalent to single GEMM",
+            "KV cache size is fixed — it grows linearly with context length; critical for long-context inference"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["flash-attention", "softmax-kernel", "batched-gemm", "kv-cache"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "flash-attention",
+      "topicTitle": "FlashAttention Algorithm",
+      "topicOrder": 4,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 60,
+      "prerequisites": ["attention-mechanism", "online-softmax", "tiling-hierarchy"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "flash-attention",
+          "title": "FlashAttention: IO-Aware Attention",
+          "preciseDefinition": "A tiled attention algorithm (Dao et al., 2022) that computes exact attention without materializing the N×N attention matrix in HBM. Tiles Q, K, V blocks into SRAM, uses online softmax to accumulate partial results, and writes only the final O output to HBM. HBM reads: O(Nd_k); standard attention: O(N²). Reduces HBM transfers by O(N/M) where M is SRAM size (~80-228 KB on H100).",
+          "source": "flash-attention/README.md; cuda-mode-lectures/lecture_012/flash_attention.cu",
+          "keyFacts": [
+            "FA1 (2022): tiled forward pass, recompute attention weights in backward (no N² storage)",
+            "FA2 (2023): better work partitioning (parallelism over sequence length), fewer non-matmul FLOPs",
+            "FA3 (2024): Hopper-specific — WGMMA, TMA, pingpong pipelining, FP8 forward; 1.5-2.0× vs FA2 on H100",
+            "FA4 (2025): CuTeDSL, SM90+SM100, supports Blackwell 2CTA, GQA packing, paged KV, block sparsity",
+            "Key constraint: Q, K, V block must fit in SRAM — block size BQ × BK × d_k × 2 (Q+K) ≤ SRAM"
+          ],
+          "commonMisconceptions": [
+            "FlashAttention is an approximate algorithm — it computes exact attention, just reorders operations for IO efficiency",
+            "FlashAttention is always faster than standard attention — only for N > threshold (~512 on H100); smaller N: standard attention has lower overhead",
+            "FlashAttention backward requires storing the attention matrix — backward recomputes attention weights on-the-fly using stored LSE values"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["online-softmax", "tiling-hierarchy", "attention-mechanism", "tensor-memory-accelerator"]
+        },
+        {
+          "conceptId": "flash-attention-backward",
+          "title": "FlashAttention Backward Pass",
+          "preciseDefinition": "The FlashAttention backward pass (Dao et al., 2022, Algorithm 4) avoids storing the N×N attention matrix by recomputing it from Q, K during the backward pass using stored log-sum-exp (LSE) values. Gradients dQ, dK, dV are computed by loading Q, K, V tiles and recomputing softmax(QK^T/√d) on-the-fly. HBM reads: O(N×d_k) for both forward and backward.",
+          "source": "flash-attention/hopper/flash_bwd_kernel_sm80.h; flash-attention/hopper/flash_bwd_kernel_sm90.h",
+          "keyFacts": [
+            "Recomputation strategy: store Q, K, V (O(Nd)) + LSE (O(N)) instead of attention weights (O(N²))",
+            "For d=128, N=65536: attention matrix = 16 GB; recomputation overhead ≈ 2× FLOPs of forward",
+            "dV requires: Σ_i A_ij dO_i — one additional pass over (Q, K) to recompute A for each K/V block",
+            "dQ, dK can be computed simultaneously by iterating over Q and K tiles",
+            "FA3 backward on H100: achieves ~50% of forward throughput"
+          ],
+          "commonMisconceptions": [
+            "FlashAttention backward is slower than forward because of recomputation — the extra FLOPs are negligible vs HBM bandwidth savings",
+            "Stored activations for backward are the attention weights — FlashAttention stores only LSE (N scalars), not N×N matrix"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["flash-attention", "gradient-checkpointing", "memory-bandwidth"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "flash-attention-naive",
+          "title": "Flash Attention Forward (From Scratch)",
+          "difficulty": "hard",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 300,
+          "whatItTeaches": "Implementing the core FlashAttention tiling loop: outer loop over Q blocks, inner loop over K/V blocks, online softmax update with rescaling of running sum O_i, writing final normalized output. Understanding why IO complexity is O(N) not O(N²).",
+          "starterCodeHint": "// For each Q tile: load Q to SRAM // For each K,V tile: S = Q @ K^T / sqrt(d); m_new = max(m, rowmax(S)); l_new = exp(m-m_new)*l + rowsum(exp(S-m_new)); O = (exp(m-m_new)*O + exp(S-m_new) @ V) / l_new;",
+          "testCaseHint": "Compare against naive attention (materialize N×N) for seq_len=512, d=64, batch=4; verify max abs error < 1e-4; benchmark memory traffic reduction vs naive",
+          "source": "cuda-mode-lectures/lecture_012/flash_attention.cu; flash-attention/README.md",
+          "prerequisites": ["fused-softmax", "custom-sgemm"]
+        }
+      ]
+    },
+    {
+      "topicId": "kv-cache",
+      "topicTitle": "KV Cache",
+      "topicOrder": 5,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 25,
+      "prerequisites": ["flash-attention"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "kv-cache",
+          "title": "KV Cache for Autoregressive Decoding",
+          "preciseDefinition": "During autoregressive token generation, each new token attends to all previous tokens' keys and values. Recomputing K and V for all previous tokens each step is O(N²) total. KV cache stores all previously computed K and V tensors; each new token only computes K, V for its own position and appends to cache. Memory: O(batch × layers × seq_len × 2 × d_k × dtype_size). For LLaMA-3 70B at FP16: ~2 GB for seq_len=8192.",
+          "source": "flash-attention/hopper/benchmark_mla_decode.py; flash-attention/README.md",
+          "keyFacts": [
+            "KV cache size for LLaMA-3 70B (fp16, seq=8192): 32 layers × 32 heads × 8192 × 128 × 2 × 2B = 4 GB",
+            "Paged KV cache (vLLM): KV blocks managed like virtual memory pages to avoid fragmentation",
+            "GQA reduces KV cache size by ratio num_kv_heads/num_q_heads: LLaMA-3 70B uses 8 KV heads vs 64 Q heads (8× smaller)",
+            "Prefill (prompt processing): compute all K, V at once via batched GEMM",
+            "Decode (token generation): K, V for new token added; attention is GEMV (matrix-vector), not GEMM — memory-bound"
+          ],
+          "commonMisconceptions": [
+            "KV cache eliminates the need to store model weights — KV cache is additional memory on top of model weights",
+            "Decode attention with KV cache is compute-bound — it is a GEMV (vector × matrix), always memory-bound",
+            "Longer context requires proportionally longer decode latency — with KV cache, each step is O(1) in computation"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["attention-mechanism", "flash-attention", "memory-bandwidth", "gqa-mqa"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "quantization-kernels",
+      "topicTitle": "Quantization Kernels",
+      "topicOrder": 6,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 35,
+      "prerequisites": ["mixed-precision", "memory-bandwidth-optimization"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "quantization-kernels",
+          "title": "INT8 and FP8 Quantization Kernels",
+          "preciseDefinition": "Quantization maps FP32/FP16 weights and activations to lower-precision integers or low-bit floats. INT8 linear quantization: x_q = round(clamp(x / scale, -128, 127)); dequantize: x = x_q × scale. FP8 (E4M3/E5M2) uses hardware-native 8-bit floats available on Hopper and Blackwell. Key challenge: calibrating scales to minimize accuracy loss; per-channel vs per-tensor granularity tradeoff.",
+          "source": "resources/cutlass/README.md; cuda-mode-lectures/lecture_030/; cuda-mode-lectures/lecture_033/",
+          "keyFacts": [
+            "INT8 GEMM on H100 via cuBLAS CUBLAS_COMPUTE_32I or CUTLASS: 2× throughput vs INT16; ~4× vs FP32",
+            "FP8 E4M3: max value 448, best for weights (lower range needed); E5M2: max value 57344, for gradients",
+            "Per-channel quantization: one scale per output channel of weight — better accuracy than per-tensor",
+            "Dynamic quantization: compute scale per-batch at runtime; static: pre-calibrated on dataset",
+            "AWQ, GPTQ, SmoothQuant: popular techniques for accurate INT4/INT8 LLM quantization",
+            "Dequantization fused into GEMM epilogue via CUTLASS EVT to avoid extra memory pass"
+          ],
+          "commonMisconceptions": [
+            "INT8 quantization always halves memory — only true for weights; activations may remain FP16",
+            "Quantization is just rounding — accuracy-preserving quantization requires careful scale calibration and may require weight reordering",
+            "FP8 and INT8 require the same programming approach — FP8 uses native hardware arithmetic; INT8 needs explicit dequantization"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["mixed-precision", "tensor-core", "cublas", "cutlass"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "int8-quantize-dequantize",
+          "title": "INT8 Quantize/Dequantize Kernel",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 60,
+          "whatItTeaches": "Per-tensor and per-channel quantization; absmax scaling; saturating cast to INT8; vectorized load/store with char4; fusion of dequantization into activation functions.",
+          "starterCodeHint": "// Per-tensor: float scale = absmax / 127.f; int8_t q = (int8_t)round(clamp(x / scale, -128, 127)); // Vectorized: process 4 bytes at once with char4",
+          "testCaseHint": "Verify round-trip accuracy (quantize then dequantize) within scale/2 for uniform distribution; test saturation at boundaries",
+          "source": "cuda-mode-lectures/lecture_030/; llm.c/dev/cuda/",
+          "prerequisites": ["fused-layer-norm"]
+        }
+      ]
+    },
+    {
+      "topicId": "fused-operations",
+      "topicTitle": "Kernel Fusion",
+      "topicOrder": 7,
+      "difficulty": "advanced",
+      "estimatedTheoryMinutes": 30,
+      "prerequisites": ["layer-norm", "quantization-kernels"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "operation-fusion",
+          "title": "Kernel Fusion",
+          "preciseDefinition": "Combining multiple independent operations into a single GPU kernel to eliminate intermediate reads/writes to global memory. For memory-bound kernels, fusion converts multiple bandwidth-bound passes into one. Example: fusing GELU + bias into the output of a linear layer eliminates an additional O(N) memory read. The arithmetic intensity of the fused kernel is the sum of each operation's FLOPs divided by total bytes touched (which is ≤ sum of individual bytes).",
+          "source": "cuda-mode-lectures/lecture_018/; llm.c/dev/cuda/fused_residual_forward.cu; llm.c/dev/cuda/crossentropy_softmax_backward.cu",
+          "keyFacts": [
+            "Fusing N memory-bound ops reduces HBM traffic from N×X to X bytes (where X is shared input/output size)",
+            "Common fusions in LLMs: LayerNorm+Linear, GELU+bias, attention+softmax+dropout, residual+layernorm",
+            "CUDA Graphs: capture a sequence of kernel launches as a graph for replay with reduced launch overhead",
+            "Torch.compile (Triton-based) and cuDNN graph fusion auto-fuse ops — manual fusion needed for maximum control",
+            "FlashAttention is the canonical example: fuses QK^T, softmax, and @V into one kernel eliminating O(N²) memory traffic"
+          ],
+          "commonMisconceptions": [
+            "Fusion always improves performance — if each op is compute-bound, fusion does not improve throughput",
+            "Fusion increases register pressure significantly — depends on how many live variables; careful design mitigates this",
+            "CUDA Graphs and kernel fusion are the same thing — CUDA Graphs reduce launch overhead; fusion reduces per-kernel memory traffic"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["arithmetic-intensity", "memory-bandwidth", "flash-attention", "layer-norm"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "fused-gelu-bias",
+          "title": "Fused GELU + Bias Addition",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 30,
+          "whatItTeaches": "Implementing GELU activation (tanh approximation) fused with bias addition; vectorized float4 loads for GELU; measuring memory bandwidth improvement vs unfused version.",
+          "starterCodeHint": "// GELU(x) = 0.5f * x * (1.0f + tanhf(SQRT_2_PI * (x + 0.044715f * x*x*x))); // Fuse: y = GELU(x + bias)",
+          "testCaseHint": "Compare against torch.nn.GELU for correctness; benchmark bandwidth at N=10M; show 2× read reduction vs separate bias+gelu kernels",
+          "source": "llm.c/dev/cuda/gelu_forward.cu",
+          "prerequisites": ["bandwidth-benchmark"]
+        }
+      ]
+    },
+    {
+      "topicId": "hopper-tma-wgmma",
+      "topicTitle": "Hopper TMA & Warpgroup MMA",
+      "topicOrder": 8,
+      "difficulty": "expert",
+      "estimatedTheoryMinutes": 60,
+      "prerequisites": ["flash-attention", "tensor-cores-wmma"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "tensor-memory-accelerator",
+          "title": "Tensor Memory Accelerator (TMA)",
+          "preciseDefinition": "A Hopper (H100, cc9.0) hardware unit that offloads multi-dimensional memory copy coordination from the GPU's scalar pipelines to a dedicated hardware engine. Instead of programming explicit loops for tiled copy, the programmer describes the copy via a TMA descriptor (shape, stride, swizzle) and issues a single TMA instruction (cp.async.bulk.tensor). Supports 1D-5D tensor copies, reduction, and multicast to Thread Block Clusters.",
+          "source": "gpu-glossary/device-hardware/tensor-memory-accelerator.md; docs.nvidia.com/cuda/hopper-tuning-guide/#tensor-memory-accelerator",
+          "keyFacts": [
+            "TMA descriptor created on host with cuTensorMapEncodeIm2col / cuTensorMapEncodeTiled",
+            "TMA copies: cp.async.bulk.tensor.{1..5}d — asynchronous, uses mbarrier for completion signaling",
+            "TMA eliminates scalar address computation overhead: ~32 threads × 4 cycles vs 1 TMA instruction",
+            "TMA multicast: H100 sends data to multiple blocks in a Thread Block Cluster simultaneously",
+            "TMA swizzle: reorders bytes to avoid shared memory bank conflicts automatically",
+            "FlashAttention 3 uses TMA for async prefetching of K/V tiles while previous tile is being processed"
+          ],
+          "commonMisconceptions": [
+            "TMA is just async copy (cp.async from Ampere) — TMA is a separate hardware engine with a descriptor; cp.async is warp-issued",
+            "TMA works on all CUDA compute capabilities — requires cc9.0+ (Hopper)",
+            "TMA automatically handles tiled copying for any layout — requires the programmer to set up the TMA descriptor correctly"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["warpgroup-mma", "flash-attention", "thread-block-clusters", "shared-memory"]
+        },
+        {
+          "conceptId": "warpgroup-mma",
+          "title": "Warpgroup MMA (WGMMA)",
+          "preciseDefinition": "A Hopper (cc9.0) MMA instruction that operates on 4 warps simultaneously (a warpgroup of 128 threads). WGMMA tiles are larger than single-warp WMMA: e.g., wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16 processes a 64×256×16 MMA. The 'async' variant allows non-blocking execution and is the mechanism behind Hopper's compute/memory pipelining. Exposed via CUTLASS cute::WGMMA or inline PTX.",
+          "source": "gpu-glossary/device-software/warpgroup.md; flash-attention/hopper/; cuda-mode-lectures/lecture_036/",
+          "keyFacts": [
+            "WGMMA operates on 4 warps (warpgroup); requires threadblock of exactly 128 threads per warpgroup",
+            "Tile shapes for H100: m64n{8..256}k16 (BF16/FP16); m64n{8..256}k32 (FP8)",
+            "WGMMA async: non-blocking — other warps can execute while WGMMA runs in background (warp specialization)",
+            "wgmma.fence / wgmma.commit_group / wgmma.wait_group: pipeline barriers for chaining WGMMA operations",
+            "FlashAttention 3 uses warp specialization: producer warps load K/V via TMA; consumer warps execute WGMMA"
+          ],
+          "commonMisconceptions": [
+            "WGMMA is just WMMA for 4 warps in a loop — WGMMA is a fundamentally different instruction class enabling async pipelining",
+            "WGMMA can be used with any thread block size — requires exactly 4 warps per warpgroup (128 threads)",
+            "WGMMA exposes the same SASS as WMMA — WGMMA generates HGMMA SASS instructions, not HMMA"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["tensor-memory-accelerator", "tensor-core", "flash-attention", "mixed-precision"]
+        }
+      ],
+      "exercises": []
+    }
+  ],
+  "roadmapNodes": [],
+  "coverageGaps": [
+    "Speculative decoding kernels — complex, referenced in cuda-mode-lectures lecture_022; not planned",
+    "PagedAttention / vLLM KV cache management — important for production inference; no exercise planned",
+    "All-Reduce kernels (NCCL) — present in llm.c/dev/cuda/nccl_all_reduce.cu; not covered in single-GPU curriculum",
+    "Megatron-LM tensor parallelism patterns — papers unreadable (PDF); not planned",
+    "ZeRO sharding strategies — papers unreadable (PDF); not planned",
+    "Mamba / state-space model kernels — growing importance; not in current resources"
+  ],
+  "interviewFrequency": {
+    "high": ["softmax-kernel", "online-softmax", "layer-norm", "attention-mechanism", "flash-attention", "kv-cache", "operation-fusion", "quantization-kernels"],
+    "medium": ["flash-attention-backward", "tensor-memory-accelerator", "warpgroup-mma"],
+    "low": []
+  }
+}

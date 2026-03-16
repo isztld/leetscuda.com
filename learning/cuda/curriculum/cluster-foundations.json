@@ -1,0 +1,379 @@
+{
+  "clusterId": "foundations",
+  "clusterTitle": "GPU & CUDA Foundations",
+  "clusterOrder": 1,
+  "description": "Core concepts for understanding how GPU hardware works, how CUDA exposes that hardware to programmers, and how the SIMT execution model differs from CPU programming. Prerequisite to all other clusters.",
+  "prerequisites": [],
+  "sources": [
+    "gpu-glossary/device-hardware/*",
+    "gpu-glossary/device-software/cuda-programming-model.md",
+    "gpu-glossary/device-software/compute-capability.md",
+    "gpu-glossary/device-software/thread-hierarchy.md",
+    "gpu-glossary/host-software/cuda-c.md",
+    "docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/",
+    "docs.nvidia.com/cuda/cuda-programming-guide/02-basics/",
+    "docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html",
+    "cuda-samples/0_Introduction/vectorAdd/",
+    "cuda-samples/0_Introduction/clock/",
+    "cuda-samples/1_Utilities/deviceQuery/",
+    "cuda-mode-lectures/lecture_002/",
+    "cuda-mode-lectures/lecture_003/",
+    "cuda-mode-lectures/lecture_004/"
+  ],
+  "topics": [
+    {
+      "topicId": "gpu-architecture-overview",
+      "topicTitle": "GPU Architecture Overview",
+      "topicOrder": 1,
+      "difficulty": "introductory",
+      "estimatedTheoryMinutes": 30,
+      "prerequisites": [],
+      "roadmapNodeSlug": "cuda-intro",
+      "roadmapNodeTitle": "Introduction to CUDA",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "gpu-vs-cpu",
+          "title": "GPU vs CPU Design Philosophy",
+          "preciseDefinition": "GPUs dedicate the majority of die area to compute units (CUDA Cores, Tensor Cores) rather than control logic and caches, enabling higher aggregate throughput for data-parallel workloads at the cost of single-thread performance. An H100 SXM has 132 SMs each with 4 warp schedulers issuing to 32-thread warps, enabling >250,000 concurrent threads versus a 192-core CPU's 384 concurrent threads.",
+          "source": "gpu-glossary/device-hardware/streaming-multiprocessor.md",
+          "keyFacts": [
+            "CPUs optimize for single-thread latency via large caches, branch prediction, out-of-order execution",
+            "GPUs optimize for throughput via massive parallelism and latency hiding through warp switching",
+            "H100: 132 SMs × 4 schedulers × 32 threads = 16,896 parallel threads per cycle",
+            "GPU context switches between warps take a single clock cycle vs microseconds for CPU OS context switches",
+            "GPUs were originally graphics pipelines repurposed for general compute via CUDA (2007)"
+          ],
+          "commonMisconceptions": [
+            "GPUs are always faster than CPUs — false for sequential or low-parallelism workloads",
+            "More CUDA cores always means better performance — bandwidth and memory hierarchy matter equally",
+            "GPU threads are equivalent to CPU threads — GPU threads are far lighter and lack independent instruction streams"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["streaming-multiprocessor", "simt-model", "latency-hiding"]
+        },
+        {
+          "conceptId": "streaming-multiprocessor",
+          "title": "Streaming Multiprocessor (SM)",
+          "preciseDefinition": "The primary execution unit of a NVIDIA GPU. Each SM contains CUDA Cores, Tensor Cores, a warp scheduler, register file, shared memory, and L1 cache. SMs are the GPU analog of CPU cores but optimized for throughput: an H100 SM manages up to 2048 concurrent threads across 64 warps, switching between warps in a single clock cycle to hide latency.",
+          "source": "gpu-glossary/device-hardware/streaming-multiprocessor.md",
+          "keyFacts": [
+            "H100: 132 SMs, each with 128 CUDA Cores and 4 Tensor Core groups",
+            "SM supports up to 2048 resident threads = 64 warps of 32 threads",
+            "SM has dedicated register file (65536 32-bit registers on Ampere/Hopper)",
+            "L1 data cache and shared memory share the same physical SRAM pool (on Ampere: up to 164 KB total, configurable split)",
+            "Warp scheduler selects an eligible warp each cycle; no pipeline stalls visible to programmer"
+          ],
+          "commonMisconceptions": [
+            "SM count alone determines GPU performance — arithmetic bandwidth and memory bandwidth matter more",
+            "All SMs execute identical instructions simultaneously — each SM executes its own kernel independently",
+            "Shared memory is part of the SM's L1 cache — they share physical SRAM but are software-managed separately"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["warp-scheduler", "cuda-core", "tensor-core", "register-file", "shared-memory"]
+        },
+        {
+          "conceptId": "compute-capability",
+          "title": "Compute Capability",
+          "preciseDefinition": "A version number (major.minor) assigned to NVIDIA GPU architectures that specifies which CUDA and PTX features are available. NVIDIA guarantees forward compatibility: PTX compiled for compute_XY runs on newer GPUs. Hopper introduced 9.0a with non-forward-compatible features; Blackwell introduced 10.0f with SemVer-style minor compatibility only.",
+          "source": "gpu-glossary/device-software/compute-capability.md",
+          "keyFacts": [
+            "Volta: 7.0, Turing: 7.5, Ampere: 8.0/8.6/8.7, Ada: 8.9, Hopper: 9.0/9.0a, Blackwell: 10.0/10.0f",
+            "PTX (virtual architecture) provides forward compatibility; SASS (real architecture) does not",
+            "Specifying compute_80 to nvcc generates PTX for Ampere virtual arch, which JIT-compiles on newer GPUs",
+            "sm_80 generates SASS optimized for Ampere physical SM; will not run on older GPUs",
+            "Target sm_120 for Blackwell (B200/GB200) to access 2CTA, UMMA, FP4 block-scaled instructions"
+          ],
+          "commonMisconceptions": [
+            "Targeting an old compute capability is always safe — loses performance on newer GPUs, may miss features",
+            "PTX and SASS are the same thing — PTX is virtual ISA, SASS is physical machine code",
+            "Higher compute capability always means faster — same numeric value can span generations with different performance"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["streaming-multiprocessor-architecture", "ptx", "sass", "nvcc"]
+        },
+        {
+          "conceptId": "cuda-programming-model",
+          "title": "CUDA Programming Model",
+          "preciseDefinition": "A parallel programming model where computationally intensive functions (kernels) execute on a GPU device while control logic runs on a CPU host. The programmer specifies parallelism by launching a grid of thread blocks, each block containing up to 1024 threads. Threads within a block can cooperate via shared memory and synchronize with __syncthreads(). Blocks execute independently and in any order across SMs.",
+          "source": "gpu-glossary/device-software/cuda-programming-model.md",
+          "keyFacts": [
+            "Kernel is a C++ function annotated __global__ returning void, called with <<<grid, block>>> syntax",
+            "Grid: up to 2^31-1 blocks in x-dimension (CUDA 3.0+), up to 65535 in y/z",
+            "Block: up to 1024 threads (product of x,y,z ≤ 1024); x dimension ≤ 1024",
+            "Blocks are scheduled onto SMs; multiple blocks can share an SM if resources permit",
+            "Thread independence between blocks enables transparent scalability: same code runs on GPUs with any SM count"
+          ],
+          "commonMisconceptions": [
+            "Thread blocks always execute on separate SMs — multiple small blocks can share one SM",
+            "__syncthreads() synchronizes all threads in the grid — it only synchronizes threads within the same block",
+            "Global memory is shared between host and device — explicit cudaMemcpy (or Unified Memory) is required"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["thread-hierarchy", "shared-memory", "grid-block-thread"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "hello-cuda",
+          "title": "Hello CUDA: Device Query",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 20,
+          "whatItTeaches": "How to query device properties (SM count, compute capability, memory size, clock rate) using cudaGetDeviceProperties; understanding CUDA initialization overhead.",
+          "starterCodeHint": "cudaDeviceProp prop; cudaGetDeviceProperties(&prop, 0); // print key fields",
+          "testCaseHint": "Verify prop.major >= 8, prop.multiProcessorCount > 0, prop.totalGlobalMem > 1GB",
+          "source": "cuda-samples/1_Utilities/deviceQuery/",
+          "prerequisites": []
+        }
+      ]
+    },
+    {
+      "topicId": "sm-architecture",
+      "topicTitle": "SM Internal Architecture",
+      "topicOrder": 2,
+      "difficulty": "introductory",
+      "estimatedTheoryMinutes": 25,
+      "prerequisites": ["gpu-architecture-overview"],
+      "roadmapNodeSlug": "cuda-intro",
+      "roadmapNodeTitle": "Introduction to CUDA",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "cuda-core",
+          "title": "CUDA Core",
+          "preciseDefinition": "A pipelined arithmetic execution unit within an SM that performs a single floating-point or integer operation per clock cycle. CUDA Cores execute SIMT instructions for ALU operations. In contrast to Tensor Cores, CUDA Cores operate on scalar values. An H100 SM has 128 CUDA Cores grouped into 4 processing blocks of 32 cores each.",
+          "source": "gpu-glossary/device-hardware/cuda-core.md",
+          "keyFacts": [
+            "CUDA Core throughput: 1 FP32 MAD or 1 INT32 ADD per cycle per core",
+            "H100: 128 CUDA Cores per SM × 132 SMs = 16,896 CUDA Cores total",
+            "Peak FP32 CUDA Core throughput for H100 SXM: ~67 TFLOPS",
+            "Tensor Core throughput (BF16): ~989 TFLOPS — ~15x higher than CUDA Cores",
+            "CUDA Cores are used for non-matrix operations: element-wise activations, reductions, index arithmetic"
+          ],
+          "commonMisconceptions": [
+            "CUDA Core count is the primary GPU performance metric — Tensor Core throughput dominates ML workloads",
+            "CUDA Cores and CPU cores are equivalent — CUDA Cores are scalar pipelines lacking caches, branch prediction, OOO execution",
+            "A CUDA thread maps 1:1 to a CUDA Core — a warp of 32 threads issues to a group of cores"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["tensor-core", "warp-scheduler", "streaming-multiprocessor"]
+        },
+        {
+          "conceptId": "tensor-core",
+          "title": "Tensor Core",
+          "preciseDefinition": "A SIMD execution unit in NVIDIA GPUs (Volta+) that performs matrix-multiply-accumulate (MMA) operations in a single instruction. A warp cooperatively executes one MMA instruction on tile-sized matrices. Example: HMMA16.16816.F32 computes D=A×B+C for A(16×16), B(16×8), C/D(16×8) with FP16 inputs and FP32 accumulation, performing 2048 MACs per instruction across 32 threads (64 MACs per thread).",
+          "source": "gpu-glossary/device-hardware/tensor-core.md",
+          "keyFacts": [
+            "Tensor Cores provide ~100× more FLOPS/cycle than CUDA Cores for matrix operations",
+            "H100 BF16 Tensor Core peak: 989 TFLOPS; FP8: 1979 TFLOPS",
+            "B200 BF16: 2250 TFLOPS; FP8: 4500 TFLOPS; FP4: 9000 TFLOPS",
+            "Exposed via WMMA API (__nvcuda_wmma__) in CUDA C++, or via CUTLASS/cuBLAS",
+            "4th-gen (Hopper): warpgroup MMA (WGMMA) operates across 4 warps for larger tiles",
+            "5th-gen (Blackwell): UMMA supports 2-CTA instructions for even larger tiles"
+          ],
+          "commonMisconceptions": [
+            "Tensor Cores work automatically for all floating point operations — must use MMA APIs or libraries",
+            "FP16 Tensor Cores always use FP16 accumulation — most usages accumulate in FP32",
+            "Tensor Cores are only useful for training — inference workloads gain equally from Tensor Cores"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["wmma", "cutlass", "cublas", "mixed-precision", "warp"]
+        },
+        {
+          "conceptId": "warp-scheduler",
+          "title": "Warp Scheduler",
+          "preciseDefinition": "Hardware unit within an SM that selects eligible warps and issues their next instruction to execution units each clock cycle. An SM has multiple warp schedulers (4 on Hopper H100); each can issue one instruction per cycle. Warp scheduling is zero-overhead: if one warp stalls (e.g., waiting for memory), the scheduler immediately selects another eligible warp with no pipeline flush.",
+          "source": "gpu-glossary/device-hardware/warp-scheduler.md",
+          "keyFacts": [
+            "H100 SM: 4 warp schedulers, each managing up to 16 warps (64 warps total per SM)",
+            "Warp switching takes exactly 0 additional cycles — warp state (registers) stays resident in SM",
+            "A warp is eligible when it has no outstanding dependencies and all operands are ready",
+            "Issue efficiency = fraction of cycles where a scheduler issued an instruction (100% ideal)",
+            "Dual-issue: some SMs can issue 2 independent instructions to the same warp per cycle"
+          ],
+          "commonMisconceptions": [
+            "More warps always improves performance — too many warps increase register pressure and may reduce occupancy",
+            "The warp scheduler executes warps in round-robin order — scheduling is heuristic, not round-robin",
+            "Context switching between warps is costly — it is literally zero-overhead in hardware"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["latency-hiding", "occupancy", "warp-divergence", "register-file"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "thread-hierarchy",
+      "topicTitle": "Thread Hierarchy: Grid / Block / Warp / Thread",
+      "topicOrder": 3,
+      "difficulty": "introductory",
+      "estimatedTheoryMinutes": 35,
+      "prerequisites": ["gpu-architecture-overview"],
+      "roadmapNodeSlug": "cuda-threads",
+      "roadmapNodeTitle": "Threads, Blocks & Grids",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "grid-block-thread",
+          "title": "Grid, Block, and Thread",
+          "preciseDefinition": "The three-level CUDA parallelism hierarchy. A kernel launch creates a grid of thread blocks. Each block contains up to 1024 threads, organized in up to 3 dimensions. Threads within a block share shared memory and can synchronize via __syncthreads(). Blocks run independently on any SM. A grid can be 1D, 2D, or 3D; typical 1D launch: <<<(N+255)/256, 256>>>.",
+          "source": "gpu-glossary/device-software/thread-block-grid.md; docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html",
+          "keyFacts": [
+            "Thread ID within a block: threadIdx.{x,y,z}; block ID in grid: blockIdx.{x,y,z}",
+            "Global thread index (1D): int idx = blockIdx.x * blockDim.x + threadIdx.x",
+            "Maximum block size: 1024 threads (product of x*y*z dimensions)",
+            "Maximum grid dimensions: x up to 2^31-1, y/z up to 65535",
+            "Block dimensions should be multiples of 32 to avoid partial warps"
+          ],
+          "commonMisconceptions": [
+            "Blocks always execute in launch order — blocks can execute in any order, in parallel or sequentially",
+            "threadIdx and blockIdx are the same thing — threadIdx is local to block, blockIdx is block position in grid",
+            "A block with 1024 threads uses 1024 CUDA Cores — 1024 threads = 32 warps, occupying 32 CUDA Core pipelines"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["warp", "shared-memory", "cooperative-thread-array"]
+        },
+        {
+          "conceptId": "warp",
+          "title": "Warp",
+          "preciseDefinition": "The fundamental unit of execution scheduling on a GPU. A warp is a group of exactly 32 consecutive threads within a block that execute in lockstep (SIMT). The warp scheduler issues one instruction per clock cycle to all 32 threads of an eligible warp. All threads in a warp execute the same instruction at the same time, but each operates on its own register state.",
+          "source": "gpu-glossary/device-software/warp.md",
+          "keyFacts": [
+            "Warp size is always 32 on all NVIDIA GPU architectures (Fermi through Blackwell)",
+            "Thread IDs 0-31 form warp 0, 32-63 form warp 1, etc.",
+            "Partial warps (last warp of a block if block_size % 32 != 0) still consume a full warp's resources",
+            "Warp is the granularity of occupancy calculation and scheduling",
+            "A block of 256 threads contains 8 warps"
+          ],
+          "commonMisconceptions": [
+            "Warp size can vary between GPU models — it has been 32 on all NVIDIA GPUs since Fermi (2010)",
+            "Each thread in a warp executes independently — all 32 execute the same instruction unless diverging",
+            "Warps and blocks are the same thing — a block contains one or more warps"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["warp-divergence", "warp-scheduler", "simt-model", "cooperative-thread-array"]
+        },
+        {
+          "conceptId": "simt-model",
+          "title": "SIMT Execution Model",
+          "preciseDefinition": "Single Instruction, Multiple Threads (SIMT): a variant of SIMD where 32 threads (a warp) execute the same instruction simultaneously but maintain independent program counters, register files, and can take divergent branch paths. Divergence is resolved by executing both paths with a predicate mask, serializing the warp across divergent paths. Each thread has its own PC, enabling flexible control flow at a cost when divergence occurs.",
+          "source": "docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/cuda-cpp-execution-model.html; gpu-glossary/device-software/cuda-programming-model.md",
+          "keyFacts": [
+            "SIMT differs from SIMD: SIMT threads have independent PCs and can diverge; SIMD vectors always move together",
+            "Divergent code within a warp serializes execution: branch efficiency < 100% causes throughput reduction",
+            "Re-convergence happens at immediate post-dominator in the control flow graph",
+            "Hopper introduced warp specialization: different warps can execute different roles (producer/consumer)",
+            "Branch efficiency metric in Nsight Compute measures fraction of non-divergent branches"
+          ],
+          "commonMisconceptions": [
+            "Divergence only occurs with if/else — loops with varying trip counts also cause divergence",
+            "Divergent warps waste exactly 50% of capacity — the waste is proportional to the number of distinct paths taken",
+            "SIMT threads can see each other's registers — only via explicit shuffle intrinsics (__shfl_sync)"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["warp-divergence", "branch-efficiency", "cooperative-groups"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "vector-add",
+          "title": "Vector Addition",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 30,
+          "whatItTeaches": "Basic kernel launch syntax, global thread index calculation, bounds checking, cudaMalloc/cudaFree/cudaMemcpy workflow.",
+          "starterCodeHint": "__global__ void vecAdd(float* a, float* b, float* c, int n) { int i = blockIdx.x * blockDim.x + threadIdx.x; if (i < n) c[i] = a[i] + b[i]; }",
+          "testCaseHint": "Test with N=1, N=32, N=1024, N=1000000; verify c[i] == a[i] + b[i] for all i",
+          "source": "cuda-samples/0_Introduction/vectorAdd/",
+          "prerequisites": []
+        },
+        {
+          "exerciseId": "grid-stride-saxpy",
+          "title": "Grid-Stride Loop SAXPY",
+          "difficulty": "easy",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 25,
+          "whatItTeaches": "Grid-stride loop pattern for handling arrays larger than the grid, flexible block/grid sizing, understanding of stride = gridDim.x * blockDim.x.",
+          "starterCodeHint": "__global__ void saxpy(float a, float* x, float* y, int n) { for (int i = blockIdx.x*blockDim.x + threadIdx.x; i < n; i += gridDim.x*blockDim.x) y[i] = a*x[i] + y[i]; }",
+          "testCaseHint": "Test with N much larger than grid*block (e.g., N=10M with 256 blocks × 256 threads)",
+          "source": "cuda-mode-lectures/lecture_003/",
+          "prerequisites": ["vector-add"]
+        }
+      ]
+    },
+    {
+      "topicId": "simt-architecture-progression",
+      "topicTitle": "SM Architecture Progression: Volta → Ampere → Hopper → Blackwell",
+      "topicOrder": 4,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 30,
+      "prerequisites": ["sm-architecture", "thread-hierarchy"],
+      "roadmapNodeSlug": "cuda-intro",
+      "roadmapNodeTitle": "Introduction to CUDA",
+      "roadmapNodeType": "CONCEPT",
+      "concepts": [
+        {
+          "conceptId": "architecture-progression",
+          "title": "GPU Architecture Generations: Volta to Blackwell",
+          "preciseDefinition": "NVIDIA's datacenter GPU architecture progression from Volta (2017, cc7.0) through Turing (cc7.5), Ampere (cc8.0, 2020), Ada Lovelace (cc8.9), Hopper (cc9.0, 2022), and Blackwell (cc10.0, 2024), each introducing new memory features, Tensor Core generations, and execution capabilities.",
+          "source": "docs.nvidia.com/cuda/hopper-tuning-guide/; docs.nvidia.com/cuda/ampere-tuning-guide/; gpu-glossary/device-software/compute-capability.md",
+          "keyFacts": [
+            "Volta (V100, cc7.0): first Tensor Cores; independent thread scheduling (each thread has own PC)",
+            "Ampere (A100, cc8.0): 3rd-gen Tensor Cores (BF16, TF32, INT8 sparsity), async copy cp.async, split arrive/wait barrier, HBM2e 2TB/s",
+            "Hopper (H100, cc9.0): 4th-gen Tensor Cores (warpgroup MMA WGMMA), TMA (Tensor Memory Accelerator), Thread Block Clusters, HBM3 3.35TB/s, FP8 native",
+            "Blackwell (B200, cc10.0): 5th-gen Tensor Cores (2CTA UMMA, FP4 block-scaled), 5th-gen NVLink 1.8TB/s, HBM3e 8TB/s",
+            "Ampere introduced async memory copy to decouple data movement from computation"
+          ],
+          "commonMisconceptions": [
+            "Hopper features work on Ampere GPUs — TMA, WGMMA, Thread Block Clusters require cc9.0+",
+            "Upgrading to a newer GPU automatically speeds up all kernels — requires rewriting kernels to use new features",
+            "All Ampere GPUs are equal — A100 (cc8.0), RTX 3090 (cc8.6), Jetson AGX Orin (cc8.7) have different capabilities"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["compute-capability", "tensor-core", "tensor-memory-accelerator", "warpgroup"]
+        }
+      ],
+      "exercises": []
+    }
+  ],
+  "roadmapNodes": [
+    {
+      "slug": "cuda-intro",
+      "title": "Introduction to CUDA",
+      "type": "CONCEPT",
+      "coveredByTopics": ["gpu-architecture-overview", "sm-architecture", "simt-architecture-progression"]
+    },
+    {
+      "slug": "cuda-threads",
+      "title": "Threads, Blocks & Grids",
+      "type": "CONCEPT",
+      "coveredByTopics": ["thread-hierarchy"]
+    },
+    {
+      "slug": "vector-add",
+      "title": "Vector Addition",
+      "type": "PROBLEM",
+      "coveredByTopics": ["thread-hierarchy"]
+    }
+  ],
+  "coverageGaps": [
+    "PTX/SASS assembly level programming — referenced in gpu-glossary but no exercise planned",
+    "CUDA compilation pipeline (nvcc fat binary, PTX JIT) — theory only, no exercise",
+    "Multi-GPU programming (deviceQuery topology) — mentioned in samples but no curriculum coverage yet"
+  ],
+  "interviewFrequency": {
+    "high": ["gpu-vs-cpu", "streaming-multiprocessor", "cuda-programming-model", "grid-block-thread", "warp", "simt-model", "tensor-core", "warp-scheduler"],
+    "medium": ["compute-capability", "cuda-core", "architecture-progression"],
+    "low": []
+  }
+}

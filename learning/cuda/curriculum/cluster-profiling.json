@@ -1,0 +1,237 @@
+{
+  "clusterId": "profiling",
+  "clusterTitle": "Performance Analysis & Profiling",
+  "clusterOrder": 6,
+  "description": "Systematic performance analysis for GPU kernels: the roofline model, arithmetic intensity, Nsight Compute workflow, warp efficiency metrics, and Nsight Systems for multi-kernel concurrency analysis.",
+  "prerequisites": ["foundations", "memory", "execution"],
+  "sources": [
+    "gpu-glossary/perf/roofline-model.md",
+    "gpu-glossary/perf/arithmetic-intensity.md",
+    "gpu-glossary/perf/arithmetic-bandwidth.md",
+    "gpu-glossary/perf/memory-bandwidth.md",
+    "gpu-glossary/perf/memory-bound.md",
+    "gpu-glossary/perf/compute-bound.md",
+    "gpu-glossary/perf/performance-bottleneck.md",
+    "gpu-glossary/perf/occupancy.md",
+    "gpu-glossary/perf/warp-divergence.md",
+    "gpu-glossary/perf/issue-efficiency.md",
+    "gpu-glossary/perf/pipe-utilization.md",
+    "gpu-glossary/perf/peak-rate.md",
+    "gpu-glossary/perf/overhead.md",
+    "gpu-glossary/perf/active-cycle.md",
+    "gpu-glossary/host-software/nsight-systems.md",
+    "gpu-glossary/host-software/cupti.md",
+    "gpu-glossary/host-software/nvml.md",
+    "gpu-glossary/host-software/nvidia-smi.md",
+    "docs.nvidia.com/cuda/cuda-c-best-practices-guide/#performance-metrics",
+    "cuda-mode-lectures/lecture_001/",
+    "cuda-mode-lectures/lecture_008/",
+    "llm.c/dev/cuda/benchmark_on_modal.py"
+  ],
+  "topics": [
+    {
+      "topicId": "roofline-model",
+      "topicTitle": "Roofline Model",
+      "topicOrder": 1,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 30,
+      "prerequisites": ["memory-bandwidth-optimization"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "roofline-model",
+          "title": "Roofline Model",
+          "preciseDefinition": "A visual performance model relating a kernel's arithmetic intensity (FLOPs/byte) to achievable performance (FLOPs/s). Bounded above by two roofs: (1) the memory bandwidth roof (slope × arithmetic intensity) and (2) the arithmetic bandwidth roof (flat ceiling). A kernel's performance point is the minimum of the two. The ridge point is where the two roofs meet: ridge = arithmetic_bandwidth / memory_bandwidth (FLOPs/byte).",
+          "source": "gpu-glossary/perf/roofline-model.md; gpu-glossary/perf/arithmetic-intensity.md",
+          "keyFacts": [
+            "H100 ridge point (BF16 TC): 989 TFLOPS / 3.35 TB/s = 295 FLOPs/byte",
+            "A100 ridge point (BF16): 312 / 2.0 = 156 FLOPs/byte",
+            "SAXPY: 1 FMA / 12 bytes = 0.083 FLOPs/byte — 3500× below H100 ridge → deeply memory-bound",
+            "Matrix multiply NxN: N/6 FLOPs/byte → compute-bound on H100 for N > 1770",
+            "Attention mechanism: O(1/seq_len) arithmetic intensity — memory-bound for long sequences (motivates FlashAttention)"
+          ],
+          "commonMisconceptions": [
+            "A kernel at the roofline is optimal — it is at the theoretical maximum; actual kernels have additional overheads",
+            "Roofline uses wall-clock time for bandwidth — bandwidth is measured as bytes actually transferred, not allocated",
+            "There is only one roofline — there are separate rooflines for HBM bandwidth, L2 bandwidth, Tensor Core bandwidth"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["arithmetic-intensity", "memory-bandwidth", "arithmetic-bandwidth", "compute-bound", "memory-bound"]
+        },
+        {
+          "conceptId": "arithmetic-intensity",
+          "title": "Arithmetic Intensity",
+          "preciseDefinition": "FLOPs performed per byte of memory moved between compute units and DRAM. Determines where a kernel sits on the roofline model. Computed as: arithmetic_intensity = (FLOPs) / (bytes_read + bytes_written). Higher is better for compute efficiency. The key insight: matrix multiplication has O(N) arithmetic intensity while elementwise operations have O(1), making GEMM fundamentally more efficient at GPU utilization.",
+          "source": "gpu-glossary/perf/arithmetic-intensity.md",
+          "keyFacts": [
+            "SAXPY: (2N FLOPs) / (12N bytes) = 1/6 FLOPs/byte",
+            "FFT: 5/2 N log(N) FLOPs / 16N bytes = 5/32 log(N) FLOPs/byte — O(log N) scaling",
+            "SGEMM: 2N³ / (4N² × 3) = N/6 FLOPs/byte — O(N) scaling",
+            "Gradient checkpointing increases arithmetic intensity by trading recomputation for reduced memory traffic",
+            "Operation fusion increases arithmetic intensity by eliminating intermediate writes to global memory"
+          ],
+          "commonMisconceptions": [
+            "Arithmetic intensity is about the algorithm's asymptotic complexity — it is an absolute ratio for a specific problem size",
+            "Higher arithmetic intensity always means faster execution — only up to the compute roof; then memory bandwidth is not the bottleneck",
+            "Reducing memory traffic always improves performance — only if memory-bound; compute-bound kernels are not helped by less memory traffic"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["roofline-model", "memory-bandwidth", "operation-fusion", "flash-attention"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "nsight-compute-workflow",
+      "topicTitle": "Nsight Compute Workflow",
+      "topicOrder": 2,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 40,
+      "prerequisites": ["roofline-model"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "nsight-compute",
+          "title": "Nsight Compute",
+          "preciseDefinition": "NVIDIA's per-kernel GPU performance profiler. Collects hardware counter metrics through multiple kernel replay passes, providing: roofline positioning, memory throughput (L1/L2/HBM), warp efficiency, compute throughput, stall reasons, and source-to-SASS correlation. The guided optimization workflow uses automated 'speedup bottleneck' analysis to prioritize optimization efforts.",
+          "source": "gpu-glossary/host-software/nsight-systems.md; cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/",
+          "keyFacts": [
+            "CLI: ncu --set full --export report.ncu-rep -o report kernel_binary",
+            "Key metrics: sm__throughput.avg.pct_of_peak_sustained_elapsed (SM active time), l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum (L1 global load bytes)",
+            "Roofline section: positions kernel on arithmetic bandwidth vs memory bandwidth plot",
+            "Warp State Statistics section: shows fraction of cycles in each stall reason",
+            "Source correlation: maps SASS instructions back to CUDA C++ source lines",
+            "Replay: multiple kernel invocations to collect all counter groups; introduces ~3-10× slowdown"
+          ],
+          "commonMisconceptions": [
+            "Nsight Compute measures exact wall-clock time — replay overhead makes timing inaccurate; use CUDA events for timing",
+            "All metrics can be collected in one pass — hardware counter limitations require multiple replay passes",
+            "High SM active time means the kernel is optimal — SM can be active but underutilizing compute (stall-heavy)"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["roofline-model", "warp-execution-states", "occupancy", "cupti"]
+        },
+        {
+          "conceptId": "warp-efficiency-metrics",
+          "title": "Warp Efficiency Metrics",
+          "preciseDefinition": "A set of Nsight Compute metrics that characterize how efficiently warps use SM resources. Key metrics: (1) Warp Occupancy = active_warps / max_warps, (2) Issue Efficiency = issued_ipc / peak_ipc, (3) Branch Efficiency = non_divergent_branches / total_branches, (4) Global Load Efficiency = requested_bytes / actual_transactions × 128, (5) Shared Memory Bank Conflicts per access.",
+          "source": "gpu-glossary/perf/issue-efficiency.md; gpu-glossary/perf/branch-efficiency.md; gpu-glossary/perf/warp-divergence.md",
+          "keyFacts": [
+            "Issue Efficiency of 100% = every cycle had an eligible warp (latency fully hidden)",
+            "Global Memory Load Efficiency <100% = non-coalesced accesses (look for strided access patterns)",
+            "Long Scoreboard stalls = memory-bound (increase occupancy or use prefetch)",
+            "Pipe utilization (TEX, LSU, ADU pipes) reveals which functional units are saturated",
+            "Warp cycles per issued instruction = average instruction latency in cycles"
+          ],
+          "commonMisconceptions": [
+            "High warp occupancy guarantees high performance — occupancy helps latency hiding but doesn't help compute-bound kernels",
+            "100% global load efficiency means coalesced access — also requires no cache misses (repeated loads from L1/L2 are efficient)",
+            "All stall types are equally bad — compute-bound kernels with high ILP can tolerate high stall fractions"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["occupancy", "warp-divergence", "memory-coalescing", "issue-efficiency"]
+        }
+      ],
+      "exercises": [
+        {
+          "exerciseId": "profile-and-optimize",
+          "title": "Profile and Optimize a Kernel with Nsight Compute",
+          "difficulty": "medium",
+          "runtime": "cuda",
+          "cppStandard": "17",
+          "cudaVersion": "12.6",
+          "computeCap": "sm_120",
+          "estimatedMinutes": 90,
+          "whatItTeaches": "End-to-end Nsight Compute profiling workflow on a realistic kernel (e.g., reduction or GEMM); interpreting roofline position; identifying top bottleneck; applying fix; measuring improvement.",
+          "starterCodeHint": "// Profile with: ncu --set full ./program; // Look at: Memory Workload Analysis, Compute Workload Analysis, Warp State Statistics",
+          "testCaseHint": "Start with a non-coalesced access kernel; profile to find low Global Load Efficiency; fix by transposing access pattern; re-profile to confirm improvement",
+          "source": "cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/",
+          "prerequisites": ["reduce-sum"]
+        }
+      ]
+    },
+    {
+      "topicId": "nsight-systems-concurrency",
+      "topicTitle": "Nsight Systems for Concurrency Analysis",
+      "topicOrder": 3,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 20,
+      "prerequisites": ["streams-concurrency"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "nsight-systems",
+          "title": "Nsight Systems",
+          "preciseDefinition": "A system-wide performance analysis tool that traces GPU kernel execution, memory transfers, CPU thread activity, and CUDA API calls on a unified timeline. Distinguishes from Nsight Compute in that it shows multi-kernel concurrency, stream overlap, and CPU-GPU synchronization overhead — not per-kernel hardware counter metrics.",
+          "source": "gpu-glossary/host-software/nsight-systems.md",
+          "keyFacts": [
+            "CLI: nsys profile --stats=true ./program; outputs .nsys-rep file",
+            "Shows timeline of: CUDA kernels, cudaMemcpy, CPU functions, NVTX ranges",
+            "NVTX annotations: nvtxRangePushA/nvtxRangePop to label code regions on timeline",
+            "Key patterns to spot: unnecessary synchronization bubbles, underutilized GPU between kernel launches, H2D/D2H blocking compute",
+            "Nsight Systems (system-level timeline) + Nsight Compute (per-kernel counters) = complete profiling workflow"
+          ],
+          "commonMisconceptions": [
+            "Nsight Compute and Nsight Systems do the same thing — they are complementary; Systems for concurrency, Compute for per-kernel",
+            "cudaDeviceSynchronize() is always needed for profiling — only needed when measuring wall time on CPU; avoid in production",
+            "NVTX ranges are free — they have small overhead (~microsecond per annotation)"
+          ],
+          "interviewRelevance": "medium",
+          "relatedConcepts": ["cuda-streams", "cuda-events", "cupti"]
+        }
+      ],
+      "exercises": []
+    },
+    {
+      "topicId": "memory-bound-vs-compute-bound",
+      "topicTitle": "Memory-Bound vs Compute-Bound Analysis",
+      "topicOrder": 4,
+      "difficulty": "intermediate",
+      "estimatedTheoryMinutes": 25,
+      "prerequisites": ["roofline-model", "nsight-compute-workflow"],
+      "roadmapNodeSlug": null,
+      "roadmapNodeTitle": null,
+      "roadmapNodeType": null,
+      "concepts": [
+        {
+          "conceptId": "bottleneck-analysis",
+          "title": "Identifying and Addressing Bottlenecks",
+          "preciseDefinition": "A kernel is memory-bound if its runtime scales with memory_bytes / memory_bandwidth, and compute-bound if it scales with flops / arithmetic_bandwidth. Common optimization strategies: for memory-bound → increase arithmetic intensity (fusion, tiling, quantization); for compute-bound → reduce register pressure, improve ILP, upgrade to Tensor Cores. The roofline model determines which bound applies and how far below the roof the kernel sits.",
+          "source": "gpu-glossary/perf/memory-bound.md; gpu-glossary/perf/compute-bound.md; gpu-glossary/perf/performance-bottleneck.md",
+          "keyFacts": [
+            "Memory-bound optimizations: coalescing, shared memory reuse, tiling, reducing redundant loads, quantization",
+            "Compute-bound optimizations: ILP, unrolling, Tensor Core usage, register blocking, dual-issue",
+            "Fusion: merging multiple memory-bound kernels eliminates intermediate reads/writes — most impactful optimization for LLM inference",
+            "Prefetching with async copies (ldgsts, cp.async) can overlap computation and memory for some patterns",
+            "Bandwidth utilization = achieved_bandwidth / peak_bandwidth; target >80% for memory-bound kernels"
+          ],
+          "commonMisconceptions": [
+            "One can be both memory-bound and compute-bound simultaneously — a kernel hits only one roof at a time",
+            "Kernel fusion always helps — fusion can increase register pressure and reduce occupancy if not done carefully",
+            "Fixing memory access pattern always speeds up a compute-bound kernel — memory optimizations have no impact when compute is the bottleneck"
+          ],
+          "interviewRelevance": "high",
+          "relatedConcepts": ["roofline-model", "arithmetic-intensity", "operation-fusion", "warp-efficiency-metrics"]
+        }
+      ],
+      "exercises": []
+    }
+  ],
+  "roadmapNodes": [],
+  "coverageGaps": [
+    "CUPTI-based custom profiling — reading raw hardware counters from user code; advanced use case, not planned",
+    "Power and thermal profiling (nvidia-smi, NVML) — relevant for production deployment but not covered in curriculum",
+    "Compute Sanitizer for race condition detection — important for debugging, not covered"
+  ],
+  "interviewFrequency": {
+    "high": ["roofline-model", "arithmetic-intensity", "memory-bandwidth", "bottleneck-analysis"],
+    "medium": ["nsight-compute", "warp-efficiency-metrics", "nsight-systems"],
+    "low": []
+  }
+}
