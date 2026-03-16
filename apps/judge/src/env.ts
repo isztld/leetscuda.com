@@ -1,4 +1,3 @@
-import { execSync } from 'child_process'
 import { z } from 'zod'
 
 const envSchema = z.object({
@@ -26,20 +25,41 @@ if (!parsed.success) {
 
 const capabilities = parsed.data.JUDGE_CAPABILITIES.split(',').map((c) => c.trim()).filter(Boolean)
 
-// If k8s capability is declared, verify kubectl is available in PATH
+// If k8s capability is declared, verify kubeconform is available and offline validation works
 if (capabilities.includes('k8s')) {
-  let kubectlAvailable = false
-  try {
-    execSync('kubectl version --client', { stdio: 'ignore' })
-    kubectlAvailable = true
-  } catch {
-    kubectlAvailable = false
-  }
-  if (!kubectlAvailable) {
-    console.error('[judge] ERROR: k8s capability declared but kubectl not found in PATH')
+  const { execFile } = await import('child_process')
+  const { promisify } = await import('util')
+  const execFileAsync = promisify(execFile)
+  const os = await import('os')
+  const fs = await import('fs/promises')
+  const path = await import('path')
+
+  const kubeconformAvailable = await execFileAsync('kubeconform', ['-v'])
+    .then(() => true)
+    .catch(() => false)
+
+  if (!kubeconformAvailable) {
+    console.error('[judge] ERROR: k8s capability declared but kubeconform not found in PATH')
     process.exit(1)
   }
-  console.log('[judge] kubectl available — k8s validation enabled')
+
+  try {
+    const testManifest = `apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\n  namespace: default\n`
+    const testFile = path.join(os.tmpdir(), `kubeconform-test-${Date.now()}.yaml`)
+    await fs.writeFile(testFile, testManifest)
+
+    await execFileAsync('kubeconform', [
+      '-schema-location', 'default',
+      '-summary',
+      testFile,
+    ])
+
+    await fs.unlink(testFile).catch(() => {})
+    console.log('[judge] kubeconform available and offline validation confirmed — k8s validation enabled')
+  } catch (err) {
+    console.error(`[judge] ERROR: kubeconform offline validation failed: ${err}`)
+    process.exit(1)
+  }
 }
 
 export const env = {

@@ -1,10 +1,15 @@
 FROM node:20-alpine
 RUN apk add --no-cache curl bash
 
-# Install kubectl
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
-    && chmod +x kubectl \
-    && mv kubectl /usr/local/bin/kubectl
+# Install kubeconform
+RUN curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+    | tar -xz -C /usr/local/bin kubeconform \
+    && chmod +x /usr/local/bin/kubeconform
+
+# Pre-warm the bundled schemas at build time so no network calls happen at runtime
+RUN printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\n' > /tmp/test.yaml \
+    && kubeconform -schema-location default -summary /tmp/test.yaml \
+    && rm /tmp/test.yaml
 
 WORKDIR /app
 

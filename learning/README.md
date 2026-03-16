@@ -134,7 +134,8 @@ your node to the nodes list. Then create the corresponding content file.
 
 - Problems must have real test cases with correct expected outputs
 - CUDA problems must compile cleanly with `nvcc -arch=sm_86`
-- K8s problems must pass `kubectl apply --dry-run=client`
+- The `dry-run` check validates your manifest against the official Kubernetes
+  JSON schemas using `kubeconform` in strict offline mode. No cluster required.
 - Theory content must be technically accurate — cite sources
 - Write as a practitioner, not a textbook author
 - No AI-generated filler

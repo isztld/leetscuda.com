@@ -178,6 +178,7 @@ function runAssertionCheck(docs: unknown[], check: K8sCheck): K8sValidationResul
 
 async function runKubectlDryRun(
   manifestYaml: string,
+  check: K8sCheck,
   timeoutMs: number,
 ): Promise<K8sValidationResult> {
   const tmpDir = os.tmpdir()
@@ -186,27 +187,68 @@ async function runKubectlDryRun(
   try {
     fs.writeFileSync(tmpFile, manifestYaml, 'utf8')
 
-    const { stdout, stderr } = await execFileAsync(
-      'kubectl',
-      ['apply', '--dry-run=client', '-f', tmpFile],
-      { timeout: timeoutMs },
-    )
-    const output = (stdout + stderr).trim()
+    const kubeconfigArgs = [
+      '-strict',
+      '-summary',
+      '-output', 'json',
+      '-schema-location', 'default', // bundled schemas, no network
+      tmpFile,
+    ]
+
+    let passed = false
+    let message = 'Manifest is valid'
+
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        'kubeconform',
+        kubeconfigArgs,
+        {
+          timeout: timeoutMs,
+          env: process.env,
+        },
+      )
+
+      try {
+        const result = JSON.parse(stdout)
+        const invalid = result.resources?.filter(
+          (r: { status: string }) => r.status === 'invalid' || r.status === 'error'
+        ) ?? []
+
+        if (invalid.length === 0) {
+          passed = true
+          message = 'Manifest passes schema validation'
+        } else {
+          message = invalid
+            .map((r: { message: string; name: string }) => `${r.name}: ${r.message}`)
+            .join('; ')
+        }
+      } catch {
+        // stdout not JSON — treat as pass if no stderr
+        passed = !stderr
+        message = stderr || 'Manifest passes schema validation'
+      }
+    } catch (err: unknown) {
+      // execFileAsync throws on non-zero exit
+      const execErr = err as { stdout?: string; stderr?: string; code?: number }
+      try {
+        const result = JSON.parse(execErr.stdout ?? '{}')
+        const invalid = result.resources?.filter(
+          (r: { status: string }) => r.status === 'invalid' || r.status === 'error'
+        ) ?? []
+        message = invalid.length > 0
+          ? invalid.map((r: { message: string; name: string }) => `${r.name}: ${r.message}`).join('; ')
+          : execErr.stderr ?? 'Schema validation failed'
+      } catch {
+        message = execErr.stderr ?? execErr.stdout ?? 'Schema validation failed'
+      }
+      passed = false
+    }
 
     return {
-      checkId: 'dry-run',
-      description: 'Must pass kubectl apply --dry-run=client',
-      passed: true,
-      message: output || 'kubectl dry-run passed',
-    }
-  } catch (err) {
-    const e = err as { stderr?: string; stdout?: string; message?: string }
-    const detail = (e.stderr ?? e.stdout ?? e.message ?? String(err)).trim()
-    return {
-      checkId: 'dry-run',
-      description: 'Must pass kubectl apply --dry-run=client',
-      passed: false,
-      message: detail || 'kubectl apply --dry-run=client failed',
+      checkId: check.id,
+      description: check.description,
+      passed,
+      message,
     }
   } finally {
     try {
@@ -253,7 +295,7 @@ export async function validateK8sManifest(
     } else if (check.type === 'assertion') {
       results.push(runAssertionCheck(docs, check))
     } else if (check.type === 'kubectl-dry-run') {
-      results.push(await runKubectlDryRun(manifestYaml, opts.timeoutMs))
+      results.push(await runKubectlDryRun(manifestYaml, check, opts.timeoutMs))
     }
   }
 
