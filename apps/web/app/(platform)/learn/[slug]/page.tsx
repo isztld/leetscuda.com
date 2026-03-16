@@ -37,7 +37,7 @@ export default async function LearnPage({ params }: Props) {
 
   const isRead = existingRead !== null
 
-  const currentIndex = trackNodes.findIndex((n) => n.slug === slug)
+  const currentIndex = trackNodes.findIndex((n: { slug: string }) => n.slug === slug)
   const prevNode = currentIndex > 0 ? trackNodes[currentIndex - 1] : null
   const nextNode = currentIndex < trackNodes.length - 1 ? trackNodes[currentIndex + 1] : null
 
