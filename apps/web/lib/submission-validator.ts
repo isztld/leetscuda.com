@@ -6,7 +6,7 @@ type ValidationResult =
   | { valid: true }
   | { valid: false; code: string; message: string; submissionId?: string }
 
-const SUPPORTED_LANGUAGES = ['cpp']
+const SUPPORTED_LANGUAGES = ['cpp', 'yaml']
 
 // Control characters that are not allowed (null bytes, non-printable except tab/LF/CR)
 const INVALID_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/
