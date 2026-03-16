@@ -1,0 +1,41 @@
+---
+slug: ml-systems
+title: "ML Systems & Inference"
+description: "Build and optimize inference pipelines for large-scale ML serving."
+icon: "🧠"
+color: "#0891B2"
+order: 2
+nodes:
+  - slug: ml-inference-basics
+    title: "Inference Fundamentals"
+    description: "Understand the end-to-end inference pipeline from model loading to first-token latency."
+    type: CONCEPT
+    order: 1
+    prerequisites: []
+  - slug: quantization-intro
+    title: "Model Quantization"
+    description: "Learn INT8 and FP16 post-training quantisation for throughput and memory savings."
+    type: CONCEPT
+    order: 2
+    prerequisites: [ml-inference-basics]
+  - slug: kv-cache
+    title: "KV Cache Implementation"
+    description: "Implement a key-value cache for autoregressive transformer inference to eliminate redundant computation."
+    type: PROBLEM
+    order: 3
+    prerequisites: [ml-inference-basics]
+  - slug: batched-inference
+    title: "Continuous Batching Scheduler"
+    description: "Write a continuous-batching scheduler that maximises GPU utilisation for LLM serving."
+    type: PROBLEM
+    order: 4
+    prerequisites: [quantization-intro]
+  - slug: flash-attention
+    title: "Flash Attention"
+    description: "Implement the IO-aware Flash Attention algorithm that fuses attention into a single SRAM-resident kernel."
+    type: PROBLEM
+    order: 5
+    prerequisites: [quantization-intro]
+---
+
+ML Systems & Inference problems and theory.

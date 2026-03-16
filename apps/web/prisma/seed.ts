@@ -1,3 +1,6 @@
+import fs from 'fs'
+import path from 'path'
+import matter from 'gray-matter'
 import { PrismaClient, NodeType } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 
@@ -5,283 +8,56 @@ const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
 })
 
-const TRACKS = [
-  {
-    slug: 'cuda',
-    title: 'CUDA & GPU Programming',
-    description: 'Master parallel GPU programming from first principles to optimized kernels.',
-    icon: '⚡',
-    color: '#7C3AED',
-    order: 1,
-  },
-  {
-    slug: 'ml-systems',
-    title: 'ML Systems & Inference',
-    description: 'Build and optimize inference pipelines for large-scale ML serving.',
-    icon: '🧠',
-    color: '#0891B2',
-    order: 2,
-  },
-  {
-    slug: 'kubernetes-ai',
-    title: 'Kubernetes for AI',
-    description: 'Deploy, scale, and operate GPU workloads on Kubernetes.',
-    icon: '☸',
-    color: '#059669',
-    order: 3,
-  },
-  {
-    slug: 'foundations',
-    title: 'Foundations',
-    description: 'Core systems and hardware knowledge every AI infrastructure engineer needs.',
-    icon: '🏗',
-    color: '#D97706',
-    order: 4,
-  },
-]
+// process.cwd() = apps/web when run via prisma db seed
+const LEARNING_DIR = path.join(process.cwd(), '../../learning')
 
-const NODES: {
+type NodeDef = {
   slug: string
   title: string
   description: string
-  type: NodeType
-  trackSlug: string
+  type: 'CONCEPT' | 'PROBLEM'
   order: number
   prerequisites: string[]
-}[] = [
-  // ── CUDA track ──────────────────────────────────────────────────────────────
-  {
-    slug: 'cuda-intro',
-    title: 'Introduction to CUDA',
-    description: 'Understand the GPU programming model, SM architecture, and the CUDA execution model.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'cuda',
-    order: 1,
-    prerequisites: [],
-  },
-  {
-    slug: 'cuda-threads',
-    title: 'Threads, Blocks & Grids',
-    description: 'Learn how CUDA organises parallel work into threads, blocks, and grids with 1-D and 2-D layouts.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'cuda',
-    order: 2,
-    prerequisites: ['cuda-intro'],
-  },
-  {
-    slug: 'cuda-memory',
-    title: 'Memory Hierarchy',
-    description: 'Master global, shared, constant, and register memory and their latency trade-offs.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'cuda',
-    order: 3,
-    prerequisites: ['cuda-threads'],
-  },
-  {
-    slug: 'vector-add',
-    title: 'Vector Addition',
-    description: 'Implement parallel element-wise vector addition as your first CUDA kernel.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'cuda',
-    order: 4,
-    prerequisites: ['cuda-threads'],
-  },
-  {
-    slug: 'matrix-multiply',
-    title: 'Tiled Matrix Multiplication',
-    description: 'Write an optimised tiled matrix-multiply kernel that exploits shared memory to cut global-memory traffic.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'cuda',
-    order: 5,
-    prerequisites: ['cuda-memory'],
-  },
-  {
-    slug: 'matrix-transpose',
-    title: 'Matrix Transpose',
-    description: 'Implement a coalesced tiled matrix transpose using shared memory to avoid the 32× slowdown of naïve column writes.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'cuda',
-    order: 6,
-    prerequisites: ['cuda-memory'],
-  },
-  {
-    slug: 'reduce-sum',
-    title: 'Parallel Reduction Sum',
-    description: 'Implement an efficient parallel reduction that sums N floats using shared memory and warp-level primitives.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'cuda',
-    order: 7,
-    prerequisites: ['cuda-memory'],
-  },
-  {
-    slug: 'cuda-streams',
-    title: 'CUDA Streams & Async Transfers',
-    description: 'Overlap kernel execution with H2D/D2H transfers using CUDA streams and events.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'cuda',
-    order: 8,
-    prerequisites: ['cuda-memory'],
-  },
+}
 
-  // ── ML Systems track ─────────────────────────────────────────────────────────
-  {
-    slug: 'ml-inference-basics',
-    title: 'Inference Fundamentals',
-    description: 'Understand the end-to-end inference pipeline from model loading to first-token latency.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'ml-systems',
-    order: 1,
-    prerequisites: [],
-  },
-  {
-    slug: 'quantization-intro',
-    title: 'Model Quantization',
-    description: 'Learn INT8 and FP16 post-training quantisation for throughput and memory savings.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'ml-systems',
-    order: 2,
-    prerequisites: ['ml-inference-basics'],
-  },
-  {
-    slug: 'kv-cache',
-    title: 'KV Cache Implementation',
-    description: 'Implement a key-value cache for autoregressive transformer inference to eliminate redundant computation.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'ml-systems',
-    order: 3,
-    prerequisites: ['ml-inference-basics'],
-  },
-  {
-    slug: 'batched-inference',
-    title: 'Continuous Batching Scheduler',
-    description: 'Write a continuous-batching scheduler that maximises GPU utilisation for LLM serving.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'ml-systems',
-    order: 4,
-    prerequisites: ['quantization-intro'],
-  },
-  {
-    slug: 'flash-attention',
-    title: 'Flash Attention',
-    description: 'Implement the IO-aware Flash Attention algorithm that fuses attention into a single SRAM-resident kernel.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'ml-systems',
-    order: 5,
-    prerequisites: ['quantization-intro'],
-  },
+type TrackDef = {
+  slug: string
+  title: string
+  description: string
+  icon: string
+  color: string
+  order: number
+  nodes: NodeDef[]
+}
 
-  // ── Kubernetes for AI track ───────────────────────────────────────────────────
-  {
-    slug: 'multi-node-training',
-    title: 'Multi-Node Distributed Training Job',
-    description: 'Launch a PyTorch DDP training job across multiple GPU nodes using a Kubernetes Job with MPI or torchrun.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'kubernetes-ai',
-    order: 5,
-    prerequisites: ['gpu-operator'],
-  },
-  {
-    slug: 'k8s-basics',
-    title: 'Kubernetes Fundamentals',
-    description: 'Learn pods, deployments, services, ConfigMaps, and namespaces through hands-on exercises.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'kubernetes-ai',
-    order: 1,
-    prerequisites: [],
-  },
-  {
-    slug: 'gpu-operator',
-    title: 'NVIDIA GPU Operator',
-    description: 'Deploy the NVIDIA GPU Operator to expose GPU devices to Kubernetes workloads without manual driver management.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'kubernetes-ai',
-    order: 2,
-    prerequisites: ['k8s-basics'],
-  },
-  {
-    slug: 'deploy-inference-server',
-    title: 'Deploy an Inference Server',
-    description: 'Package a vLLM inference server as a Kubernetes Deployment with GPU resource limits and liveness probes.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'kubernetes-ai',
-    order: 3,
-    prerequisites: ['gpu-operator'],
-  },
-  {
-    slug: 'hpa-gpu',
-    title: 'Autoscaling GPU Workloads',
-    description: 'Configure a Horizontal Pod Autoscaler backed by custom GPU-utilisation metrics to right-size inference replicas.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'kubernetes-ai',
-    order: 4,
-    prerequisites: ['gpu-operator'],
-  },
+function loadTracks(): TrackDef[] {
+  const entries = fs.readdirSync(LEARNING_DIR, { withFileTypes: true })
+  const tracks: TrackDef[] = []
 
-  // ── Foundations track ────────────────────────────────────────────────────────
-  {
-    slug: 'memory-model',
-    title: 'CPU Memory Hierarchy',
-    description: 'Understand L1/L2/L3 cache hierarchies, cache lines, TLBs, and NUMA topology and how they affect bandwidth.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'foundations',
-    order: 1,
-    prerequisites: [],
-  },
-  {
-    slug: 'simd-basics',
-    title: 'SIMD & Vectorisation',
-    description: 'Use AVX2/SSE intrinsics and auto-vectorisation hints to accelerate data-parallel CPU loops.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'foundations',
-    order: 2,
-    prerequisites: ['memory-model'],
-  },
-  {
-    slug: 'pcie-bandwidth',
-    title: 'PCIe Transfer Bandwidth',
-    description: 'Measure and optimise host-to-device and device-to-host transfer rates across the PCIe bus.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'foundations',
-    order: 3,
-    prerequisites: ['memory-model'],
-  },
-  {
-    slug: 'profiling-basics',
-    title: 'Profiling GPU Code',
-    description: 'Use Nsight Systems and Nsight Compute to identify hotspots, memory bottlenecks, and warp stalls.',
-    type: NodeType.CONCEPT,
-    trackSlug: 'foundations',
-    order: 4,
-    prerequisites: ['simd-basics'],
-  },
-  {
-    slug: 'roofline-model',
-    title: 'Roofline Analysis',
-    description: 'Apply the roofline model to determine whether a kernel is compute-bound or memory-bandwidth-bound.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'foundations',
-    order: 5,
-    prerequisites: ['profiling-basics', 'simd-basics'],
-  },
-  {
-    slug: 'false-sharing',
-    title: 'Eliminate False Sharing',
-    description: 'Identify and fix false sharing in a multithreaded accumulator by aligning per-thread data to cache line boundaries.',
-    type: NodeType.PROBLEM,
-    trackSlug: 'foundations',
-    order: 6,
-    prerequisites: ['memory-model'],
-  },
-]
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const trackFile = path.join(LEARNING_DIR, entry.name, 'track.mdx')
+    if (!fs.existsSync(trackFile)) continue
 
+    const raw = fs.readFileSync(trackFile, 'utf8')
+    const { data } = matter(raw)
+    tracks.push(data as TrackDef)
+  }
+
+  return tracks.sort((a, b) => a.order - b.order)
+}
 
 async function main() {
+  const tracks = loadTracks()
+  console.log(`Found ${tracks.length} track(s) in learning/`)
+
   console.log('Seeding tracks...')
-  for (const track of TRACKS) {
+  for (const track of tracks) {
+    const { nodes: _, ...trackData } = track
     await prisma.track.upsert({
-      where: { slug: track.slug },
-      update: track,
-      create: track,
+      where: { slug: trackData.slug },
+      update: trackData,
+      create: trackData,
     })
   }
 
@@ -290,18 +66,23 @@ async function main() {
   )
 
   console.log('Seeding roadmap nodes...')
-  for (const { trackSlug, ...node } of NODES) {
-    const trackId = trackMap.get(trackSlug)
-    if (!trackId) throw new Error(`Unknown track slug: ${trackSlug}`)
-    await prisma.roadmapNode.upsert({
-      where: { slug: node.slug },
-      update: { ...node, trackId },
-      create: { ...node, trackId },
-    })
+  for (const track of tracks) {
+    const trackId = trackMap.get(track.slug)
+    if (!trackId) throw new Error(`Track not found after upsert: ${track.slug}`)
+
+    for (const node of track.nodes) {
+      const { type, ...rest } = node
+      await prisma.roadmapNode.upsert({
+        where: { slug: node.slug },
+        update: { ...rest, type: NodeType[type], trackId },
+        create: { ...rest, type: NodeType[type], trackId },
+      })
+    }
   }
 
+  const totalNodes = tracks.reduce((sum, t) => sum + t.nodes.length, 0)
   console.log(
-    `✅ Seeded ${TRACKS.length} tracks, ${NODES.length} roadmap nodes.\n` +
+    `✅ Seeded ${tracks.length} tracks, ${totalNodes} roadmap nodes.\n` +
     `   Run pnpm db:sync to populate problems from MDX files.`,
   )
 }

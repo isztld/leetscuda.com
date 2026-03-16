@@ -1,0 +1,59 @@
+---
+slug: cuda
+title: "CUDA & GPU Programming"
+description: "Master parallel GPU programming from first principles to optimized kernels."
+icon: "⚡"
+color: "#7C3AED"
+order: 1
+nodes:
+  - slug: cuda-intro
+    title: "Introduction to CUDA"
+    description: "Understand the GPU programming model, SM architecture, and the CUDA execution model."
+    type: CONCEPT
+    order: 1
+    prerequisites: []
+  - slug: cuda-threads
+    title: "Threads, Blocks & Grids"
+    description: "Learn how CUDA organises parallel work into threads, blocks, and grids with 1-D and 2-D layouts."
+    type: CONCEPT
+    order: 2
+    prerequisites: [cuda-intro]
+  - slug: cuda-memory
+    title: "Memory Hierarchy"
+    description: "Master global, shared, constant, and register memory and their latency trade-offs."
+    type: CONCEPT
+    order: 3
+    prerequisites: [cuda-threads]
+  - slug: vector-add
+    title: "Vector Addition"
+    description: "Implement parallel element-wise vector addition as your first CUDA kernel."
+    type: PROBLEM
+    order: 4
+    prerequisites: [cuda-threads]
+  - slug: matrix-multiply
+    title: "Tiled Matrix Multiplication"
+    description: "Write an optimised tiled matrix-multiply kernel that exploits shared memory to cut global-memory traffic."
+    type: PROBLEM
+    order: 5
+    prerequisites: [cuda-memory]
+  - slug: matrix-transpose
+    title: "Matrix Transpose"
+    description: "Implement a coalesced tiled matrix transpose using shared memory to avoid the 32× slowdown of naïve column writes."
+    type: PROBLEM
+    order: 6
+    prerequisites: [cuda-memory]
+  - slug: reduce-sum
+    title: "Parallel Reduction Sum"
+    description: "Implement an efficient parallel reduction that sums N floats using shared memory and warp-level primitives."
+    type: PROBLEM
+    order: 7
+    prerequisites: [cuda-memory]
+  - slug: cuda-streams
+    title: "CUDA Streams & Async Transfers"
+    description: "Overlap kernel execution with H2D/D2H transfers using CUDA streams and events."
+    type: CONCEPT
+    order: 8
+    prerequisites: [cuda-memory]
+---
+
+CUDA & GPU Programming problems and theory.

@@ -120,12 +120,12 @@ leetscuda/
 │   │   │   ├── (platform)/     Roadmap, problems list, problem detail
 │   │   │   └── api/judge/      Judge HTTP API (poll + result endpoints)
 │   │   ├── lib/                Prisma client, Redis, auth, runtime maps, streak
-│   │   ├── scripts/            CLI scripts (create-judge-token)
+│   │   ├── scripts/            CLI scripts (create-judge-token, db-sync, theory-sync)
 │   │   ├── server/
 │   │   │   └── routers/        tRPC routers (user, roadmap, problems, submissions)
 │   │   └── prisma/
 │   │       ├── schema.prisma
-│   │       ├── seed.ts
+│   │       ├── seed.ts         Reads learning/*/track.mdx to seed tracks + nodes
 │   │       └── migrations/
 │   └── judge/                  Standalone judge worker (HTTP client, no DB/Redis)
 │       ├── tmp/                Scratch space for per-submission source + binary
@@ -136,24 +136,31 @@ leetscuda/
 │           ├── verifier.ts     Output comparison with float tolerance + fill expansion
 │           ├── env.ts          Environment validation
 │           └── types.ts        Shared types and Zod schemas
-└── problems/                   Problem content (MDX files)
+└── learning/                   All content — one folder per track (open for contributions)
     ├── cuda/
-    │   ├── vector-add/index.mdx
-    │   ├── matrix-multiply/index.mdx
-    │   ├── matrix-transpose/index.mdx
-    │   └── reduce-sum/index.mdx
+    │   ├── track.mdx           Track metadata + roadmap node definitions
+    │   ├── problems/
+    │   │   ├── vector-add/index.mdx
+    │   │   ├── matrix-multiply/index.mdx
+    │   │   ├── matrix-transpose/index.mdx
+    │   │   └── reduce-sum/index.mdx
+    │   └── theory/
+    │       ├── cuda-intro/index.mdx
+    │       ├── cuda-threads/index.mdx
+    │       ├── cuda-memory/index.mdx
+    │       └── cuda-streams/index.mdx
     ├── ml-systems/
-    │   ├── kv-cache/index.mdx
-    │   ├── batched-inference/index.mdx
-    │   └── flash-attention/index.mdx
+    │   ├── track.mdx
+    │   ├── problems/  (kv-cache, batched-inference, flash-attention)
+    │   └── theory/    (ml-inference-basics, quantization-intro)
     ├── kubernetes-ai/
-    │   ├── deploy-inference-server/index.mdx
-    │   ├── hpa-gpu/index.mdx
-    │   └── multi-node-training/index.mdx
+    │   ├── track.mdx
+    │   ├── problems/  (deploy-inference-server, hpa-gpu, multi-node-training)
+    │   └── theory/    (k8s-basics, gpu-operator)
     └── foundations/
-        ├── pcie-bandwidth/index.mdx
-        ├── roofline-model/index.mdx
-        └── false-sharing/index.mdx
+        ├── track.mdx
+        ├── problems/  (pcie-bandwidth, roofline-model, false-sharing)
+        └── theory/    (memory-model, simd-basics, profiling-basics)
 ```
 
 ---
@@ -254,7 +261,7 @@ Key enums: `ExecutionRuntime { CPP CUDA }` · `CppStandard { CPP14 CPP17 CPP20 C
 
 ## Problem format (MDX)
 
-Every problem lives at `problems/{track}/{slug}/index.mdx` with five sections:
+Every problem lives at `learning/{track}/problems/{slug}/index.mdx` with five sections:
 
 ```
 ---
@@ -313,7 +320,7 @@ For C++ problems omit `cuda_version` and `compute_cap`.
 
 ### Adding a problem
 
-1. Create `problems/{track}/{slug}/index.mdx` following the frontmatter schema above
+1. Create `learning/{track}/problems/{slug}/index.mdx` following the frontmatter schema above
 2. Write the description, starter code, test cases, and solution sections
 3. Open a PR — CI validates frontmatter on merge
 4. On merge to main, GitHub Actions automatically syncs the problem to the DB
@@ -327,24 +334,24 @@ pnpm --filter @leetscuda/web db:sync
 
 ## Adding theory content
 
-Theory pages live at `/learn/{slug}` and are powered by MDX files in `theory/` at the monorepo root.
+Theory pages live at `/learn/{slug}` and are powered by MDX files in `learning/{track}/theory/` at the monorepo root.
 
 ### Directory structure
 
 ```
-theory/
-  cuda/
+learning/
+  cuda/theory/
     cuda-intro/index.mdx
     cuda-threads/index.mdx
     cuda-memory/index.mdx
     cuda-streams/index.mdx
-  ml-systems/
+  ml-systems/theory/
     ml-inference-basics/index.mdx
     quantization-intro/index.mdx
-  kubernetes-ai/
+  kubernetes-ai/theory/
     k8s-basics/index.mdx
     gpu-operator/index.mdx
-  foundations/
+  foundations/theory/
     memory-model/index.mdx
     simd-basics/index.mdx
     profiling-basics/index.mdx
@@ -370,8 +377,8 @@ Required fields: `slug`, `title`, `track`, `type` (must be `concept`), `status` 
 
 ### Adding a new theory page
 
-1. Create `theory/{track}/{slug}/index.mdx` with the correct frontmatter
-2. The `slug` must match an existing `CONCEPT` `RoadmapNode` slug in `apps/web/prisma/seed.ts`
+1. Create `learning/{track}/theory/{slug}/index.mdx` with the correct frontmatter
+2. The `slug` must match an existing `CONCEPT` node defined in `learning/{track}/track.mdx`
 3. Run `pnpm theory:sync` to validate frontmatter and verify all CONCEPT nodes are covered
 4. On merge to main, the page is immediately available at `/learn/{slug}`
 
@@ -493,7 +500,7 @@ pnpm --filter @leetscuda/judge dev          # watch mode
 # Database
 pnpm --filter @leetscuda/web db:migrate     # apply pending migrations
 pnpm --filter @leetscuda/web db:generate    # regenerate Prisma client after schema changes
-pnpm --filter @leetscuda/web db:seed        # seed tracks, roadmap nodes, 12 problems
+pnpm --filter @leetscuda/web db:seed        # seed tracks + roadmap nodes from learning/*/track.mdx
 pnpm --filter @leetscuda/web db:studio      # open Prisma Studio
 
 # Token management
@@ -555,3 +562,5 @@ pnpm --filter @leetscuda/web judge:token --name <name> --capabilities <csv>
 | 10.5 | Done | Judge end-to-end fix — DinD volume path, harness pipeline, CUDA banner bypass; all CUDA problems judged |
 | 12 | Done | MDX as single source of truth — `db:sync` script, seed cleaned up |
 | 13 | Done | Submission hardening — rate limiting, daily caps, code size guard, duplicate prevention, cancel flow, SIGTERM/SIGKILL timeout, orphan cleanup; all limits env-var driven |
+| 14 | Done | Submission experience overhaul — rich result panel, editorials, history tab, stats |
+| 15 | Done | Content restructure — `problems/` + `theory/` merged into `learning/{track}/{problems,theory}/`; track metadata + node definitions moved from `seed.ts` into `learning/{track}/track.mdx` |

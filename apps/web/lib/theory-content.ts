@@ -18,7 +18,7 @@ async function renderMarkdown(source: string): Promise<string> {
 }
 
 // process.cwd() is apps/web when running `next dev`
-const THEORY_DIR = path.join(process.cwd(), '../../theory')
+const LEARNING_DIR = path.join(process.cwd(), '../../learning')
 
 export type TheoryFrontmatter = {
   slug: string
@@ -39,7 +39,7 @@ export async function loadTheoryContent(
   track: string,
   slug: string,
 ): Promise<TheoryContent | null> {
-  const filePath = path.join(THEORY_DIR, track, slug, 'index.mdx')
+  const filePath = path.join(LEARNING_DIR, track, 'theory', slug, 'index.mdx')
 
   let raw: string
   try {

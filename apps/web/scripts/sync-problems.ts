@@ -6,6 +6,7 @@
  * Usage: pnpm --filter @leetscuda/web db:sync  (run from apps/web)
  */
 
+import fs from 'fs'
 import path from 'path'
 import { PrismaClient, Difficulty, ProblemStatus, ExecutionRuntime, CppStandard, CudaVersion, ComputeCap } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
@@ -15,7 +16,16 @@ import type { ProblemFrontmatter } from '../lib/sync/validate-frontmatter'
 // ── Directory ─────────────────────────────────────────────────────────────────
 
 // process.cwd() = apps/web when script is run via pnpm
-const PROBLEMS_DIR = path.join(process.cwd(), '../../problems')
+const LEARNING_DIR = path.join(process.cwd(), '../../learning')
+
+function getProblemsDirs(learningDir: string): string[] {
+  if (!fs.existsSync(learningDir)) return []
+  return fs
+    .readdirSync(learningDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => path.join(learningDir, d.name, 'problems'))
+    .filter((d) => fs.existsSync(d))
+}
 
 // ── Enum mappings ─────────────────────────────────────────────────────────────
 
@@ -60,30 +70,39 @@ function mapComputeCap(c: string): ComputeCap | null {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('\nScanning problems directory...')
-  console.log(`  ${PROBLEMS_DIR}\n`)
+  const problemsDirs = getProblemsDirs(LEARNING_DIR)
+  console.log('\nScanning learning directory...')
+  console.log(`  ${LEARNING_DIR}\n`)
 
-  const { valid, warnings } = await scanProblems(PROBLEMS_DIR)
-  const total = valid.length + warnings.length
+  const allValid: Awaited<ReturnType<typeof scanProblems>>['valid'] = []
+  const allWarnings: Awaited<ReturnType<typeof scanProblems>>['warnings'] = []
+
+  for (const dir of problemsDirs) {
+    const { valid, warnings } = await scanProblems(dir)
+    allValid.push(...valid)
+    allWarnings.push(...warnings)
+  }
+
+  const total = allValid.length + allWarnings.length
   console.log(`Found ${total} MDX file(s)\n`)
 
   // Print valid files
-  for (const { frontmatter, filePath } of valid) {
-    const rel = path.relative(PROBLEMS_DIR, filePath)
+  for (const { filePath } of allValid) {
+    const rel = path.relative(LEARNING_DIR, filePath)
     const dir = path.dirname(rel)
     console.log(`  ✓ ${dir}`)
   }
 
   // Print warnings
-  for (const { filePath, errors } of warnings) {
-    const rel = path.relative(PROBLEMS_DIR, filePath)
+  for (const { filePath, errors } of allWarnings) {
+    const rel = path.relative(LEARNING_DIR, filePath)
     const dir = path.dirname(rel)
     for (const err of errors) {
       console.warn(`  ⚠ ${dir} — ${err} (skipped)`)
     }
   }
 
-  if (valid.length === 0 && warnings.length === 0) {
+  if (allValid.length === 0 && allWarnings.length === 0) {
     console.log('  (no MDX files found)')
   }
 
@@ -94,17 +113,17 @@ async function main() {
   })
 
   let upserted = 0
-  let skipped = warnings.length
+  let skipped = allWarnings.length
 
   try {
     // Build track slug → id map
     const tracks = await prisma.track.findMany({ select: { id: true, slug: true } })
     const trackMap = new Map(tracks.map((t) => [t.slug, t.id]))
 
-    for (const { frontmatter: fm, filePath } of valid) {
+    for (const { frontmatter: fm, filePath } of allValid) {
       const trackId = trackMap.get(fm.track)
       if (!trackId) {
-        const rel = path.relative(PROBLEMS_DIR, filePath)
+        const rel = path.relative(LEARNING_DIR, filePath)
         console.warn(`  ⚠ ${path.dirname(rel)} — unknown track '${fm.track}' (skipped)`)
         skipped++
         continue
@@ -142,7 +161,7 @@ async function main() {
   console.log(`  skipped:  ${skipped} problems (warnings above)`)
   console.log('\nSync complete.\n')
 
-  if (warnings.length > 0) {
+  if (allWarnings.length > 0) {
     process.exit(1)
   }
 }

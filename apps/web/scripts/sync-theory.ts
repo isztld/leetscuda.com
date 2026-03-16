@@ -28,7 +28,16 @@ const TheoryFrontmatterSchema = z.object({
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // process.cwd() = apps/web when script is run via pnpm
-const THEORY_DIR = path.join(process.cwd(), '../../theory')
+const LEARNING_DIR = path.join(process.cwd(), '../../learning')
+
+function getTheoryDirs(learningDir: string): string[] {
+  if (!fs.existsSync(learningDir)) return []
+  return fs
+    .readdirSync(learningDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => path.join(learningDir, d.name, 'theory'))
+    .filter((d) => fs.existsSync(d))
+}
 
 function ok(msg: string) { console.log(`  ✅ ${msg}`) }
 function warn(msg: string) { console.warn(`  ⚠️  ${msg}`) }
@@ -53,16 +62,17 @@ function findMdxFiles(dir: string): string[] {
 
 async function main() {
   console.log('\n🔍  Scanning theory content...\n')
-  console.log(`Theory dir: ${THEORY_DIR}\n`)
+  console.log(`Learning dir: ${LEARNING_DIR}\n`)
 
-  const files = findMdxFiles(THEORY_DIR)
+  const theoryDirs = getTheoryDirs(LEARNING_DIR)
+  const files = theoryDirs.flatMap(findMdxFiles)
   console.log(`Found ${files.length} theory file(s)\n`)
 
   const validSlugs = new Set<string>()
   let fileErrors = 0
 
   for (const filePath of files) {
-    const rel = path.relative(THEORY_DIR, filePath)
+    const rel = path.relative(LEARNING_DIR, filePath)
     let raw: string
     try {
       raw = fs.readFileSync(filePath, 'utf8')
@@ -110,7 +120,7 @@ async function main() {
       ok(`${node.track.slug}/${node.slug}  →  "${node.title}"`)
     } else {
       warn(
-        `Missing theory file for CONCEPT "${node.title}" → create theory/${node.track.slug}/${node.slug}/index.mdx`,
+        `Missing theory file for CONCEPT "${node.title}" → create learning/${node.track.slug}/theory/${node.slug}/index.mdx`,
       )
       missing++
     }

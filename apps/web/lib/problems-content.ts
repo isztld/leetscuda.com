@@ -21,7 +21,7 @@ async function renderMarkdown(source: string): Promise<string> {
 }
 
 // process.cwd() is apps/web when running `next dev`
-const PROBLEMS_DIR = path.join(process.cwd(), '../../problems')
+const LEARNING_DIR = path.join(process.cwd(), '../../learning')
 
 export type TestCase = {
   name: string
@@ -41,7 +41,7 @@ export async function loadProblemContent(
   trackSlug: string,
   problemSlug: string,
 ): Promise<ProblemContent> {
-  const filePath = path.join(PROBLEMS_DIR, trackSlug, problemSlug, 'index.mdx')
+  const filePath = path.join(LEARNING_DIR, trackSlug, 'problems', problemSlug, 'index.mdx')
 
   let raw: string
   try {
