@@ -20,7 +20,7 @@ export const submissionsRouter = router({
       z.object({
         problemSlug: z.string(),
         code: z.string().min(1).max(65536),
-        language: z.enum(['cpp']),
+        language: z.enum(['cpp', 'yaml']),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -87,25 +87,39 @@ export const submissionsRouter = router({
       }
 
       // Enqueue job to the correct queue based on execution runtime
+      const isK8s = problem.executionRuntime === ExecutionRuntime.K8S
       const isCuda = problem.executionRuntime === ExecutionRuntime.CUDA
       const cudaVerStr = problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : '13.0'
-      const queueName = isCuda ? `judge:queue:cuda:${cudaVerStr}` : 'judge:queue:cpp'
+      let queueName: string
+      if (isK8s) {
+        queueName = 'judge:queue:k8s'
+      } else if (isCuda) {
+        queueName = `judge:queue:cuda:${cudaVerStr}`
+      } else {
+        queueName = 'judge:queue:cpp'
+      }
 
       if (redis) {
         try {
-          await redis.rpush(
-            queueName,
-            JSON.stringify({
-              submissionId: submission.id,
-              problemSlug: input.problemSlug,
-              code: input.code,
-              language: input.language,
-              runtime: isCuda ? 'cuda' : 'cpp',
-              cppStandard: CPP_STANDARD[problem.cppStandard],
-              cudaVersion: problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : undefined,
-              computeCap: problem.computeCap ? COMPUTE_CAP[problem.computeCap] : undefined,
-            }),
-          )
+          const jobPayload = isK8s
+            ? JSON.stringify({
+                submissionId: submission.id,
+                problemSlug: input.problemSlug,
+                code: input.code,
+                language: 'yaml',
+                runtime: 'k8s',
+              })
+            : JSON.stringify({
+                submissionId: submission.id,
+                problemSlug: input.problemSlug,
+                code: input.code,
+                language: input.language,
+                runtime: isCuda ? 'cuda' : 'cpp',
+                cppStandard: CPP_STANDARD[problem.cppStandard],
+                cudaVersion: problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : undefined,
+                computeCap: problem.computeCap ? COMPUTE_CAP[problem.computeCap] : undefined,
+              })
+          await redis.rpush(queueName, jobPayload)
         } catch (err) {
           console.error(
             `[api] ERROR Failed to enqueue ${submission.id}: ${err instanceof Error ? err.message : String(err)}`,
@@ -307,26 +321,42 @@ export const submissionsRouter = router({
       }
 
       // Reconstruct the exact queue name and job payload as stored by create
-      const isCuda = submission.problem.executionRuntime === ExecutionRuntime.CUDA
-      const cudaVerStr = submission.problem.cudaVersion
+      const isK8sCancel = submission.problem.executionRuntime === ExecutionRuntime.K8S
+      const isCudaCancel = submission.problem.executionRuntime === ExecutionRuntime.CUDA
+      const cudaVerStrCancel = submission.problem.cudaVersion
         ? CUDA_VERSION[submission.problem.cudaVersion]
         : '13.0'
-      const queueName = isCuda ? `judge:queue:cuda:${cudaVerStr}` : 'judge:queue:cpp'
+      let queueName: string
+      if (isK8sCancel) {
+        queueName = 'judge:queue:k8s'
+      } else if (isCudaCancel) {
+        queueName = `judge:queue:cuda:${cudaVerStrCancel}`
+      } else {
+        queueName = 'judge:queue:cpp'
+      }
 
-      const jobPayload = JSON.stringify({
-        submissionId: submission.id,
-        problemSlug: submission.problem.slug,
-        code: submission.code,
-        language: submission.language,
-        runtime: isCuda ? 'cuda' : 'cpp',
-        cppStandard: CPP_STANDARD[submission.problem.cppStandard],
-        cudaVersion: submission.problem.cudaVersion
-          ? CUDA_VERSION[submission.problem.cudaVersion]
-          : undefined,
-        computeCap: submission.problem.computeCap
-          ? COMPUTE_CAP[submission.problem.computeCap]
-          : undefined,
-      })
+      const jobPayload = isK8sCancel
+        ? JSON.stringify({
+            submissionId: submission.id,
+            problemSlug: submission.problem.slug,
+            code: submission.code,
+            language: 'yaml',
+            runtime: 'k8s',
+          })
+        : JSON.stringify({
+            submissionId: submission.id,
+            problemSlug: submission.problem.slug,
+            code: submission.code,
+            language: submission.language,
+            runtime: isCudaCancel ? 'cuda' : 'cpp',
+            cppStandard: CPP_STANDARD[submission.problem.cppStandard],
+            cudaVersion: submission.problem.cudaVersion
+              ? CUDA_VERSION[submission.problem.cudaVersion]
+              : undefined,
+            computeCap: submission.problem.computeCap
+              ? COMPUTE_CAP[submission.problem.computeCap]
+              : undefined,
+          })
 
       // LREM: atomic remove — if it returns 0 the judge already picked it up
       const removed = await redis.lrem(queueName, 1, jobPayload)

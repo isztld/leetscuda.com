@@ -30,6 +30,7 @@ enum ProblemStatus {
 enum ExecutionRuntime {
   CPP
   CUDA
+  K8S
 }
 
 enum CppStandard {

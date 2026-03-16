@@ -50,6 +50,7 @@ export default async function ProblemPage({ params }: Props) {
         title: problem.title,
         difficulty: problem.difficulty,
         xpReward: problem.xpReward,
+        executionRuntime: problem.executionRuntime,
         track: {
           slug: problem.track.slug,
           title: problem.track.title,

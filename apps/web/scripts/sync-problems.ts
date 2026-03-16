@@ -38,7 +38,9 @@ function mapStatus(s: ProblemFrontmatter['status']): ProblemStatus {
 }
 
 function mapRuntime(r: ProblemFrontmatter['runtime']): ExecutionRuntime {
-  return r === 'cuda' ? ExecutionRuntime.CUDA : ExecutionRuntime.CPP
+  if (r === 'cuda') return ExecutionRuntime.CUDA
+  if (r === 'k8s') return ExecutionRuntime.K8S
+  return ExecutionRuntime.CPP
 }
 
 function mapCppStandard(s: ProblemFrontmatter['cpp_standard']): CppStandard {
@@ -48,7 +50,7 @@ function mapCppStandard(s: ProblemFrontmatter['cpp_standard']): CppStandard {
     '20': CppStandard.CPP20,
     '23': CppStandard.CPP23,
   }
-  return map[s]
+  return (s ? map[s] : undefined) ?? CppStandard.CPP17
 }
 
 function mapCudaVersion(v: string): CudaVersion | null {

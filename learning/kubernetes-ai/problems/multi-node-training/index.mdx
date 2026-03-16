@@ -11,8 +11,8 @@ tags:
 status: published
 author: community
 xp: 400
-runtime: cpp
-cpp_standard: "17"
+runtime: k8s
+k8s_multi_doc: false
 ---
 
 ## Background
@@ -107,16 +107,50 @@ spec:
         spec:
           # TODO: same as master
 
----test-cases---
-- name: "GPU resources correct"
-  input: "Parse Master container resources"
-  expected: "nvidia.com/gpu: 8 in requests and limits"
-- name: "RDMA interface requested"
-  input: "Parse resources"
-  expected: "rdma/hca: 1"
-- name: "PVC mounted"
-  input: "Parse volumeMounts"
-  expected: "training-data mounted at /data"
+---k8s-checks---
+- id: has-pytorchjob
+  description: "Manifest must be a PyTorchJob (kubeflow.org/v1)"
+  type: schema
+  assert:
+    kind: PyTorchJob
+    apiVersion: kubeflow.org/v1
+
+- id: gpu-requested-master
+  description: "Master container must request nvidia.com/gpu resources"
+  type: assertion
+  path: "spec.pytorchReplicaSpecs.Master.template.spec.containers[0].resources.requests[nvidia.com/gpu]"
+  op: exists
+
+- id: rdma-requested
+  description: "Master container must request rdma/hca (RDMA interface)"
+  type: assertion
+  path: "spec.pytorchReplicaSpecs.Master.template.spec.containers[0].resources.requests[rdma/hca]"
+  op: exists
+
+- id: host-network
+  description: "Master pod spec must set hostNetwork: true for RDMA performance"
+  type: assertion
+  path: "spec.pytorchReplicaSpecs.Master.template.spec.hostNetwork"
+  op: eq
+  value: true
+
+- id: correct-image
+  description: "Must use pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime image"
+  type: assertion
+  path: "spec.pytorchReplicaSpecs.Master.template.spec.containers[0].image"
+  op: eq
+  value: "pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime"
+
+- id: pvc-mounted
+  description: "Must mount the training-data PVC"
+  type: assertion
+  path: "spec.pytorchReplicaSpecs.Master.template.spec.containers[0].volumeMounts[0].mountPath"
+  op: eq
+  value: "/data"
+
+- id: dry-run
+  description: "Must pass kubectl apply --dry-run=client"
+  type: kubectl-dry-run
 
 ---solution---
 apiVersion: kubeflow.org/v1

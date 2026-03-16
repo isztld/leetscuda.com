@@ -4,7 +4,8 @@ import { execSync } from 'child_process'
 import { pollForJob, submitResult } from './api-client.js'
 import { runInSandbox } from './sandbox.js'
 import { verify } from './verifier.js'
-import type { JudgeJob, JudgeResult, SubmissionTestResult } from './types.js'
+import { validateK8sManifest } from './k8s-validator.js'
+import type { CppJudgeJob, JudgeResult, SubmissionTestResult } from './types.js'
 import { env } from './env.js'
 
 /** Kill any containers from a previous crashed judge session before starting. */
@@ -31,7 +32,7 @@ async function cleanupOrphanedContainers(): Promise<void> {
   }
 }
 
-async function runJob(job: JudgeJob): Promise<JudgeResult> {
+async function runCppJob(job: CppJudgeJob): Promise<JudgeResult> {
   // Clamp timeout to the hard ceiling — never trust the payload blindly
   const effectiveTimeout = Math.min(job.timeoutMs ?? env.maxTimeoutMs, env.maxTimeoutMs)
 
@@ -114,8 +115,10 @@ async function main() {
   console.log(`[judge] Capabilities: ${env.capabilities.join(', ')}`)
   console.log(`[judge] API URL: ${env.JUDGE_API_URL}`)
 
-  // Kill orphaned containers from any previous crash
-  await cleanupOrphanedContainers()
+  // Kill orphaned containers from any previous crash (only relevant for cpp/cuda judges)
+  if (!env.capabilities.every((c) => c === 'k8s')) {
+    await cleanupOrphanedContainers()
+  }
 
   process.on('SIGINT', () => {
     console.log('[judge] Shutting down...')
@@ -145,8 +148,41 @@ async function main() {
         continue
       }
 
+      if (job.runtime === 'k8s') {
+        console.log(`[judge] Processing ${job.submissionId} — k8s (${job.k8sChecks.length} checks)`)
+        const effectiveTimeout = Math.min(job.timeoutMs ?? env.maxTimeoutMs, env.maxTimeoutMs)
+
+        const results = await validateK8sManifest(job.code, job.k8sChecks, {
+          multiDoc: job.k8sMultiDoc,
+          timeoutMs: effectiveTimeout,
+        })
+
+        const allPassed = results.every((r) => r.passed)
+        const status = allPassed ? 'ACCEPTED' : 'WRONG_ANSWER'
+        const firstFailed = results.find((r) => !r.passed)
+
+        await submitResult({
+          submissionId: job.submissionId,
+          status,
+          runtimeMs: 0,
+          output: '',
+          errorMsg: firstFailed?.message ?? undefined,
+          testResults: results.map((r, i) => ({
+            index: i,
+            passed: r.passed,
+            input: r.checkId,       // checkId stored in input field
+            expected: r.description,
+            actual: r.message,
+            runtimeMs: 0,
+          })),
+        })
+
+        console.log(`[judge] ${job.submissionId} → ${status} (${results.filter((r) => r.passed).length}/${results.length} checks passed)`)
+        continue
+      }
+
       console.log(`[judge] Processing ${job.submissionId} — ${job.runtime} c++${job.cppStandard}`)
-      const result = await runJob(job)
+      const result = await runCppJob(job)
       await submitResult(result)
       console.log(`[judge] ${job.submissionId} → ${result.status} in ${result.runtimeMs}ms`)
     } catch (err) {

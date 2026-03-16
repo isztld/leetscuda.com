@@ -23,6 +23,7 @@ interface Problem {
   title: string
   difficulty: 'EASY' | 'MEDIUM' | 'HARD'
   xpReward: number
+  executionRuntime: string
   track: {
     slug: string
     title: string
@@ -303,6 +304,44 @@ function TestResultPanel({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function K8sCheckResultPanel({
+  testResults,
+  status,
+}: {
+  testResults: SubmissionTestResult[]
+  status: string
+}) {
+  return (
+    <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div className="divide-y divide-slate-100">
+        {testResults.map((tr) => (
+          <div key={tr.index} className="py-2.5 flex flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-sm font-bold shrink-0 ${tr.passed ? 'text-green-600' : 'text-red-600'}`}
+              >
+                {tr.passed ? '✓' : '✗'}
+              </span>
+              <span className="text-xs font-mono text-slate-500 shrink-0">{tr.input}</span>
+              <span className="text-xs text-slate-700 truncate">{tr.expected}</span>
+            </div>
+            {!tr.passed && (
+              <p className="pl-6 text-xs text-red-600 font-mono whitespace-pre-wrap break-all">
+                {tr.actual}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+      {status === 'ACCEPTED' && (
+        <p className="mt-3 text-xs text-green-600 font-medium">
+          All {testResults.length} checks passed
+        </p>
+      )}
     </div>
   )
 }
@@ -618,13 +657,19 @@ export function ProblemDetail({
     return () => clearTimeout(timer)
   }, [isPolling])
 
+  const isK8sProblem = problem.executionRuntime === 'K8S'
+
   function handleSubmit() {
     if (!session) {
       router.push(`/signin?callbackUrl=/problems/${problem.slug}`)
       return
     }
     setInfoMsg(null)
-    createMutation.mutate({ problemSlug: problem.slug, code, language: 'cpp' })
+    createMutation.mutate({
+      problemSlug: problem.slug,
+      code,
+      language: isK8sProblem ? 'yaml' : 'cpp',
+    })
   }
 
   const isPending =
@@ -885,10 +930,14 @@ export function ProblemDetail({
             <div className="flex items-center gap-2">
               <select
                 className="text-xs bg-white text-slate-700 rounded px-2 py-1 border border-slate-200 focus:outline-none"
-                defaultValue="cpp"
+                defaultValue={isK8sProblem ? 'yaml' : 'cpp'}
                 disabled
               >
-                <option value="cpp">C++ / CUDA</option>
+                {isK8sProblem ? (
+                  <option value="yaml">YAML</option>
+                ) : (
+                  <option value="cpp">C++ / CUDA</option>
+                )}
               </select>
             </div>
             <div className="flex flex-col items-end gap-0.5">
@@ -938,7 +987,7 @@ export function ProblemDetail({
                 </div>
               }
             >
-              <MonacoEditor value={code} onChange={setCode} language="cpp" />
+              <MonacoEditor value={code} onChange={setCode} language={isK8sProblem ? 'yaml' : 'cpp'} />
             </ErrorBoundary>
           </div>
 
@@ -1036,11 +1085,18 @@ export function ProblemDetail({
               </div>
             ) : isTerminal && submissionStatus ? (
               testResults && testResults.length > 0 ? (
-                <TestResultPanel
-                  testResults={testResults}
-                  status={submissionStatus.status}
-                  errorMsg={submissionStatus.errorMsg}
-                />
+                isK8sProblem ? (
+                  <K8sCheckResultPanel
+                    testResults={testResults}
+                    status={submissionStatus.status}
+                  />
+                ) : (
+                  <TestResultPanel
+                    testResults={testResults}
+                    status={submissionStatus.status}
+                    errorMsg={submissionStatus.errorMsg}
+                  />
+                )
               ) : (
                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
                   {submissionStatus.errorMsg && (

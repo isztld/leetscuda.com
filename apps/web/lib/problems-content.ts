@@ -29,12 +29,23 @@ export type TestCase = {
   expected: string
 }
 
+export type K8sCheck = {
+  id: string
+  description: string
+  type: 'schema' | 'assertion' | 'kubectl-dry-run'
+  assert?: Record<string, unknown>
+  path?: string
+  op?: string
+  value?: unknown
+}
+
 export type ProblemContent = {
   descriptionHtml: string
   starterCode: string
   testCases: TestCase[]
   harness: string
   editorial: string | null
+  k8sChecks: K8sCheck[]
 }
 
 export async function loadProblemContent(
@@ -54,10 +65,44 @@ export async function loadProblemContent(
 
   // Split body on section delimiters
   const [descPart = '', rest1 = ''] = content.split('---starter-code---')
-  const [starterPart = '', rest2 = ''] = rest1.split('---test-cases---')
-  const [testCasesPart = '', rest3 = ''] = rest2.split('---solution---')
-  const [, rest4 = ''] = rest3.split('---harness---')
-  const harnessPart = rest4.split('---editorial---')[0]
+
+  // Detect K8s vs cpp/cuda by presence of k8s-checks delimiter
+  const isK8s = rest1.includes('---k8s-checks---')
+
+  let starterPart = ''
+  let testCases: TestCase[] = []
+  let harness = ''
+  let k8sChecks: K8sCheck[] = []
+
+  if (isK8s) {
+    const [starter = '', rest2 = ''] = rest1.split('---k8s-checks---')
+    starterPart = starter
+    const [checksPart = ''] = rest2.split('---solution---')
+    const trimmed = checksPart.trim()
+    if (trimmed) {
+      try {
+        k8sChecks = yaml.load(trimmed) as K8sCheck[]
+        if (!Array.isArray(k8sChecks)) k8sChecks = []
+      } catch {
+        k8sChecks = []
+      }
+    }
+  } else {
+    const [starter = '', rest2 = ''] = rest1.split('---test-cases---')
+    starterPart = starter
+    const [testCasesPart = '', rest3 = ''] = rest2.split('---solution---')
+    const [, rest4 = ''] = rest3.split('---harness---')
+    harness = rest4.split('---editorial---')[0]
+
+    const trimmed = testCasesPart.trim()
+    if (trimmed) {
+      try {
+        testCases = yaml.load(trimmed) as TestCase[]
+      } catch {
+        testCases = []
+      }
+    }
+  }
 
   // Search for editorial anywhere after the solution section
   const editorialMarkerIdx = content.indexOf('---editorial---')
@@ -69,17 +114,6 @@ export async function loadProblemContent(
 
   const descriptionHtml = await renderMarkdown(descPart.trim())
 
-  // Parse test cases YAML
-  let testCases: TestCase[] = []
-  const trimmed = testCasesPart.trim()
-  if (trimmed) {
-    try {
-      testCases = yaml.load(trimmed) as TestCase[]
-    } catch {
-      testCases = []
-    }
-  }
-
   const editorial = editorialContent
     ? await renderMarkdown(editorialContent)
     : null
@@ -88,7 +122,8 @@ export async function loadProblemContent(
     descriptionHtml,
     starterCode: starterPart.trim(),
     testCases,
-    harness: harnessPart.trim(),
+    harness: harness.trim(),
     editorial,
+    k8sChecks,
   }
 }

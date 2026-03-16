@@ -10,8 +10,8 @@ tags:
 status: published
 author: community
 xp: 200
-runtime: cpp
-cpp_standard: "17"
+runtime: k8s
+k8s_multi_doc: true
 ---
 
 ## Background
@@ -91,16 +91,52 @@ spec:
       path: /metrics
       interval: # TODO (15s)
 
----test-cases---
-- name: "HPA targets correct deployment"
-  input: "Parse HPA spec.scaleTargetRef"
-  expected: "kind=Deployment name=vllm-server"
-- name: "Scale bounds correct"
-  input: "Parse minReplicas/maxReplicas"
-  expected: "min=1 max=8"
-- name: "Stabilisation windows set"
-  input: "Parse behavior"
-  expected: "scaleDown=300s scaleUp=0s"
+---k8s-checks---
+- id: has-hpa
+  description: "Manifest must contain a HorizontalPodAutoscaler (autoscaling/v2)"
+  type: schema
+  assert:
+    kind: HorizontalPodAutoscaler
+    apiVersion: autoscaling/v2
+
+- id: has-podmonitor
+  description: "Manifest must contain a PodMonitor (monitoring.coreos.com/v1)"
+  type: schema
+  assert:
+    kind: PodMonitor
+    apiVersion: monitoring.coreos.com/v1
+
+- id: correct-target-name
+  description: "HPA must target a Deployment named vllm-server"
+  type: assertion
+  path: "spec.scaleTargetRef.name"
+  op: eq
+  value: "vllm-server"
+
+- id: scale-bounds
+  description: "HPA maxReplicas must be 8"
+  type: assertion
+  path: "spec.maxReplicas"
+  op: eq
+  value: 8
+
+- id: scale-down-window
+  description: "scaleDown stabilizationWindowSeconds must be 300"
+  type: assertion
+  path: "spec.behavior.scaleDown.stabilizationWindowSeconds"
+  op: eq
+  value: 300
+
+- id: metric-name
+  description: "HPA must use the dcgm_fi_dev_gpu_util metric"
+  type: assertion
+  path: "spec.metrics[0].pods.metric.name"
+  op: eq
+  value: "dcgm_fi_dev_gpu_util"
+
+- id: dry-run
+  description: "Must pass kubectl apply --dry-run=client"
+  type: kubectl-dry-run
 
 ---solution---
 apiVersion: autoscaling/v2

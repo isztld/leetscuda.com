@@ -7,8 +7,9 @@ export const ProblemFrontmatterSchema = z
     track: z.enum(['cuda', 'ml-systems', 'kubernetes-ai', 'foundations']),
     difficulty: z.enum(['easy', 'medium', 'hard']),
     xp: z.number().int().positive(),
-    runtime: z.enum(['cpp', 'cuda']),
-    cpp_standard: z.enum(['14', '17', '20', '23']),
+    runtime: z.enum(['cpp', 'cuda', 'k8s']),
+    cpp_standard: z.enum(['14', '17', '20', '23']).optional(),
+    k8s_multi_doc: z.boolean().default(false),
     cuda_version: z.string().optional(),
     compute_cap: z.string().optional(),
     tags: z.array(z.string()).default([]),
@@ -17,6 +18,9 @@ export const ProblemFrontmatterSchema = z
   })
   .refine((data) => data.runtime !== 'cuda' || (!!data.cuda_version && !!data.compute_cap), {
     message: 'cuda_version and compute_cap are required when runtime is cuda',
+  })
+  .refine((data) => data.runtime === 'k8s' || !!data.cpp_standard, {
+    message: 'cpp_standard is required when runtime is not k8s',
   })
 
 export type ProblemFrontmatter = z.infer<typeof ProblemFrontmatterSchema>

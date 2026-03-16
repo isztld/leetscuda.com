@@ -36,6 +36,8 @@ export async function GET(req: NextRequest) {
     } else if (cap.startsWith('cuda:')) {
       const version = cap.slice(5) // e.g. "13.0"
       queues.push(`judge:queue:cuda:${version}`)
+    } else if (cap === 'k8s') {
+      queues.push('judge:queue:k8s')
     }
   }
 
@@ -59,7 +61,7 @@ export async function GET(req: NextRequest) {
     code: string
     language: string
     runtime: string
-    cppStandard: string
+    cppStandard?: string
     cudaVersion?: string
     computeCap?: string
   }
@@ -85,7 +87,48 @@ export async function GET(req: NextRequest) {
     data: { status: 'RUNNING' },
   })
 
-  // 7. Load test cases from MDX (server has access to the problems directory)
+  // 7. K8s job — load k8s checks from MDX and return K8s job format
+  if (job.runtime === 'k8s') {
+    let k8sChecks: unknown[] = []
+    let k8sMultiDoc = false
+    try {
+      const content = await loadProblemContent(submission.problem.track.slug, job.problemSlug)
+      k8sChecks = content.k8sChecks
+      // Load k8s_multi_doc from frontmatter by re-reading the raw file
+      const matter = await import('gray-matter')
+      const fs = await import('fs')
+      const path = await import('path')
+      const learningDir = path.join(process.cwd(), '../../learning')
+      const mdxPath = path.join(learningDir, submission.problem.track.slug, 'problems', job.problemSlug, 'index.mdx')
+      if (fs.existsSync(mdxPath)) {
+        const raw = fs.readFileSync(mdxPath, 'utf8')
+        const { data } = matter.default(raw)
+        k8sMultiDoc = data.k8s_multi_doc === true
+      }
+    } catch (err) {
+      await prisma.submission.update({
+        where: { id: job.submissionId },
+        data: {
+          status: 'RUNTIME_ERROR',
+          errorMsg: `Failed to load K8s checks: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      })
+      return new NextResponse(null, { status: 204 })
+    }
+
+    return NextResponse.json({
+      submissionId: job.submissionId,
+      problemSlug: job.problemSlug,
+      code: job.code,
+      language: 'yaml',
+      runtime: 'k8s',
+      k8sMultiDoc,
+      k8sChecks,
+      timeoutMs: 10_000,
+    })
+  }
+
+  // 8. Load test cases from MDX (server has access to the problems directory)
   let testCases: { input: string; expected: string }[] = []
   let harness = ''
   try {

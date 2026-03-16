@@ -5,7 +5,17 @@ export const TestCaseSchema = z.object({
   expected: z.string(),
 })
 
-export const JudgeJobSchema = z.object({
+export const K8sCheckSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  type: z.enum(['schema', 'assertion', 'kubectl-dry-run']),
+  assert: z.record(z.string(), z.unknown()).optional(),
+  path: z.string().optional(),
+  op: z.string().optional(),
+  value: z.unknown().optional(),
+})
+
+export const CppJudgeJobSchema = z.object({
   submissionId: z.string(),
   problemSlug: z.string(),
   code: z.string(),
@@ -19,7 +29,26 @@ export const JudgeJobSchema = z.object({
   timeoutMs: z.number().int().positive(),
 })
 
+export const K8sJudgeJobSchema = z.object({
+  submissionId: z.string(),
+  problemSlug: z.string(),
+  code: z.string(),
+  language: z.literal('yaml'),
+  runtime: z.literal('k8s'),
+  k8sMultiDoc: z.boolean(),
+  k8sChecks: z.array(K8sCheckSchema),
+  timeoutMs: z.number().int().positive(),
+})
+
+export const JudgeJobSchema = z.discriminatedUnion('runtime', [
+  CppJudgeJobSchema,
+  K8sJudgeJobSchema,
+])
+
 export type TestCase = z.infer<typeof TestCaseSchema>
+export type K8sCheck = z.infer<typeof K8sCheckSchema>
+export type CppJudgeJob = z.infer<typeof CppJudgeJobSchema>
+export type K8sJudgeJob = z.infer<typeof K8sJudgeJobSchema>
 export type JudgeJob = z.infer<typeof JudgeJobSchema>
 
 export type SubmissionTestResult = {

@@ -1,3 +1,4 @@
+import { execSync } from 'child_process'
 import { z } from 'zod'
 
 const envSchema = z.object({
@@ -23,10 +24,27 @@ if (!parsed.success) {
   )
 }
 
+const capabilities = parsed.data.JUDGE_CAPABILITIES.split(',').map((c) => c.trim()).filter(Boolean)
+
+// If k8s capability is declared, verify kubectl is available in PATH
+if (capabilities.includes('k8s')) {
+  let kubectlAvailable = false
+  try {
+    execSync('kubectl version --client', { stdio: 'ignore' })
+    kubectlAvailable = true
+  } catch {
+    kubectlAvailable = false
+  }
+  if (!kubectlAvailable) {
+    console.error('[judge] ERROR: k8s capability declared but kubectl not found in PATH')
+    process.exit(1)
+  }
+  console.log('[judge] kubectl available — k8s validation enabled')
+}
+
 export const env = {
   ...parsed.data,
-  // Parse comma-separated capabilities, e.g. "cpp,cuda:13.0" → ["cpp", "cuda:13.0"]
-  capabilities: parsed.data.JUDGE_CAPABILITIES.split(',').map((c) => c.trim()).filter(Boolean),
+  capabilities,
   hostTmpDir: parsed.data.JUDGE_HOST_TMP_DIR,
   maxTimeoutMs: parseInt(parsed.data.JUDGE_MAX_TIMEOUT_MS ?? '60000'),
   maxCodeBytes: parseInt(parsed.data.JUDGE_MAX_CODE_BYTES ?? String(16 * 1024)),

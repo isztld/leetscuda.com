@@ -564,3 +564,55 @@ pnpm --filter @leetscuda/web judge:token --name <name> --capabilities <csv>
 | 13 | Done | Submission hardening — rate limiting, daily caps, code size guard, duplicate prevention, cancel flow, SIGTERM/SIGKILL timeout, orphan cleanup; all limits env-var driven |
 | 14 | Done | Submission experience overhaul — rich result panel, editorials, history tab, stats |
 | 15 | Done | Content restructure — `problems/` + `theory/` merged into `learning/{track}/{problems,theory}/`; track metadata + node definitions moved from `seed.ts` into `learning/{track}/track.mdx` |
+| 16 | Done | K8s manifest validation — new `K8S` execution mode, `---k8s-checks---` MDX section, K8s judge node with kubectl, YAML Monaco editor, checklist result panel |
+
+---
+
+## K8s judge node
+
+The K8s judge validates Kubernetes manifest submissions without Docker-in-Docker. It requires `kubectl` in PATH.
+
+### Generate a k8s-capable token
+
+```bash
+pnpm --filter @leetscuda/web judge:token --name "k8s-validator-1" --capabilities "k8s"
+```
+
+### Build the k8s judge image
+
+```bash
+docker build -t leetscuda-judge-k8s -f apps/judge/Dockerfile.k8s .
+```
+
+### Run (no GPU, no Docker socket needed)
+
+```bash
+docker run \
+  --env-file apps/judge/.env \
+  -e JUDGE_CAPABILITIES=k8s \
+  leetscuda-judge-k8s
+```
+
+### Pre-flight check — kubectl must be available
+
+```bash
+kubectl version --client
+```
+
+### Job routing
+
+| Problem `executionRuntime` | Redis queue |
+|---|---|
+| `CPP` | `judge:queue:cpp` |
+| `CUDA` (version 13.0) | `judge:queue:cuda:13.0` |
+| `K8S` | `judge:queue:k8s` |
+
+K8s judges (capabilities: `k8s`) only dequeue from `judge:queue:k8s`. No GPU or Docker socket is needed.
+
+### K8s check types
+
+| Type | Description |
+|---|---|
+| `schema` | Verifies a resource of the specified `kind` and `apiVersion` exists |
+| `assertion` | Evaluates a JSONPath-style path with operators: `exists`, `eq`, `neq`, `contains`, `matches`, `gte`, `lte`, `gt`, `lt` |
+| `kubectl-dry-run` | Runs `kubectl apply --dry-run=client -f manifest.yaml` and checks exit code 0 |

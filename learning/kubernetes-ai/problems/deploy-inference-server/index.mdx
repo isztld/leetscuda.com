@@ -10,8 +10,8 @@ tags:
 status: published
 author: community
 xp: 100
-runtime: cpp
-cpp_standard: "17"
+runtime: k8s
+k8s_multi_doc: true
 ---
 
 ## Background
@@ -20,7 +20,7 @@ cpp_standard: "17"
 
 On Kubernetes, GPU resources are exposed as extended resources under `nvidia.com/gpu`. A container must *request* a GPU to be scheduled on a GPU node, and should *limit* it to the same value — GPUs are not time-shared like CPU cores.
 
-A `Service` of type `ClusterIP` makes the server reachable inside the cluster. A `liveness` probe on `/health` (HTTP GET, port 8000) lets the kubelet restart the container if it hangs.
+A `Service` of type `ClusterIP` makes the server reachable inside the cluster. A `readinessProbe` on `/health` (HTTP GET, port 8000) lets the kubelet hold traffic until the container is ready.
 
 ## What to Implement
 
@@ -30,7 +30,7 @@ Write the Kubernetes manifest (YAML) that:
 2. Container image: `vllm/vllm-openai:v0.4.0`
 3. Container command: `["python", "-m", "vllm.entrypoints.openai.api_server", "--model", "meta-llama/Llama-2-7b-chat-hf", "--port", "8000"]`
 4. Requests and limits: `nvidia.com/gpu: 1`, `memory: 20Gi`, `cpu: "4"`
-5. Liveness probe: HTTP GET `/health` port 8000, initialDelaySeconds 60, periodSeconds 15
+5. Readiness probe: HTTP GET `/health` port 8000, initialDelaySeconds 60, periodSeconds 15
 6. Creates a `Service` named `vllm-service` of type `ClusterIP` targeting port 8000
 
 ## Constraints
@@ -82,7 +82,7 @@ spec:
               # TODO: add GPU, memory, cpu
             limits:
               # TODO: add GPU, memory, cpu
-          livenessProbe:
+          readinessProbe:
             # TODO
 ---
 apiVersion: v1
@@ -98,16 +98,50 @@ spec:
       targetPort: # TODO
   type: ClusterIP
 
----test-cases---
-- name: "Deployment has GPU resource"
-  input: "Parse the YAML and check resources"
-  expected: "nvidia.com/gpu: 1 in both requests and limits"
-- name: "Service targets correct port"
-  input: "Parse Service spec"
-  expected: "port: 8000, targetPort: 8000"
-- name: "Liveness probe configured"
-  input: "Parse livenessProbe"
-  expected: "httpGet path=/health port=8000 initialDelaySeconds=60"
+---k8s-checks---
+- id: has-deployment
+  description: "Manifest must contain a Deployment resource (apps/v1)"
+  type: schema
+  assert:
+    kind: Deployment
+    apiVersion: apps/v1
+
+- id: has-service
+  description: "Manifest must contain a Service resource (v1)"
+  type: schema
+  assert:
+    kind: Service
+    apiVersion: v1
+
+- id: correct-image
+  description: "Must use the vllm/vllm-openai:v0.4.0 image"
+  type: assertion
+  path: "spec.template.spec.containers[0].image"
+  op: eq
+  value: "vllm/vllm-openai:v0.4.0"
+
+- id: gpu-requested
+  description: "Must request at least 1 NVIDIA GPU"
+  type: assertion
+  path: "spec.template.spec.containers[0].resources.requests[nvidia.com/gpu]"
+  op: exists
+
+- id: correct-port
+  description: "Container must expose port 8000"
+  type: assertion
+  path: "spec.template.spec.containers[0].ports[0].containerPort"
+  op: eq
+  value: 8000
+
+- id: has-readiness-probe
+  description: "Deployment container must define a readinessProbe"
+  type: assertion
+  path: "spec.template.spec.containers[0].readinessProbe"
+  op: exists
+
+- id: dry-run
+  description: "Must pass kubectl apply --dry-run=client"
+  type: kubectl-dry-run
 
 ---solution---
 apiVersion: apps/v1
@@ -149,7 +183,7 @@ spec:
               nvidia.com/gpu: "1"
               memory: 20Gi
               cpu: "4"
-          livenessProbe:
+          readinessProbe:
             httpGet:
               path: /health
               port: 8000
@@ -176,8 +210,8 @@ A minimal vLLM deployment requires two Kubernetes resources: a `Deployment` and 
 
 **Deployment key points:**
 - `namespace: inference` in both Deployment and Service metadata
-- GPU resource request/limit must use the extended resource name `nvidia.com/gpu` with equal request and limit (GPUs are not time-shared)
-- The liveness probe uses `httpGet` so kubelet makes an HTTP GET to `/health:8000`; `initialDelaySeconds: 60` gives the model time to load before health checks begin
+- GPU resource request must use the extended resource name `nvidia.com/gpu`
+- The readiness probe uses `httpGet` so kubelet makes an HTTP GET to `/health:8000`; `initialDelaySeconds: 60` gives the model time to load before health checks begin
 
 **Service:** A `ClusterIP` Service with matching `app: vllm` selector routes cluster traffic to the pods.
 
@@ -201,5 +235,5 @@ GPU resources in Kubernetes are **non-divisible** extended resources. Unlike CPU
 
 - **Using `requests` without matching `limits` for GPUs**: Kubernetes requires these to be equal for extended resources.
 - **Missing namespace on Service**: Both `Deployment` and `Service` must independently specify `namespace: inference`.
-- **Wrong liveness probe path**: The vLLM OpenAI API server exposes `/health`, not `/healthz` or `/ready`.
+- **Wrong probe path**: The vLLM OpenAI API server exposes `/health`.
 ---end---
