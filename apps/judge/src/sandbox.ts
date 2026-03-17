@@ -24,6 +24,16 @@ export interface SandboxResult {
   timedOut?: boolean
 }
 
+const MAX_OUTPUT_BYTES = 64 * 1024 // 64 KB per stream
+
+// Strip ANSI escape sequences and non-printable characters (except \n, \r, \t)
+function sanitizeOutput(s: string): string {
+  return s
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '') // ANSI CSI sequences
+    .replace(/\x1b[^[]/g, '')               // other ESC sequences
+    .replace(/[^\x09\x0a\x0d\x20-\x7e]/g, '') // keep tab, LF, CR, printable ASCII
+}
+
 const DOCKER_IMAGES: Record<string, string> = {
   cpp: 'gcc:14',
   'cuda:13.0': 'nvidia/cuda:13.0.0-devel-ubuntu24.04',
@@ -62,8 +72,23 @@ async function runProcess(
       child.kill('SIGKILL')
     }, timeoutMs)
 
-    child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    child.stdout.on('data', (d: Buffer) => {
+      if (Buffer.byteLength(stdout, 'utf8') < MAX_OUTPUT_BYTES) {
+        stdout += d.toString()
+        if (Buffer.byteLength(stdout, 'utf8') >= MAX_OUTPUT_BYTES) {
+          stdout = stdout.slice(0, MAX_OUTPUT_BYTES) + '\n[output truncated]'
+          child.kill('SIGKILL')
+        }
+      }
+    })
+    child.stderr.on('data', (d: Buffer) => {
+      if (Buffer.byteLength(stderr, 'utf8') < MAX_OUTPUT_BYTES) {
+        stderr += d.toString()
+        if (Buffer.byteLength(stderr, 'utf8') >= MAX_OUTPUT_BYTES) {
+          stderr = stderr.slice(0, MAX_OUTPUT_BYTES) + '\n[output truncated]'
+        }
+      }
+    })
 
     child.on('close', (code) => {
       clearTimeout(timer)
@@ -213,10 +238,14 @@ export async function runInSandbox(
     fs.mkdirSync(tmpDir, { recursive: true })
     fs.writeFileSync(path.join(tmpDir, srcFile), code, 'utf8')
 
-    if (isDockerAvailable()) {
-      return await runDocker(tmpDir, input, opts)
-    } else {
-      return await runDirect(tmpDir, input, opts)
+    const result = isDockerAvailable()
+      ? await runDocker(tmpDir, input, opts)
+      : await runDirect(tmpDir, input, opts)
+
+    return {
+      ...result,
+      stdout: sanitizeOutput(result.stdout),
+      stderr: sanitizeOutput(result.stderr),
     }
   } finally {
     try {
