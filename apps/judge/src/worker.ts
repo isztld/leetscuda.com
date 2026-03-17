@@ -39,7 +39,6 @@ async function runCppJob(job: CppJudgeJob): Promise<JudgeResult> {
   type FinalStatus = 'ACCEPTED' | 'WRONG_ANSWER' | 'RUNTIME_ERROR' | 'TIME_LIMIT'
   let finalStatus: FinalStatus = 'ACCEPTED'
   let maxRuntimeMs = 0
-  let lastStdout = ''
   let firstStderr = ''
   const testResults: SubmissionTestResult[] = []
 
@@ -55,7 +54,6 @@ async function runCppJob(job: CppJudgeJob): Promise<JudgeResult> {
     })
 
     if (sandboxResult.runtimeMs > maxRuntimeMs) maxRuntimeMs = sandboxResult.runtimeMs
-    if (sandboxResult.stdout) lastStdout = sandboxResult.stdout
     if (sandboxResult.stderr && !firstStderr) firstStderr = sandboxResult.stderr
 
     if (sandboxResult.exitCode === 124) {
@@ -101,7 +99,6 @@ async function runCppJob(job: CppJudgeJob): Promise<JudgeResult> {
     submissionId: job.submissionId,
     status: finalStatus,
     runtimeMs: maxRuntimeMs,
-    output: lastStdout || undefined,
     errorMsg: firstStderr || undefined,
     testResults,
     cppStandard: job.cppStandard,
@@ -142,7 +139,6 @@ async function main() {
           submissionId: job.submissionId,
           status: 'RUNTIME_ERROR',
           runtimeMs: 0,
-          output: '',
           errorMsg: 'Code payload exceeds maximum allowed size',
         })
         continue
@@ -165,7 +161,6 @@ async function main() {
           submissionId: job.submissionId,
           status,
           runtimeMs: 0,
-          output: '',
           errorMsg: firstFailed?.message ?? undefined,
           testResults: results.map((r, i) => ({
             index: i,

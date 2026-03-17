@@ -170,7 +170,6 @@ model Submission {
   language    String           @default("cpp")
   status      SubmissionStatus @default(PENDING)
   runtimeMs   Int?
-  output      String?
   errorMsg    String?
   testResults Json?
   submittedAt DateTime         @default(now())

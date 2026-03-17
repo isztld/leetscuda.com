@@ -19,7 +19,6 @@ const ResultSchema = z.object({
   submissionId: z.string(),
   status: z.enum(['ACCEPTED', 'WRONG_ANSWER', 'RUNTIME_ERROR', 'TIME_LIMIT']),
   runtimeMs: z.number().int().nonnegative(),
-  output: z.string().optional(),
   errorMsg: z.string().optional(),
   testResults: z.array(SubmissionTestResultSchema).optional(),
   cppStandard: z.string().optional(),
@@ -56,7 +55,6 @@ export async function POST(req: NextRequest) {
     data: {
       status: result.status,
       runtimeMs: result.runtimeMs,
-      output: result.output ?? null,
       errorMsg: result.errorMsg ?? null,
       testResults: result.testResults
         ? (result.testResults as unknown as Prisma.InputJsonValue)

@@ -64,7 +64,6 @@ export type JudgeResult = {
   submissionId: string
   status: 'ACCEPTED' | 'WRONG_ANSWER' | 'RUNTIME_ERROR' | 'TIME_LIMIT'
   runtimeMs: number
-  output?: string
   errorMsg?: string
   testResults?: SubmissionTestResult[]
   cppStandard?: string

@@ -1119,14 +1119,6 @@ export function ProblemDetail({
                       </p>
                     </div>
                   )}
-                  {submissionStatus.output && (
-                    <div className="bg-slate-50 border border-slate-200 rounded p-3">
-                      <p className="text-xs text-slate-500 mb-1 font-medium">Output</p>
-                      <pre className="text-xs text-slate-700 font-mono whitespace-pre-wrap">
-                        {submissionStatus.output}
-                      </pre>
-                    </div>
-                  )}
                   {submissionStatus.status === 'CANCELLED' && (
                     <p className="text-sm text-slate-500">Submission cancelled.</p>
                   )}

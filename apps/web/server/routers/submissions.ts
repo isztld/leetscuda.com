@@ -178,7 +178,6 @@ export const submissionsRouter = router({
         id: submission.id,
         status: submission.status,
         runtimeMs: submission.runtimeMs,
-        output: submission.output,
         errorMsg: submission.errorMsg,
         testResults: submission.testResults,
         firstSolve,
@@ -216,7 +215,6 @@ export const submissionsRouter = router({
         submissionId: submission.id,
         status: submission.status,
         runtimeMs: submission.runtimeMs,
-        output: submission.output,
         errorMsg: submission.errorMsg,
         isSolved,
       }
