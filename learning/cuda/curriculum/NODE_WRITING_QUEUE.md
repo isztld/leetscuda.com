@@ -77,7 +77,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 
 ### Problem nodes (in dependency order)
 - [x] cublas-integration | cuBLAS GEMM Integration | PROBLEM | intermediate | ~45min | source: cluster-linear-algebra.json cublas-usage topic; gpu-glossary/host-software/cublas.md; docs.nvidia.com/cuda/cublas/
-- [ ] gemm-optimization | Optimized SGEMM from Scratch | PROBLEM | advanced | ~240min | source: cluster-linear-algebra.json tiled-gemm exerciseId=custom-sgemm; llm.c/dev/cuda/matmul_forward.cu; cuda-samples/0_Introduction/matrixMul/
+- [x] gemm-optimization | Optimized SGEMM from Scratch | PROBLEM | advanced | ~240min | source: cluster-linear-algebra.json tiled-gemm exerciseId=custom-sgemm; llm.c/dev/cuda/matmul_forward.cu; cuda-samples/0_Introduction/matrixMul/
 - [ ] tensor-core-gemm | HGEMM with WMMA Tensor Cores | PROBLEM | advanced | ~180min | source: cluster-linear-algebra.json tensor-cores-wmma exerciseId=wmma-hgemm; cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/
 
 ### Article nodes

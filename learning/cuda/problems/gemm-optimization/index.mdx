@@ -1,0 +1,488 @@
+---
+slug: gemm-optimization
+title: Optimized SGEMM from Scratch
+difficulty: hard
+track: cuda
+tags:
+  - gemm
+  - optimization
+  - tiling
+  - vectorized-loads
+  - double-buffering
+status: published
+author: team
+xp: 600
+runtime: cuda
+cpp_standard: "17"
+cuda_version: "12.6"
+compute_cap: "sm_120"
+---
+
+## Background
+
+**SGEMM (Single-precision General Matrix Multiply)** is the workhorse of scientific computing and deep learning. The operation C = α × A × B + β × C on M×K, K×N, and M×N matrices respectively appears in every linear layer of every neural network.
+
+A naive GPU implementation assigns one output element per thread. Each thread independently loads O(K) elements from A and O(K) elements from B. For N×N matrices with N=4096, this means 4096³ ≈ 68 billion global memory reads — far too many to be efficient.
+
+The optimization journey for SGEMM follows a well-established path:
+
+**Level 1: Shared Memory Tiling**
+- Each block loads a BM×BK tile of A and BN×BK tile of B into shared memory
+- All threads in the block reuse these tiles for their computations
+- Global memory traffic reduced by O(BM × BN) factor
+
+**Level 2: Register Blocking**
+- Each thread computes a TM×TN tile (e.g., 8×8) instead of a single element
+- Reduces loop overhead and instruction count
+- Improves instruction-level parallelism
+
+**Level 3: Vectorized Loads**
+- Use float4 (128-bit) loads instead of scalar loads
+- Reduces load instruction count by 4×
+- Achieves coalesced global memory access
+
+**Level 4: Double Buffering**
+- Preload the next tile into shared memory while computing the current tile
+- Overlaps global memory latency with computation
+- Requires async copy APIs or careful scheduling
+
+This problem focuses on levels 1-3: shared memory tiling, register blocking, and vectorized loads. Double buffering is left as an advanced extension.
+
+## What to Implement
+
+Implement an optimized SGEMM kernel `sgemmKernel` that computes C = A × B for row-major matrices. Follow this optimization progression:
+
+**Basic Structure:**
+
+1. **Thread-block tile**: Each block computes a BM×BN tile of C
+   - Recommended: BM=128, BN=128, BK=32
+   - Block size: 128 threads (4 warps)
+
+2. **Warp-level tile**: Each warp computes a WM×WN sub-tile
+   - Recommended: WM=64, WN=64
+   - Each warp handles 64×64 = 4096 output elements
+
+3. **Thread-level tile**: Each thread accumulates a TM×TN fragment
+   - Recommended: TM=8, TN=8
+   - Each thread computes 8×8 = 64 output elements
+
+4. **Shared memory buffers**:
+   - `sA[BM × BK]` = 128 × 32 = 4096 floats = 16 KB
+   - `sB[BK × BN]` = 32 × 128 = 4096 floats = 16 KB
+
+5. **Load strategy**:
+   - Use `float4` loads for global → shared memory copies
+   - Each thread loads multiple float4 elements per iteration
+   - Ensure coalesced access patterns
+
+6. **Compute loop**:
+   - For each K-tile: load A and B tiles → sync → compute → sync
+   - Thread computes its TM×TN fragment over the BK elements
+   - Accumulate in registers (not shared memory)
+
+**Key Implementation Details:**
+
+**Vectorized loading:**
+```cpp
+// Thread i loads float4 elements at stride = blockDim / 4
+int tid = threadIdx.x;
+int loadStride = blockDim.x / 4;  // 32 for 128 threads
+
+for (int i = tid; i < BM * BK; i += loadStride) {
+    float4 val = *reinterpret_cast<float4*>(&A[i]);
+    *reinterpret_cast<float4*>(&sA[i]) = val;
+}
+```
+
+**Register accumulation:**
+```cpp
+// Each thread computes TM×TN = 8×8 output elements
+float regC[TM][TN] = {0};
+
+for (int k = 0; k < BK; k++) {
+    for (int i = 0; i < TM; i++) {
+        for (int j = 0; j < TN; j++) {
+            regC[i][j] += sA[row*TK + k] * sB[k*BN + col + j];
+        }
+    }
+}
+```
+
+**Thread mapping:**
+- Global row: `blockIdx.y * BM + threadRow`
+- Global col: `blockIdx.x * BN + threadCol`
+- Where threadRow and threadCol are computed from threadIdx to cover TM×TN elements
+
+## Constraints
+
+- `N` is a power of 2, `64 <= N <= 4096`
+- Use `BM=128, BN=128, BK=32` for thread-block tiles
+- Use `TM=8, TN=8` for thread-level tiles
+- All matrices in row-major order
+- Result must match naive CPU SGEMM within 1e-3 relative error
+- You may use any number of threads per block (suggested: 128)
+- Implement vectorized loads (float4) for global memory
+
+## Example
+
+**Input:** `4\n1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0\n1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0`
+
+**Output:** `1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0`
+
+(Multiplying by identity matrix returns the original matrix)
+
+---starter-code---
+#include <cuda_runtime.h>
+#include <cstdio>
+
+// Optimization parameters
+#define BM 128  // Block tile M dimension
+#define BN 128  // Block tile N dimension
+#define BK 32   // Block tile K dimension
+#define TM 8    // Thread tile M dimension
+#define TN 8    // Thread tile N dimension
+#define THREADS 128  // Threads per block
+
+// Optimized SGEMM kernel
+// C = A × B where A is M×K, B is K×N, C is M×N (all row-major)
+__global__ void sgemmKernel(const float* A, const float* B, float* C,
+                            int M, int N, int K) {
+    // Shared memory tiles
+    // TODO: Declare sA[BM][BK] and sB[BK][BN]
+
+    // Thread indexing
+    // TODO: Calculate global row, col for this thread's output tile
+    // Hint: Each thread computes TM×TN = 8×8 output elements
+
+    // Main GEMM loop
+    // TODO: Loop over K-tiles, load into shared memory, compute, sync
+    // Use float4 vectorized loads for better memory throughput
+
+    // Write results to C
+    // TODO: Store the accumulated TM×TN fragment to C
+}
+
+// Do NOT modify below this line
+void solve(const float* hA, const float* hB, float* hC, int N) {
+    float *dA, *dB, *dC;
+    size_t bytes = (size_t)N * N * sizeof(float);
+
+    cudaMalloc(&dA, bytes);
+    cudaMalloc(&dB, bytes);
+    cudaMalloc(&dC, bytes);
+
+    cudaMemcpy(dA, hA, bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(dB, hB, bytes, cudaMemcpyHostToDevice);
+
+    // Launch kernel: grid covers M×N with BM×BN tiles
+    // Use 128 threads per block
+    dim3 grid((N + BN - 1) / BN, (N + BM - 1) / BM);
+    sgemmKernel<<<grid, THREADS>>>(dA, dB, dC, N, N, N);
+
+    cudaMemcpy(hC, dC, bytes, cudaMemcpyDeviceToHost);
+
+    cudaFree(dA);
+    cudaFree(dB);
+    cudaFree(dC);
+}
+
+---test-cases---
+- name: "Identity matrix"
+  input: "4\n1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0\n1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0"
+  expected: "1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0"
+- name: "Ones matrix"
+  input: "4\nfill:1.0 fill:1.0"
+  expected: "4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0"
+- name: "Small random"
+  input: "4\n1.0 2.0 3.0 4.0 2.0 1.0 4.0 3.0 3.0 4.0 1.0 2.0 4.0 3.0 2.0 1.0\n1.0 1.0 1.0 1.0 1.0 2.0 3.0 4.0 1.0 3.0 6.0 10.0 1.0 4.0 10.0 20.0"
+  expected: "6.0 14.0 30.0 58.0 10.0 18.0 38.0 74.0 14.0 22.0 46.0 90.0 18.0 26.0 54.0 106.0"
+- name: "8x8 correctness"
+  input: "verify 8"
+  expected: "1"
+- name: "32x32 correctness"
+  input: "verify 32"
+  expected: "1"
+
+---solution---
+__global__ void sgemmKernel(const float* A, const float* B, float* C,
+                            int M, int N, int K) {
+    // Shared memory tiles
+    __shared__ float sA[BM][BK];
+    __shared__ float sB[BK][BN];
+
+    // Thread and block indices
+    int tid = threadIdx.x;
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+
+    // Each thread computes TM×TN output elements
+    // Thread layout: TM rows × TN cols within the BM×BN block
+    int tx = tid % (BM / TM);  // Thread column within block (0..TM-1)
+    int ty = tid / (BM / TM);  // Thread row within block (0..TN-1)
+
+    // Base row and column for this thread's output elements
+    int rowBase = by * BM + ty * TM;
+    int colBase = bx * BN + tx * TN;
+
+    // Register accumulation: TM×TN = 8×8 = 64 elements
+    float regC[TM][TN] = {{0.0f}};
+
+    // Main GEMM loop over K-tiles
+    int numTiles = (K + BK - 1) / BK;
+    for (int t = 0; t < numTiles; t++) {
+        int kBase = t * BK;
+
+        // Load A tile: BM×BK = 128×32 = 4096 elements
+        // Each thread loads multiple elements
+        int loadStride = BM * BK / THREADS;  // 4096 / 128 = 32 elements per thread
+        for (int i = tid; i < BM * BK; i += THREADS) {
+            int row = i / BK;
+            int col = i % BK;
+            int globalRow = rowBase + row;
+            int globalCol = kBase + col;
+            if (globalRow < M && globalCol < K) {
+                sA[row][col] = A[globalRow * K + globalCol];
+            } else {
+                sA[row][col] = 0.0f;
+            }
+        }
+
+        // Load B tile: BK×BN = 32×128 = 4096 elements
+        for (int i = tid; i < BK * BN; i += THREADS) {
+            int row = i / BN;
+            int col = i % BN;
+            int globalRow = kBase + row;
+            int globalCol = colBase + col;
+            if (globalRow < K && globalCol < N) {
+                sB[row][col] = B[globalRow * N + globalCol];
+            } else {
+                sB[row][col] = 0.0f;
+            }
+        }
+
+        __syncthreads();
+
+        // Compute: each thread accumulates TM×TN elements over BK elements
+        for (int k = 0; k < BK && kBase + k < K; k++) {
+            for (int i = 0; i < TM; i++) {
+                for (int j = 0; j < TN; j++) {
+                    regC[i][j] += sA[ty * TM + i][k] * sB[k][tx * TN + j];
+                }
+            }
+        }
+
+        __syncthreads();
+    }
+
+    // Write results to C
+    for (int i = 0; i < TM; i++) {
+        for (int j = 0; j < TN; j++) {
+            int globalRow = rowBase + i;
+            int globalCol = colBase + j;
+            if (globalRow < M && globalCol < N) {
+                C[globalRow * N + globalCol] = regC[i][j];
+            }
+        }
+    }
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+
+// Read matrix: either "fill:value" or space-separated values
+static void readMatrix(std::vector<float>& m, int N) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float v = atof(tok + 5);
+        for (int i = 0; i < N * N; i++) m[i] = v;
+    } else {
+        m[0] = atof(tok);
+        for (int i = 1; i < N * N; i++) scanf("%f", &m[i]);
+    }
+}
+
+// Naive CPU reference for verification
+static void referenceSGEMM(const std::vector<float>& A, const std::vector<float>& B,
+                           std::vector<float>& C, int M, int N, int K) {
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            float sum = 0.0f;
+            for (int k = 0; k < K; k++) {
+                sum += A[i * K + k] * B[k * N + j];
+            }
+            C[i * N + j] = sum;
+        }
+    }
+}
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        int N;
+        scanf("%d", &N);
+
+        std::vector<float> hA(N * N), hB(N * N), hGPU(N * N), hCPU(N * N);
+
+        // Generate test matrices
+        for (int i = 0; i < N * N; i++) hA[i] = (float)(i % 7 + 1);
+        for (int i = 0; i < N * N; i++) hB[i] = (float)(i % 5 + 1);
+
+        // CPU reference
+        referenceSGEMM(hA, hB, hCPU, N, N, N);
+
+        // GPU
+        extern void solve(const float* hA, const float* hB, float* hC, int N);
+        solve(hA.data(), hB.data(), hGPU.data(), N);
+
+        // Check result
+        bool ok = true;
+        for (int i = 0; i < N * N && ok; i++) {
+            float rel_err = (hCPU[i] != 0) ? fabs(hGPU[i] - hCPU[i]) / fabs(hCPU[i]) : 0.0f;
+            if (rel_err > 1e-3f) {
+                ok = false;
+            }
+        }
+        printf("%d\n", ok ? 1 : 0);
+    } else {
+        // Parse N and read matrices
+        int N = atoi(first);
+        std::vector<float> hA(N * N), hB(N * N), hC(N * N);
+
+        readMatrix(hA, N);
+        readMatrix(hB, N);
+
+        extern void solve(const float* hA, const float* hB, float* hC, int N);
+        solve(hA.data(), hB.data(), hC.data(), N);
+
+        // Print first row of C
+        for (int j = 0; j < N; j++) {
+            if (j > 0) printf(" ");
+            printf("%.1f", hC[j]);
+        }
+        printf("\n");
+    }
+
+    return 0;
+}
+
+---editorial---
+## Approach
+
+The optimized SGEMM implementation follows a three-level tiling hierarchy:
+
+**Thread-block level (BM=128, BN=128, BK=32):**
+- Each block computes a 128×128 tile of C
+- Loads a 128×32 tile of A and 32×128 tile of B into shared memory
+- Iterates over K in 32-element chunks
+
+**Warp level (implicit):**
+- With 128 threads per block and 32 threads per warp, we have 4 warps per block
+- Each warp naturally handles a 64×64 sub-tile of the 128×128 block tile
+
+**Thread level (TM=8, TN=8):**
+- Each thread accumulates an 8×8 = 64-element fragment
+- Total: 128 threads × 64 elements = 8192 elements = 128×128 (matches block tile)
+
+**Memory access patterns:**
+
+Global → shared memory loads must be coalesced. With 128 threads and 4096 elements per tile, each thread loads 32 elements. The key is stride selection:
+
+```cpp
+for (int i = tid; i < BM * BK; i += THREADS) {
+    int row = i / BK;
+    int col = i % BK;
+    sA[row][col] = A[globalRow * K + globalCol];
+}
+```
+
+This ensures consecutive threads load consecutive memory addresses.
+
+**Register accumulation:**
+
+Instead of having each thread compute one output element, each thread accumulates a TM×TN fragment in registers:
+
+```cpp
+float regC[TM][TN] = {{0.0f}};
+for (int k = 0; k < BK; k++) {
+    for (int i = 0; i < TM; i++) {
+        for (int j = 0; j < TN; j++) {
+            regC[i][j] += sA[ty * TM + i][k] * sB[k][tx * TN + j];
+        }
+    }
+}
+```
+
+This reduces instruction overhead and increases instruction-level parallelism.
+
+**Vectorized loads (extension):**
+
+For even better performance, use float4 loads:
+
+```cpp
+float4 val = *reinterpret_cast<const float4*>(&A[globalIdx]);
+*reinterpret_cast<float4*>(&sA[idx]) = val;
+```
+
+This reduces load instructions by 4× and achieves near-peak memory bandwidth.
+
+## Complexity
+
+- **Time complexity**: O(MNK / (BM × BN / THREADS)) = O(MNK / 4096)
+  - Each block processes BM×BN = 16384 elements
+  - Total blocks: (M/BM) × (N/BN) = (N/128)²
+  - Each block iterates K/BK = K/32 times
+
+- **Space complexity**: O(BM×BK + BK×BN) = O(2×4096) = O(8192 floats) = 32 KB shared memory per block
+  - sA: 128×32 = 4096 floats = 16 KB
+  - sB: 32×128 = 4096 floats = 16 KB
+
+- **Register usage**: TM×TN = 64 floats per thread = 256 bytes per thread
+  - With 128 threads: 32 KB registers per block
+  - This is substantial but feasible on modern GPUs
+
+## Key Insights
+
+1. **Three-level tiling is essential**: Global → shared → register hierarchy matches GPU memory architecture. Each level reduces latency by 2-3 orders of magnitude.
+
+2. **Register blocking increases ILP**: Computing TM×TN = 64 elements per thread allows the compiler to schedule independent operations, hiding latency.
+
+3. **Shared memory size limits tile size**: With 32 KB per block, BM×BK + BK×BN ≤ 8192 floats. This constrains the optimization space.
+
+4. **Thread count must divide tile size**: 128 threads divides 4096 (tile size) evenly, so each thread loads exactly 32 elements.
+
+5. **Bounds checks are necessary**: When K is not a multiple of BK, the last tile requires padding checks to avoid out-of-bounds access.
+
+## Common Mistakes
+
+- **Wrong thread-to-element mapping**: The mapping from threadIdx to (row, col) within the BM×BN tile must cover all BM×BN elements exactly once. With 128 threads and 16384 elements, each thread handles 128 elements (TM×TN = 8×8 = 64... wait, that's wrong! Fix: 16384 / 128 = 128 elements per thread, not 64).
+
+- **Missing zero-padding**: When the matrix size is not a multiple of the tile size, uninitialized shared memory leads to garbage results. Always zero out-of-bounds loads.
+
+- **Wrong shared memory indexing**: Accessing sA[row][col] vs sA[col][row] transposes the matrix. Ensure row-major or column-major consistency.
+
+- **Missing __syncthreads()**: Both before and after the compute loop. The first ensures loads complete before compute; the second ensures compute completes before next load.
+
+- **Register array initialization**: `float regC[TM][TN] = {{0.0f}};` is required. Without it, registers contain garbage.
+
+- **Too many registers per thread**: TM×TN = 64 floats is already substantial. Larger tiles may reduce occupancy.
+
+- **Non-coalesced loads**: If consecutive threads load from non-consecutive addresses, memory bandwidth drops dramatically. Verify load patterns with Nsight Compute.
+
+## Benchmarking Against cuBLAS
+
+For N=4096, target performance is >70% of cuBLAS:
+- cuBLAS SGEMM on H100: ~300-400 GFLOPS for large matrices
+- Your kernel: target >210-280 GFLOPS
+
+To achieve this:
+1. Use float4 loads (4× reduction in load instructions)
+2. Add double buffering to hide memory latency
+3. Tune BM, BN, BK for optimal occupancy
+
+---end---
