@@ -76,7 +76,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 - [x] tensor-cores | Tensor Cores & WMMA API | CONCEPT | advanced | ~45min | source: cluster-linear-algebra.json tensor-cores-wmma topic; gpu-glossary/device-hardware/tensor-core.md; cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/; docs.nvidia.com/cuda/ampere-tuning-guide/#improved-tensor-core-operations; gpu-glossary/device-software/warpgroup.md
 
 ### Problem nodes (in dependency order)
-- [ ] cublas-integration | cuBLAS GEMM Integration | PROBLEM | intermediate | ~45min | source: cluster-linear-algebra.json cublas-usage topic; gpu-glossary/host-software/cublas.md; docs.nvidia.com/cuda/cublas/
+- [x] cublas-integration | cuBLAS GEMM Integration | PROBLEM | intermediate | ~45min | source: cluster-linear-algebra.json cublas-usage topic; gpu-glossary/host-software/cublas.md; docs.nvidia.com/cuda/cublas/
 - [ ] gemm-optimization | Optimized SGEMM from Scratch | PROBLEM | advanced | ~240min | source: cluster-linear-algebra.json tiled-gemm exerciseId=custom-sgemm; llm.c/dev/cuda/matmul_forward.cu; cuda-samples/0_Introduction/matrixMul/
 - [ ] tensor-core-gemm | HGEMM with WMMA Tensor Cores | PROBLEM | advanced | ~180min | source: cluster-linear-algebra.json tensor-cores-wmma exerciseId=wmma-hgemm; cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/
 
