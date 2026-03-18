@@ -1,0 +1,210 @@
+---
+slug: register-pressure
+title: Register Pressure & Occupancy
+track: cuda
+type: concept
+cluster: memory
+difficulty: intermediate
+estimatedMinutes: 25
+interviewRelevance: high
+tags:
+  - register-pressure
+  - occupancy
+  - register-file
+  - register-spilling
+status: published
+author: team
+sources:
+  - "NVIDIA CUDA Programming Guide, Chapter 4"
+  - "NVIDIA CUDA C Best Practices Guide, Section on Occupancy"
+  - "Modal GPU Glossary: Register File"
+  - "Modal GPU Glossary: Register Pressure"
+  - "Modal GPU Glossary: Registers"
+---
+
+# Register Pressure & Occupancy
+
+## Why this matters for interviews
+
+Register pressure questions distinguish engineers who have optimized real CUDA kernels from those who have only written toy examples. At NVIDIA, Google DeepMind, and any organization building custom AI infrastructure, expect "your kernel is memory-bound but occupancy is already 100% — what do you do?", "how does register usage affect performance?", and "what happens when a kernel spills registers?" These are not theoretical questions — they arise when debugging kernels that underperform despite correct coalescing and shared memory usage. This article gives you the precise mental model to answer them.
+
+## The Register File: Finite Hardware Resource
+
+CUDA registers are the fastest memory on a GPU — significantly faster than even L1 cache. Each CUDA thread has its own private register file, visible in PTX (Parallel Thread eXecution) as virtual registers. However, these virtual registers map to a finite physical register file on each SM: **65,536 × 32-bit registers = 256 KB per SM** on both Ampere and Hopper architectures.
+
+The critical insight: **registers are allocated per thread, not per warp**. If a kernel uses 64 registers per thread and your block size is 256 threads, that single block consumes 256 × 64 = 16,384 registers — exactly 25% of the SM's register budget. This directly limits how many blocks can reside on the same SM simultaneously.
+
+**Register allocation is determined at compile time.** The `ptxas` compiler analyzes each kernel's variable lifetime and instruction dependencies to assign physical registers. You can inspect the result using:
+
+```bash
+nvcc -Xptxas=-v my_kernel.cu
+```
+
+This prints output like:
+```
+ptxas info    : Spills 0
+ptxas info    : Used 48 registers, 384 bytes cmem[0]
+```
+
+The register count here is your kernel's **register pressure**. If you change the algorithm, add temporaries, or unroll loops differently, this number changes — and with it, your kernel's occupancy.
+
+## Occupancy: The Scheduling Constraint
+
+**Occupancy** is the ratio of actively running warps on an SM to the maximum possible warps the SM can support. H100 supports up to 64 warps per SM (2,048 threads). Occupancy is constrained by three independent resources:
+
+1. **Warp slots:** Maximum 64 warps per SM
+2. **Register budget:** 65,536 registers per SM
+3. **Shared memory budget:** 228 KB per SM (H100)
+
+**The most constrained resource determines actual occupancy.** This is why `cudaOccupancyMaxActiveBlocksPerMultiprocessor` takes all three as inputs — it calculates the bottleneck.
+
+**Occupancy calculation example:**
+Consider a kernel with:
+- Block size: 256 threads (8 warps)
+- Registers per thread: 32
+- Shared memory per block: 32 KB
+
+Register limit: `65536 / (256 × 32) = 8 blocks`
+Shared memory limit: `228 KB / 32 KB = 7 blocks`
+Warp limit: `64 warps / 8 warps = 8 blocks`
+
+The shared memory constraint is the bottleneck: **7 blocks max per SM**, giving 7 × 8 = 56 warps, or **87.5% occupancy**.
+
+Now increase registers per thread to 64:
+- Register limit: `65536 / (256 × 64) = 4 blocks`
+- Shared memory limit: still 7 blocks
+- Warp limit: `64 / 8 = 8 blocks`
+
+The register constraint becomes the bottleneck: **4 blocks max per SM**, giving 4 × 8 = 32 warps, or **50% occupancy**.
+
+## Register Spilling: The Silent Performance Killer
+
+When `ptxas` cannot fit all a thread's variables in registers, it **spills** the excess to **local memory** — which is not shared memory, but private per-thread storage in L1-cached global memory. A single register spill incurs ~30-400 cycles latency depending on whether the L1 cache hits or misses.
+
+**The double penalty:**
+1. **Reduced occupancy:** Spills don't reduce register count directly, but the presence of spills signals the compiler is already at its register budget limit.
+2. **Memory latency:** Every spilled load/store becomes a global memory access with L1 caching — far slower than a register access.
+
+**Example:** A reduction kernel that keeps partial sums in registers versus one that spills them:
+- **No spills:** 40 cycles per iteration, fully register-resident
+- **With spills:** 300+ cycles per iteration, waiting on L1 memory fetches
+
+A 7–10× slowdown from spilling alone.
+
+**Detecting spills:** Always compile with `-Xptxas=-v`. If you see `Spills N` where N > 0, investigate. Common fixes:
+- Reduce block size (fewer threads = same register count per thread but more blocks)
+- Reduce shared memory usage (free more SM budget for registers)
+- Use `--maxrregcount=N` to force `ptxas` to spill less aggressively (careful: this trades register pressure for explicit spilling)
+- Refactor the algorithm to reduce live variable count (e.g., reuse temporaries, reduce loop unrolling)
+
+## The Occupancy vs Performance Relationship
+
+**High occupancy is not a goal — it is a means to latency hiding.** The purpose of keeping many warps resident on an SM is to give the warp schedulers enough eligible candidates to keep issuing instructions when some warps stall on memory.
+
+**When high occupancy helps:**
+- Memory-bound kernels with latency that needs hiding (global memory loads, L2 misses)
+- Irregular execution patterns where some warps diverge more than others
+- Small batch size inference where you need to pack multiple requests into a single kernel launch
+
+**When high occupancy doesn't matter:**
+- Compute-bound kernels where arithmetic dominates memory (e.g., tensor core GEMM with CGMA > 295 on H100)
+- Kernels already hitting the theoretical peak (Nsight Compute shows 100% `smsp__pipe_compute_util`)
+- Register-intensive kernels (e.g., matmul with many accumulators) where the bottleneck is execution unit throughput, not warp scheduling
+
+**The ridge point:** On H100, the ridge point is ~295 FLOPs/byte. Above this, you are compute-bound and occupancy matters less. Below this, you are memory-bound and need high occupancy to hide latency.
+
+**Using the Occupancy API:**
+```cpp
+int maxBlocks;
+cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    &maxBlocks,
+    my_kernel,
+    blockDim,
+    dynamicSharedMemSize
+);
+int maxWarps = maxBlocks * (blockDim / 32);
+float occupancy = maxWarps / 64.0f;  // 64 is H100 max warps/SM
+```
+
+This gives you the theoretical maximum occupancy for your kernel's resource requirements. If this is already 100% and performance is still poor, the bottleneck is not occupancy — look at issue efficiency, memory coalescing, or instruction mix.
+
+## Common Misconceptions
+
+**❌ Wrong:** Fewer registers always means better performance.
+**✓ Correct:** Too few registers triggers spilling to L1-cached local memory, which can be 10× slower than register access. The goal is the *minimum register count that avoids spills*, not the absolute minimum. Use `--maxrregcount=N` with caution — set N below what `ptxas` reports naturally only if you've verified no spills occur.
+
+**❌ Wrong:** Register spilling uses shared memory.
+**✓ Correct:** Spills go to **local memory** — per-thread storage in global memory with L1 caching. Shared memory is explicitly declared with `__shared__` and is shared between threads in a block. Local memory spills are invisible to the programmer and have ~30-400 cycle latency vs ~4 cycles for shared memory.
+
+**❌ Wrong:** Registers are zeroed on kernel launch.
+**✓ Correct:** Register values are **undefined** unless initialized by the kernel. Unlike shared memory, which can be zeroed with explicit initialization, registers are allocated from a large pool and may contain stale data from previous warps. Always initialize all register variables before use — undefined behavior from uninitialized registers is a common source of hard-to-debug numerical errors.
+
+**❌ Wrong:** Occupancy is always good — higher is better.
+**✓ Correct:** Occupancy is a means to latency hiding, not a performance goal. If your kernel is already compute-bound (100% pipe utilization) or the bottleneck is instruction issue efficiency (low `smsp__issue_active`), higher occupancy will not improve performance. Focus on the actual bottleneck, not occupancy in isolation.
+
+**❌ Wrong:** All warps on an SM execute simultaneously.
+**✓ Correct:** Warps are scheduled by 4 warp schedulers, each handling 16 warps (on H100). Each cycle, a scheduler picks one *eligible* warp to issue. Only one warp's instruction executes per scheduler per cycle. Higher occupancy gives schedulers more candidates to choose from — but doesn't mean all warps execute in parallel.
+
+## Debugging Register Pressure Issues
+
+**Symptom 1: Low occupancy despite small block size**
+Check for register spills. Use `nvcc -Xptxas=-v` and look for `Spills N` where N > 0. If spills exist, the compiler couldn't fit all variables in registers.
+
+**Fix:**
+```bash
+# Option 1: Reduce block size (often 128 instead of 256)
+kernel<<<grid, 128>>>();
+
+# Option 2: Reduce shared memory usage to free SM budget for registers
+
+# Option 3: Refactor kernel to reduce live variables (unroll loops, reuse temporaries)
+```
+
+**Symptom 2: High occupancy but low throughput**
+Check Nsight Compute metrics:
+- `smsp__pipe_compute_util`: if < 80%, you are not saturating compute units
+- `smsp__issue_active.avg.pct_of_peak_sustained_active`: if < 80%, issue efficiency is the bottleneck
+- `lts__t_sectors_peak_per_second`: L2 throughput — if high, you are memory-bound
+
+**Symptom 3: Kernel performance varies wildly with block size**
+This indicates occupancy quantization effects. Different block sizes change how many blocks fit per SM, changing how many warps are available to hide latency. Use `cudaOccupancyMaxActiveBlocksPerMultiprocessor` to find the optimal configuration.
+
+## Key Numbers to Memorize
+
+| Property | H100 | A100 |
+|-----|-----|-----|
+| Register file per SM | 65,536 registers (256 KB) | 65,536 registers (256 KB) |
+| Max warps per SM | 64 | 64 |
+| Max threads per SM | 2,048 | 2,048 |
+| Shared memory max per SM | 228 KB | 164 KB |
+| Register spill latency (L1 hit) | ~30 cycles | ~30 cycles |
+| Register spill latency (L1 miss) | ~400 cycles | ~400 cycles |
+| Occupancy ceiling | 64 warps / 64 warps = 100% | 64 warps / 64 warps = 100% |
+
+**Example: Register budget calculations**
+- 32 registers/thread × 256 threads/block = 8,192 registers/block → 8 blocks/SM
+- 64 registers/thread × 256 threads/block = 16,384 registers/block → 4 blocks/SM
+- 48 registers/thread × 128 threads/block = 6,144 registers/block → 10 blocks/SM
+
+## Interview Patterns
+
+**"Your kernel occupancy is only 50% — is that a problem?"**
+First, check if it's a bottleneck. Use Nsight Compute: if `smsp__pipe_compute_util` is low and `lts__t_sectors_peak_per_second` is low, occupancy is limiting your ability to hide latency. If `smsp__pipe_compute_util` is already 100%, the kernel is compute-bound and higher occupancy won't help. The question is not "what is the occupancy?" but "what is the actual bottleneck?"
+
+**"How does register usage affect kernel performance?"**
+Three mechanisms: (1) **Occupancy** — higher registers/thread → fewer blocks/SM → fewer warps to hide latency; (2) **Spilling** — if registers exceed the 65,536 budget, spills to local memory with ~30-400 cycle latency; (3) **Instruction latency** — some instructions (e.g., FP64, special functions) use more registers and have higher latency, increasing pressure on the register file. The optimal register count balances these trade-offs: enough to avoid spills, not so many that occupancy collapses.
+
+**"What happens when you launch a kernel with too many registers per thread?"**
+The CUDA runtime still launches the kernel — it does not error. However, `ptxas` assigns registers at compile time, and if the register count per thread limits the number of blocks per SM, you get lower occupancy. If the register count is so high that even 1 block exceeds 65,536 registers, the kernel will fail to launch with `cudaErrorInvalidConfiguration`.
+
+**"Why does my kernel run faster with a smaller block size?"**
+Smaller block sizes often reduce register pressure per block (fewer threads = fewer live variables per thread), allowing more blocks per SM and higher occupancy. This increases the warp pool for latency hiding. However, if the block size is too small, you may not have enough work to saturate the SM. The optimal block size is often found empirically, balancing occupancy against work granularity.
+
+## Further Reading
+
+- [NVIDIA CUDA C++ Programming Guide — Register Use](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#register-use)
+- [NVIDIA CUDA C Best Practices Guide — Occupancy](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#occupancy)
+- [NVIDIA Hopper Tuning Guide — Register Usage](https://docs.nvidia.com/cuda/hopper-tuning-guide/)
+- [Modal GPU Glossary: Register File](https://modal.com/gpu-glossary/device-hardware/register-file)
+- [Modal GPU Glossary: Register Pressure](https://modal.com/gpu-glossary/perf/register-pressure)
+- [Modal GPU Glossary: Occupancy](https://modal.com/gpu-glossary/perf/occupancy)
