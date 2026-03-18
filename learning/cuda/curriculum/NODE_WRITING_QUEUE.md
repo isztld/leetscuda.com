@@ -91,7 +91,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 ### Theory nodes
 - [x] roofline-model | Roofline Model & Performance Analysis | CONCEPT | intermediate | ~30min | source: cluster-profiling.json roofline-model topic; gpu-glossary/perf/roofline-model.md; gpu-glossary/perf/arithmetic-intensity.md; cuda-mode-lectures/lecture_001/
 - [x] bottleneck-analysis | Memory-Bound vs Compute-Bound | CONCEPT | intermediate | ~25min | source: cluster-profiling.json memory-bound-vs-compute-bound topic; gpu-glossary/perf/memory-bound.md; gpu-glossary/perf/compute-bound.md; gpu-glossary/perf/performance-bottleneck.md; PMPP Ch6 §6.7
-- [ ] nsight-compute | Nsight Compute Profiling Workflow | CONCEPT | intermediate | ~40min | source: cluster-profiling.json nsight-compute-workflow+nsight-systems-concurrency topics; gpu-glossary/host-software/nsight-systems.md; gpu-glossary/perf/issue-efficiency.md; gpu-glossary/perf/pipe-utilization.md; cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/
+- [x] nsight-compute | Nsight Compute Profiling Workflow | CONCEPT | intermediate | ~40min | source: cluster-profiling.json nsight-compute-workflow+nsight-systems-concurrency topics; gpu-glossary/host-software/nsight-systems.md; gpu-glossary/perf/issue-efficiency.md; gpu-glossary/perf/pipe-utilization.md; cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/
 
 ### Problem nodes
 - [ ] profile-and-optimize | Profile and Optimize a Kernel | PROBLEM | intermediate | ~90min | source: cluster-profiling.json exerciseId=profile-and-optimize; cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/
