@@ -1,0 +1,302 @@
+---
+slug: thread-hierarchy
+title: Thread Hierarchy
+track: cuda
+type: concept
+cluster: foundations
+difficulty: introductory
+estimatedMinutes: 35
+interviewRelevance: high
+tags:
+  - cuda-basics
+  - parallel-execution
+  - warp
+  - thread-blocking
+  - simt
+status: published
+author: team
+sources:
+  - "gpu-glossary/device-software/thread-block-grid.md"
+  - "gpu-glossary/device-software/warp.md"
+  - "docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html"
+  - "PMPP Ch4"
+---
+
+# Thread Hierarchy: Grid / Block / Warp / Thread
+
+## Why this matters for interviews
+
+Thread hierarchy is the foundation of CUDA programming. Every kernel you write requires choosing the right grid and block dimensions. In interviews, you'll be asked: "How do you calculate the global thread index?" or "What's the maximum block size?" or "Why should block sizes be multiples of 32?"
+
+Understanding thread hierarchy also underpins everything else: occupancy calculations, shared memory usage, warp divergence, and performance optimization. You can't optimize what you don't understand.
+
+## The CUDA parallelism hierarchy
+
+CUDA uses a **three-level hierarchy** to map parallel work to GPU hardware:
+
+```
+Grid (1D, 2D, or 3D)
+  └── Block (1D, 2D, or 3D; up to 1024 threads)
+        └── Thread (within block)
+              └── Warp (32 consecutive threads)
+```
+
+### Grid
+
+The **grid** is the top-level container. A kernel launch creates one grid containing all the work.
+
+- Grid dimensions: 1D, 2D, or 3D
+- Maximum grid size (1D): 2^31 - 1 blocks
+- Maximum grid size (2D/3D): 65535 blocks per dimension
+- Typical 1D launch for N elements with 256 threads per block: `<<<(N+255)/256, 256>>>`
+
+Example:
+```cpp
+// Process 1 million elements with 256 threads per block
+int N = 1000000;
+int threadsPerBlock = 256;
+int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
+myKernel<<<blocksPerGrid, threadsPerBlock>>>(...);
+
+// Or more concisely:
+myKernel<<<(N+255)/256, 256>>>(...);
+```
+
+### Block
+
+The **block** is the unit of scheduling. Each block contains 1-1024 threads and executes on a single SM.
+
+- Maximum threads per block: **1024**
+- Maximum block dimensions: product of x, y, z = 1024
+- Blocks can be 1D, 2D, or 3D
+- Blocks in a grid execute **independently**; order is not guaranteed
+
+Thread indexing within a block:
+```cpp
+// 1D block
+int threadIdx_1D = threadIdx.x;
+
+// 2D block (e.g., for matrix operations)
+int idx_2D = threadIdx.y * blockDim.x + threadIdx.x;
+
+// 3D block (e.g., for volume processing)
+int idx_3D = threadIdx.z * blockDim.x * blockDim.y +
+             threadIdx.y * blockDim.x +
+             threadIdx.x;
+```
+
+### Thread
+
+The **thread** is the finest granularity of execution. Each thread has:
+- Unique ID within its block (`threadIdx`)
+- Access to the block's shared memory
+- Its own register file and program counter
+
+Global thread index (1D grid, 1D block):
+```cpp
+int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+if (globalIdx < N) {
+    output[globalIdx] = input[globalIdx] * 2;
+}
+```
+
+Note the **bounds check** (`globalIdx < N`). Without it, threads beyond the array size would write garbage.
+
+### Warp
+
+The **warp** is the unit of hardware scheduling. A warp is a group of exactly **32 consecutive threads** that execute in lockstep (SIMT).
+
+- Warp size is **always 32** on all NVIDIA GPUs (since Fermi, 2010)
+- Thread IDs 0-31 form warp 0, 32-63 form warp 1, etc.
+- A block of 256 threads = 8 warps
+- Partial warps: if block size is not a multiple of 32, the last warp has fewer than 32 active threads but still consumes a full warp's resources
+
+Example:
+```cpp
+// Block of 256 threads = 8 warps
+// Block of 128 threads = 4 warps
+// Block of 100 threads = 4 warps (last warp has 4 active threads)
+
+// Warp ID for a thread
+int warpId = threadIdx.x / 32;
+
+// Lane ID within warp (0-31)
+int laneId = threadIdx.x % 32;
+```
+
+## Kernel launch configuration
+
+### Basic launch syntax
+
+```cpp
+// Kernel definition
+__global__ void myKernel(float* input, float* output, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        output[idx] = input[idx] * 2;
+    }
+}
+
+// Launch
+int N = 1000000;
+int threadsPerBlock = 256;
+int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
+
+myKernel<<<blocksPerGrid, threadsPerBlock>>>(input, output, N);
+
+// Wait for completion
+cudaDeviceSynchronize();
+```
+
+### Choosing block size
+
+Block size is a performance tuning parameter. Common choices:
+- **128**: Good for simple kernels, higher occupancy
+- **256**: Default for many kernels, balances occupancy and shared memory
+- **512**: Good for compute-heavy kernels
+- **1024**: Maximum; use when you need all 1024 threads
+
+Guidelines:
+- Block size should be a **multiple of 32** to avoid partial warps
+- Larger blocks = more threads per SM = better latency hiding
+- But larger blocks = more registers/shared memory per block = lower occupancy
+
+### Choosing grid size
+
+Grid size should cover all the data. For N elements:
+```cpp
+// Ceiling division: (N + threadsPerBlock - 1) / threadsPerBlock
+int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
+```
+
+For 2D data (e.g., images, matrices):
+```cpp
+// 2D grid for image with width x height pixels
+dim3 threadsPerBlock(16, 16);  // 256 threads
+dim3 blocksPerGrid(
+    (width + 15) / 16,
+    (height + 15) / 16
+);
+
+myKernel<<<blocksPerGrid, threadsPerBlock>>>(image, width, height);
+```
+
+## Key constants and limits
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| Warp size | 32 | Always 32 on all NVIDIA GPUs |
+| Max threads per block | 1024 | Product of x times y times z dimensions |
+| Max block dimensions | 1024 times 1024 times 64 | x, y, z individually |
+| Max grid dimensions (1D) | 2^31 - 1 | Signed 32-bit int max |
+| Max grid dimensions (2D/3D) | 65535 | Per dimension |
+| Max shared memory per block | 48 KB | Configurable (16-48 KB on most GPUs) |
+| Max registers per block | 65536 | Per SM, shared among all blocks |
+
+## Thread execution model
+
+### Block independence
+
+Blocks execute **independently**. The runtime can schedule them in any order:
+- Parallel execution (multiple blocks on different SMs)
+- Sequential execution (one block at a time if SMs are full)
+- Mixed (some parallel, some sequential)
+
+**Never assume block execution order.** If you need synchronization between blocks, use cooperative groups (requires special launch configuration and hardware support).
+
+### Warp execution
+
+Within a block, threads execute as warps:
+- All 32 threads of a warp issue the same instruction
+- Each thread has its own register state
+- Divergent branches cause serialization (warp executes both paths)
+
+Example of divergence:
+```cpp
+__global__ void divergentKernel(float* data, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        if (idx % 2 == 0) {
+            data[idx] = data[idx] * 2;  // Even threads
+        } else {
+            data[idx] = data[idx] + 1;  // Odd threads
+        }
+    }
+}
+```
+
+In this kernel, adjacent threads take different branches. Each warp will:
+1. Execute the even branch (odd threads masked out)
+2. Execute the odd branch (even threads masked out)
+
+Result: **2x slower** than no divergence.
+
+## Common misconceptions
+
+❌ **Wrong**: "Blocks always execute in launch order"
+
+✓ **Correct**: Blocks execute **independently** and can run in any order. The runtime schedules them on available SMs. Do not rely on block execution order. If you need ordering, use explicit synchronization (e.g., multiple kernel launches).
+
+❌ **Wrong**: "threadIdx and blockIdx are the same thing"
+
+✓ **Correct**: `threadIdx` is the **local index within a block** (0 to blockDim-1). `blockIdx` is the **index of the block in the grid**. The global thread index combines both: `blockIdx.x * blockDim.x + threadIdx.x`.
+
+❌ **Wrong**: "A block with 1024 threads uses 1024 CUDA Cores"
+
+✓ **Correct**: A block with 1024 threads = 32 warps. Each warp executes on a single CUDA Core pipeline (32 threads in lockstep). So 1024 threads use **32 CUDA Core pipelines** simultaneously, not 1024.
+
+❌ **Wrong**: "Warp size can vary between GPU models"
+
+✓ **Correct**: Warp size has been **exactly 32** on all NVIDIA GPUs since Fermi (2010). It does not change with architecture (Volta, Ampere, Hopper, Blackwell all use 32-thread warps).
+
+## Interview patterns
+
+**Question 1**: "How do you calculate the global thread index in a 1D grid/block?"
+
+**Answer**: `int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;` This combines the block's position in the grid with the thread's position within the block.
+
+**Question 2**: "What's the maximum block size in CUDA?"
+
+**Answer**: 1024 threads. This is the product of the x, y, z dimensions. Common choices are 128, 256, 512, or 1024.
+
+**Question 3**: "Why should block sizes be multiples of 32?"
+
+**Answer**: Warps are 32 threads. If the block size is not a multiple of 32, the last warp has fewer than 32 active threads (partial warp), wasting resources. For example, a block of 100 threads = 3 full warps + 1 partial warp with 4 threads.
+
+**Question 4**: "How many warps are in a block of 256 threads?"
+
+**Answer**: 256 / 32 = 8 warps. Each warp executes 32 threads in lockstep.
+
+**Question 5**: "Can blocks synchronize with each other?"
+
+**Answer**: Not with `__syncthreads()` (that only synchronizes threads within a block). Cross-block synchronization requires cooperative groups and special hardware support (launch with `cudaLaunchCooperativeKernel`).
+
+**Question 6**: "Write a kernel launch that processes 1 million integers with 256 threads per block."
+
+**Answer**:
+```cpp
+int N = 1000000;
+int threadsPerBlock = 256;
+int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock; // 3907 blocks
+myKernel<<<blocksPerGrid, threadsPerBlock>>>(data, N);
+```
+
+## Key numbers reference
+
+| Metric | Value |
+|--------|-------|
+| Warp size | 32 threads |
+| Max threads per block | 1024 |
+| Warps per block (256 threads) | 8 |
+| Warps per block (1024 threads) | 32 |
+| Min blocks per SM (A100) | 32 |
+| Max warps per SM (A100) | 64 |
+
+## Further reading
+
+- **CUDA C Programming Guide Ch. 2** — Writing CUDA kernels
+- **PMPP Ch. 4** — Thread hierarchy and SIMT model
+- **gpu-glossary thread-block-grid** — Detailed reference
+- **gpu-glossary warp** — Warp execution details
+- **gpu-glossary SIMT model** — Single Instruction, Multiple Threads

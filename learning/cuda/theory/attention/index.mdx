@@ -1,0 +1,230 @@
+---
+slug: attention
+title: Scaled Dot-Product Attention
+track: cuda
+type: concept
+cluster: cluster-llm-kernels
+difficulty: intermediate
+estimatedMinutes: 40
+interviewRelevance: high
+tags:
+  - attention
+  - llm-kernels
+  - memory-bound
+  - multi-head-attention
+  - gqa
+  - kv-cache
+status: published
+author: team
+sources:
+  - "llm.c/dev/cuda/attention_forward.cu"
+  - "cuda-mode-lectures/lecture_012/flash_attention.cu"
+  - "cluster-llm-kernels.json"
+---
+
+# Scaled Dot-Product Attention
+
+## Why this matters for interviews
+
+The attention mechanism is the core computational kernel in every modern LLM. Interviewers at principal-level AI infrastructure roles expect you to understand not just the mathematical formulation, but the **hardware implications** of implementing attention on GPUs. You must be able to explain why attention becomes a memory bandwidth bottleneck for long sequences, how multi-head attention is implemented efficiently using batched GEMM, and what design tradeoffs exist between MQA, GQA, and standard multi-head attention.
+
+Understanding attention at this depth allows you to reason about inference latency, memory requirements for KV caches, and why algorithms like FlashAttention are necessary for long-context models.
+
+## The attention formula
+
+Scaled dot-product attention computes:
+
+```
+Attention(Q, K, V) = softmax(QK^T / √d_k) × V
+```
+
+Where:
+- Q (queries), K (keys), V (values) ∈ ℝ^{N×d_k}
+- N is the sequence length
+- d_k is the dimension per attention head
+- The scaling factor 1/√d_k prevents softmax saturation
+
+### Naive implementation breakdown
+
+A straightforward implementation follows these steps:
+
+1. **Compute QK^T**: Matrix multiplication producing N×N attention scores. FLOPs: 2N²d_k
+2. **Scale**: Multiply by 1/√d_k. FLOPs: N²
+3. **Softmax**: Row-wise softmax over N scores. FLOPs: ~5N² (exp, sum, subtract, divide)
+4. **Weighted sum**: Multiply attention matrix by V. FLOPs: 2N²d_k
+
+**Total FLOPs**: ~4N²d_k + O(N²) ≈ 4N²d_k for large d_k
+
+**Memory traffic**:
+- Read Q, K, V: 3 × N × d_k × 4 bytes (FP32)
+- Write attention matrix: N² × 4 bytes
+- Read attention matrix: N² × 4 bytes
+- Write output O: N × d_k × 4 bytes
+
+**Total memory**: ~4Nd_k + N² bytes (attention matrix dominates for large N)
+
+**Arithmetic intensity**: FLOPs / bytes ≈ 4N²d_k / (4Nd_k + N²) ≈ N for large N
+
+This arithmetic intensity scaling with N is deceptive—it suggests attention becomes *more* compute-bound as N grows. In reality, the N² attention matrix must be materialized in HBM, making attention **memory-bound** for practical sequence lengths.
+
+## Multi-head attention architecture
+
+Multi-head attention splits the computation into h independent heads:
+
+```
+d_k = d_model / h
+Q_i, K_i, V_i ∈ ℝ^{N×d_k} for head i ∈ [0, h)
+MultiHead(Q, K, V) = concat(head_0, head_1, ..., head_{h-1}) × W_O
+```
+
+Each head computes attention independently, then outputs are concatenated and projected through W_O ∈ ℝ^{d_model×d_model}.
+
+### Implementation efficiency
+
+A common misconception is that multi-head attention is inherently slower than single-head. The reality:
+
+- **Batched GEMM**: All h heads can be computed simultaneously using batched matrix multiplication
+- **Memory coalescing**: Q, K, V are laid out as [N, h, d_k] or [N, d_model], enabling coalesced reads
+- **Fused operations**: Scaled dot-product can fuse the scaling factor into the GEMM
+
+For typical LLM configurations (d_model=4096, h=32, d_k=128), each head processes 128 dimensions. The total FLOPs remain the same as single-head, but parallelism across heads improves GPU utilization.
+
+## GQA and MQA: Tradeoffs for inference
+
+### Multi-Query Attention (MQA)
+
+MQA uses a **single shared K and V head** for all Q heads:
+
+```
+Q_i ∈ ℝ^{N×d_k} for each head i
+K, V ∈ ℝ^{N×d_k} (single copy, shared across all heads)
+```
+
+**Benefits**:
+- KV cache size reduced by factor of h
+- Faster inference for long contexts
+- Lower memory bandwidth pressure during decoding
+
+**Costs**:
+- Slight accuracy degradation (usually <1% on benchmarks)
+- Less expressive than full multi-head
+
+MQA is used in PaLM and some decoder-only models where inference latency is critical.
+
+### Grouped-Query Attention (GQA)
+
+GQA generalizes MQA by partitioning query heads into g groups, each with its own K and V head:
+
+```
+g groups (g < h)
+Each group has h/g query heads sharing one K and V head
+Typical configuration: h=32, g=8 (4 query heads per group)
+```
+
+**Benefits**:
+- KV cache size reduced by factor of h/g
+- Better accuracy than MQA (closer to full multi-head)
+- Good balance for models like LLaMA-2/3, Mistral
+
+**Costs**:
+- More complex implementation than standard multi-head
+- Slightly higher memory than MQA
+
+## KV cache design and memory implications
+
+During autoregressive decoding, each token generation step requires computing attention over all previous tokens. Recomputing K and V for every step is wasteful—instead, we cache them.
+
+### KV cache structure
+
+For each layer and each group (in GQA) or head (in MQA):
+
+```
+K_cache ∈ ℝ^{sequence_length × d_k}
+V_cache ∈ ℝ^{sequence_length × d_k}
+```
+
+**Memory per layer per token**:
+- Standard multi-head: 2 × h × d_k × sequence_length × 4 bytes (FP32)
+- GQA with g groups: 2 × g × d_k × sequence_length × 4 bytes
+- MQA (g=1): 2 × d_k × sequence_length × 4 bytes
+
+**Example: LLaMA-3 70B, layer 30, d_k=128, h=8, g=8 (GQA)**
+
+- KV cache per token: 2 × 8 × 128 × 4 bytes = 8 KB
+- For 128K context: 8 KB × 128K = 1 GB per layer
+- LLaMA-3 70B has 80 layers: 80 GB total KV cache at 128K context
+
+This is why context length is a primary memory bottleneck in LLM inference, not model weights.
+
+## Common misconceptions
+
+### Attention is compute-bound like GEMM
+
+❌ **Wrong**: "Attention is compute-bound because FLOPs scale as N²d_k"
+
+✓ **Correct**: Attention is **memory-bound** for long sequences. The N² attention matrix must be materialized in HBM, dominating memory traffic. For N=4096, d_k=128:
+- Attention matrix: 4096² × 4 bytes = 64 MB
+- Q, K, V: 3 × 4096 × 128 × 4 bytes ≈ 6 MB
+- The attention matrix is 10× larger than input tensors
+
+This is the core insight motivating FlashAttention: avoid materializing the N×N matrix.
+
+### Multi-head attention is slower than single-head
+
+❌ **Wrong**: "More heads means more computation, so multi-head is slower"
+
+✓ **Correct**: Multi-head attention uses **batched GEMM** to compute all heads in parallel. The total FLOPs are identical to single-head with d_model dimensions. Modern GPU libraries (cuBLAS, cuDNN) have highly optimized batched GEMM kernels that achieve near-peak throughput.
+
+### KV cache size is fixed
+
+❌ **Wrong**: "KV cache has constant memory footprint"
+
+✓ **Correct**: KV cache grows **linearly with sequence length**. For each new token, we append to the cache. At 128K context, the cache is 1000× larger than at 128 context. This is why models with long-context support require massive GPU memory or sophisticated memory management (e.g., paged attention in vLLM).
+
+## Interview patterns
+
+Expect these types of questions:
+
+### 1. Memory analysis
+
+**Question**: "For a sequence length of 8192 and d_k=128, how much HBM does the attention matrix require? How does this compare to the input Q, K, V?"
+
+**Answer**: Attention matrix = 8192² × 4 bytes = 256 MB. Q, K, V = 3 × 8192 × 128 × 4 bytes ≈ 12 MB. The attention matrix is ~21× larger than inputs.
+
+### 2. Complexity derivation
+
+**Question**: "Derive the FLOPs and memory complexity of multi-head attention. How does GQA change these?"
+
+**Answer**: FLOPs = 4N²d_k (unchanged by GQA). Memory = 4Nd_k + N² (standard) vs 4Ngd_k + N² (GQA with g groups). GQA reduces input memory but attention matrix dominates for large N.
+
+### 3. KV cache calculation
+
+**Question**: "A 70B LLM has 80 layers, h=8 query heads, g=8 groups, d_k=128. How much memory for 32K context KV cache?"
+
+**Answer**: Per layer per token = 2 × 8 × 128 × 4 = 8 KB. For 32K context = 8 KB × 32K = 256 MB per layer. Total = 256 MB × 80 = 20 GB.
+
+### 4. Optimization strategy
+
+**Question**: "Why can't we simply increase batch size to hide attention's memory latency?"
+
+**Answer**: Attention's memory bottleneck is per-sequence (N² matrix), not batch-dependent. Increasing batch size helps with GEMM-heavy layers but does little for attention. Instead, we need algorithmic changes (FlashAttention) or memory management (paged attention, GQA/MQA).
+
+## Key numbers reference table
+
+| Configuration | N | d_k | Attention Matrix | QKV Input | Ratio (Matrix/Input) |
+|---------------|----|-----|------------------|-----------|---------------------|
+| Small context | 128 | 128 | 64 KB | 192 KB | 0.33× |
+| Medium context | 1024 | 128 | 4 MB | 1.5 MB | 2.7× |
+| Long context | 4096 | 128 | 64 MB | 6 MB | 10.7× |
+| Very long context | 32768 | 128 | 4 GB | 48 MB | 85× |
+| Extreme context | 128K | 128 | 64 GB | 192 MB | 333× |
+
+Key insight: Once N > ~512, the attention matrix dominates memory usage. This is the crossover point where FlashAttention becomes beneficial.
+
+## Further reading
+
+- **llm.c**: [`attention_forward.cu`](https://github.com/karpathy/llm.c/blob/master/dev/cuda/attention_forward.cu) — Multiple implementations from naive to FlashAttention
+- **FlashAttention lecture**: [CUDA Mode Lecture 12](https://www.youtube.com/watch?v=971mU7H7a64) — Visual explanation of FlashAttention algorithm
+- **FlashAttention paper**: Dao et al. (2022) — Original FlashAttention paper
+- **FlashAttention-2 paper**: Dao et al. (2023) — Improved work partitioning and parallelism
+- **FlashAttention-3 paper**: Dao et al. (2024) — Hopper-specific optimizations with TMA and WGMMA

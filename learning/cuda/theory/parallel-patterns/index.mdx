@@ -1,0 +1,183 @@
+---
+slug: parallel-patterns
+title: Map, Scatter, Gather Patterns
+track: cuda
+type: concept
+cluster: algorithms
+difficulty: easy
+estimatedMinutes: 20
+interviewRelevance: medium
+tags:
+  - map-pattern
+  - scatter-pattern
+  - gather-pattern
+  - stream-compaction
+status: published
+author: team
+sources:
+  - "NVIDIA CUDA Programming Guide: Writing CUDA Kernels"
+  - "Programming Massively Parallel Processors, Chapter 10"
+  - "cuda_by_example, Chapters 4-5"
+---
+
+# Map, Scatter, Gather Patterns
+
+## Why this matters for interviews
+
+Map, scatter, and gather are the three foundational data-parallel primitives from which all complex GPU algorithms are built. Principal-level AI infrastructure interviews at NVIDIA, Google, and Meta frequently use these patterns to test whether candidates understand GPU execution at the architectural level. Expect questions like "how would you implement stream compaction?" (gather), "what happens when threads write to the same index?" (scatter conflict), and "why is map trivially parallel?" These questions reveal whether you understand the difference between data parallelism and control parallelism, and whether you can reason about memory access patterns.
+
+## The Three Fundamental Primitives
+
+The entire CUDA programming model reduces to three data movement patterns: **map**, **scatter**, and **gather**. Every kernel you write, from vector addition to FlashAttention, uses one or more of these patterns. Understanding their characteristics — parallelism, memory behavior, contention risk — allows you to reason about any GPU algorithm's performance without profiling.
+
+### Map: Element-wise Application
+
+**Map** applies a function `f` to every element of an input independently. Each thread reads input[i], computes `f(input[i])`, and writes to output[i]. The defining characteristic: there are no data dependencies between elements. Thread 5 does not need to know what thread 4 computed. This *embarrassing parallelism* makes map the simplest and most common GPU pattern.
+
+```cpp
+// Map kernel: y[i] = a * x[i] + b (SAXPY)
+__global__ void saxpy(float a, const float* x, float* y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        y[i] = a * x[i] + b;  // Each thread processes exactly one element
+    }
+}
+```
+
+Map is the basis for:
+- Vector addition (`output[i] = input1[i] + input2[i]`)
+- Element-wise activations (ReLU, GELU, SiLU)
+- Normalization (LayerNorm, RMSNorm)
+- Scaling operations (SAXPY, bias addition)
+
+**Memory behavior:** When threads access consecutive indices (thread i reads index i), memory access is *coalesced*. A single memory transaction serves 32 consecutive threads. This achieves near-peak memory bandwidth. Random or strided access patterns degrade to uncoalesced accesses, reducing effective bandwidth by 10–100× depending on the stride.
+
+### Scatter: Writing to Computed Destinations
+
+**Scatter** is the inverse of map: each thread *writes* to a computed destination index. Thread i calculates `dest = compute_dest(i)` and writes `output[dest] = value`. The critical difference from map: multiple threads may compute the same `dest`, causing *write contention*.
+
+```cpp
+// Scatter kernel: potential write conflict
+__global__ void scatter(int* dest, const float* values,
+                        const int* indices, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        int dest_idx = indices[i];  // Computed destination
+        // RACE CONDITION: multiple threads may write to same dest_idx
+        atomicAdd(&dest[dest_idx], values[i]);  // Resolve conflict
+    }
+}
+```
+
+Scatter appears in:
+- Histogram computation (bin index is computed destination)
+- Sparse updates (e.g., gradient accumulation for embedding layers)
+- Graph algorithms (writing to adjacency lists)
+- Bucketing / binning operations
+
+**Contention analysis:** If you scatter N elements into B bins uniformly at random, expected collisions per bin follow the *balls-in-bins* distribution: `N/B` average, but variance is also `N/B`. With 65,536 threads and 256 bins, each bin receives ~256 writes on average, but actual distribution has a long tail. Using `atomicAdd` serializes writes to the same location.
+
+### Gather: Reading from Computed Sources
+
+**Gather** is the dual of scatter: each thread *reads* from a computed source index. Thread i calculates `src = compute_src(i)` and reads `value = input[src]`. Unlike scatter, gather has *no write contention* — each thread produces exactly one output. The challenge: memory access may be uncoalesced if indices are random.
+
+```cpp
+// Gather kernel: random access reads
+__global__ void gather(float* output, const float* input,
+                       const int* indices, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        int src_idx = indices[i];  // Computed source
+        output[i] = input[src_idx];  // May be uncoalesced
+    }
+}
+```
+
+Gather appears in:
+- Stream compaction (filtered elements)
+- Token sampling in LLMs (gathering logits for next-token prediction)
+- Attention mechanisms (gather values based on attention weights)
+- Look-up tables (e.g., embedding layers)
+
+**Memory behavior:** When indices have spatial locality (consecutive threads access nearby indices), the L2 cache benefits from temporal locality. When indices are truly random, each access may miss in L1/L2, incurring ~600-cycle latency from HBM. Texture memory provides read-only caching optimized for this pattern.
+
+## Common Misconceptions
+
+**❌ Wrong:** Scatter and gather are symmetric in performance.
+
+**✓ Correct:** Scatter can cause write conflicts requiring atomic operations, while gather cannot. In scatter, if multiple threads compute the same destination index, you must serialize writes (atomics) or use privatization (per-block buffers). In gather, each thread independently reads from its computed source — there is no data race. The asymmetry matters: gather is always safe; scatter requires conflict resolution.
+
+**❌ Wrong:** Map always achieves peak memory bandwidth.
+
+**✓ Correct:** Map achieves peak bandwidth *only if* memory accesses are coalesced. If the map kernel processes indices in a strided or shuffled order (e.g., `output[i] = f(input[shuffle(i)])`), access becomes uncoalesced. Coalescing requires that consecutive threads (thread i, i+1, i+2...) access consecutive or strided memory locations. Random index access within a warp causes up to 32 separate memory transactions.
+
+**❌ Wrong:** Gather is slower than scatter.
+
+**✓ Correct:** Gather is typically *faster* than scatter for the same index pattern because there's no write contention. The bottleneck in both is reading the input at random indices. But scatter adds the cost of atomic synchronization at the write site. This matters for histogram: privatized scatter (per-block shared memory histograms) outperforms global scatter by avoiding atomic contention.
+
+**❌ Wrong:** Map and scatter are just different implementations of the same pattern.
+
+**✓ Correct:** They represent fundamentally different dataflow directions. Map is *push-based*: thread i pushes data forward to output[i]. Scatter is *pull-to-write*: thread i pulls the destination index and pushes data there. The inverse pattern, gather, is *pull-based*: thread i pulls data from input[src]. This distinction affects how you decompose problems: if your algorithm naturally computes "where should this element go?", use scatter. If it computes "what should I read?", use gather.
+
+## Practical Patterns in LLM Kernels
+
+LLM training and inference use map, scatter, and gather in specific compositions:
+
+### Token Sampling (Gather + Reduction)
+
+Autoregressive decoding samples the next token by:
+1. Computing logits: `logits = LM_head(hidden_state)` (map: linear projection per token)
+2. Gathering top-k: `topk_vals, topk_idxs = topk(logits, k)` (reduce + gather)
+3. Sampling: `next_token = sample(topk_vals, topk_idxs)` (scatter: write to position i+1)
+
+The top-k operation is a specialized gather: first reduce to find k largest values, then gather those values and their indices.
+
+### Attention Mechanism (Gather + Scatter)
+
+Standard attention:
+1. Compute Q, K, V: `Q = X @ W_q` (map: linear projections)
+2. Compute scores: `scores = Q @ K.T` (matrix multiply, not a simple pattern)
+3. Gather values: `output = softmax(scores) @ V` (gather V weighted by scores)
+
+The gather step is implicit: matrix multiply performs `output[i] = sum_j scores[i,j] * V[j]`, effectively gathering V rows weighted by attention scores.
+
+### Stream Compaction (Gather with Prefix Scan)
+
+Stream compaction removes elements satisfying a predicate. The algorithm:
+1. Map: each thread computes `mask[i] = predicate(input[i])` (boolean)
+2. Prefix scan: compute `offset[i] = exclusive_scan(mask)` (count preceding true elements)
+3. Gather: `output[offset[i]] = input[i]` if mask[i] is true
+
+The prefix scan is the hard part; once you have offsets, compaction is a gather operation.
+
+## Key Numbers to Remember
+
+| Pattern | Contention Risk | Memory Pattern | Typical Use |
+|---------|-----------------|----------------|-------------|
+| Map | None | Coalesced (if consecutive) | Activations, scaling, element-wise |
+| Scatter | Write conflicts (requires atomics) | Uncoalesced if indices random | Histogram, sparse updates |
+| Gather | None | Uncoalesced if indices random | Stream compaction, token sampling |
+
+**Rule of thumb:** For N elements into B bins, if `N/B > 32`, expect significant atomic contention in scatter. For gather, if indices are uniformly random, expect ~90% L2 cache miss rate on first access.
+
+## Interview Patterns
+
+**"How would you implement stream compaction on GPU?"**
+
+Three-step algorithm: (1) Map to compute mask: `mask[i] = predicate(input[i])`. (2) Exclusive prefix scan on mask to compute output indices: `offset[i] = sum(mask[0..i-1])`. (3) Gather: threads with `mask[i]=1` write `output[offset[i]] = input[i]`. The prefix scan is the hard part — you need a parallel scan algorithm (Blelloch or Hillis-Steele).
+
+**"What's the difference between scatter and gather? Which is faster?"**
+
+Scatter: thread i writes to `output[dest[i]]`. Gather: thread i reads from `input[src[i]]`. Scatter can cause write conflicts if multiple threads compute the same `dest`, requiring atomics or privatization. Gather has no write conflicts — each thread produces one output. For the same index pattern, gather is faster because there's no synchronization overhead at the destination.
+
+**"Why is map trivially parallel?"**
+
+Because each element is independent. Thread i computing `output[i] = f(input[i])` does not depend on any other thread's computation. There's no shared state, no synchronization, no communication. Contrast this with reduction (needs tree structure) or prefix scan (needs exclusive sums).
+
+## Further Reading
+
+- [NVIDIA CUDA C++ Programming Guide — Writing CUDA Kernels](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#writing-cuda-kernels)
+- [Programming Massively Parallel Processors, Chapter 10: Problem Decomposition](https://books/Programming Massively Parallel Processors.pdf)
+- [CUDA by Example, Chapters 4-5: Thread Cooperation and Atomics](https://books/cuda_by_example.pdf)
+- [llm.c: attention_forward.cu — gather pattern in attention](https://llm.c/dev/cuda/attention_forward.cu)
+- [llm.c: softmax_forward.cu — map pattern for normalization](https://llm.c/dev/cuda/softmax_forward.cu)

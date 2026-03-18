@@ -1,0 +1,278 @@
+---
+slug: warp-execution
+title: Warp Execution and SIMT Model
+track: cuda
+type: concept
+cluster: foundations
+difficulty: introductory
+estimatedMinutes: 25
+interviewRelevance: high
+tags:
+  - warp
+  - simt
+  - execution-model
+  - divergence
+  - branch-efficiency
+status: published
+author: team
+sources:
+  - "docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/cuda-cpp-execution-model.html"
+  - "gpu-glossary/device-software/cuda-programming-model.md"
+  - "PMPP Ch4"
+  - "cuda-mode-lectures/lecture_002/"
+---
+
+# Warp Execution and the SIMT Model
+
+## Why this matters for interviews
+
+Understanding how warps execute is fundamental to writing efficient CUDA code. In interviews, you'll be asked: "What happens when threads in a warp take different branches?" or "How does SIMT differ from SIMD?" or "Why is branch efficiency important?"
+
+The SIMT (Single Instruction, Multiple Threads) model is what makes CUDA programming possible. It gives you the illusion that each thread executes independently, while the hardware actually executes 32 threads in lockstep. Understanding this duality is essential for performance optimization.
+
+## What is SIMT?
+
+**SIMT** (Single Instruction, Multiple Threads) is NVIDIA's execution model for GPUs. It's a variant of SIMD (Single Instruction, Multiple Data) with a crucial difference: **threads have independent program counters**.
+
+### SIMT vs SIMD
+
+| Feature | SIMD | SIMT |
+|----|--|-----|
+| Unit of execution | Vector register | Warp (32 threads) |
+| Program counter | Single for all elements | Independent per thread |
+| Divergence handling | Not supported | Serialized execution |
+| Programming model | Explicit vector ops | Feels like scalar code |
+
+In traditional SIMD (like CPU SSE/AVX), all elements in a vector execute the same instruction simultaneously. If you want different behavior, you need to restructure your code.
+
+In SIMT, each thread appears to execute independently. The hardware handles the complexity of managing independent program counters and handling divergence.
+
+### The warp: unit of execution
+
+A **warp** is a group of exactly 32 consecutive threads that execute in lockstep:
+
+```
+Thread IDs: 0, 1, 2, ..., 31  ->  Warp 0
+Thread IDs: 32, 33, 34, ..., 63  ->  Warp 1
+...
+```
+
+Key properties:
+- All 32 threads execute the **same instruction** at the same time
+- Each thread has its own **register state** and **program counter**
+- Threads operate on their own data (determined by threadIdx, blockIdx, etc.)
+
+## SIMT execution in practice
+
+### Basic execution
+
+```cpp
+__global__ void simpleKernel(float* data, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        data[idx] = data[idx] * 2.0f;
+    }
+}
+```
+
+What happens on the GPU:
+1. Threads are grouped into warps (32 threads each)
+2. Each warp executes instructions together
+3. Thread 0 operates on data[0], thread 1 on data[1], ..., thread 31 on data[31]
+4. All 32 threads execute `data[idx] = data[idx] * 2.0f` simultaneously
+
+Even though the code looks like each thread runs independently, they're actually executing the same instruction in lockstep.
+
+### Warp scheduling
+
+The SM contains one or more **warp schedulers**. Each scheduler can:
+- Select a warp that is ready to execute
+- Issue one instruction for that warp per clock cycle
+- Switch to another warp if the current one is stalled
+
+This is how GPUs hide memory latency: while one warp waits for memory, the scheduler switches to another warp that's ready to compute.
+
+## Warp divergence
+
+Warp divergence occurs when threads in a warp take **different execution paths**. This happens with conditionals (if/else) and loops with varying trip counts.
+
+### Example: if/else divergence
+
+```cpp
+__global__ void divergentKernel(float* data, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N/2) {
+        data[idx] = data[idx] * 2.0f;  // Path A
+    } else {
+        data[idx] = data[idx] + 1.0f;  // Path B
+    }
+}
+```
+
+If a warp contains threads that satisfy both conditions:
+1. Warp executes Path A for the first half of threads (other threads masked out)
+2. Warp executes Path B for the second half (first threads masked out)
+
+**Result**: The warp takes twice as long. Instead of 1 instruction, it executes 2.
+
+### Example: loop divergence
+
+```cpp
+__global__ void loopDivergence(float* data, int* lengths, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        int len = lengths[idx];
+        for (int i = 0; i < len; i++) {
+            data[idx] += i;
+        }
+    }
+}
+```
+
+If threads in a warp have different `len` values:
+- Some threads finish early and wait
+- Others continue executing
+- The warp's loop iterations = max(len) across all threads
+
+### Branch efficiency
+
+**Branch efficiency** measures how well code avoids divergence:
+
+```
+Branch Efficiency = non_divergent_branches / total_branches
+```
+
+- 100%: No divergence, all threads take the same path
+- 50%: Full divergence, half threads take each path
+- Lower values indicate more serialization
+
+In Nsight Compute, you can measure branch efficiency to identify divergence hotspots.
+
+## Re-convergence
+
+Threads that diverge eventually **re-converge** at a common point in the code. This is typically the **immediate post-dominator** in the control flow graph.
+
+### Re-convergence point
+
+```cpp
+if (condition) {
+    // Path A
+    doSomething();
+} else {
+    // Path B
+    doSomethingElse();
+}
+// Re-convergence point: code here executes after both paths
+
+doAfter();  // All threads reach here
+```
+
+At the re-convergence point, all threads are back in sync and can execute together again.
+
+### Multiple re-convergence points
+
+Complex control flow can have multiple re-convergence points:
+
+```cpp
+if (a) {
+    if (b) {
+        doA1();
+    } else {
+        doA2();
+    }
+    // Re-converge after inner if
+    doAfterA();
+} else {
+    doB();
+}
+// Re-converge after outer if
+doEnd();
+```
+
+## Hopper warp specialization
+
+Hopper (cc9.0+) introduced **warp specialization**, where different warps can execute different roles permanently:
+
+```cpp
+// Hopper-only: warp specialization
+// Warp group 0: producer (loads data)
+// Warp group 1: consumer (computes)
+// Warps don't re-converge, they specialize
+
+__global__ void hopperSpecializedKernel(...) {
+    int warpId = threadIdx.x / 32;
+
+    if (warpId == 0) {
+        // Producer warp: load data into shared memory
+        loadToSharedMemory();
+    } else {
+        // Consumer warps: compute from shared memory
+        computeFromSharedMemory();
+    }
+}
+```
+
+This is different from traditional divergence: the warps don't re-converge, they have specialized roles throughout the kernel. This enables more efficient pipelines.
+
+## Common misconceptions
+
+❌ **Wrong**: "Divergence only occurs with if/else"
+
+✓ **Correct**: Divergence also occurs with:
+- **Loops with varying trip counts**: Different threads iterate different numbers of times
+- **Conditional returns**: Some threads return early, others continue
+- **Variable latency operations**: Some threads complete faster than others
+
+Any situation where threads in a warp follow different paths causes divergence.
+
+❌ **Wrong**: "Divergent warps waste exactly 50% of capacity"
+
+✓ **Correct**: The waste is **proportional to the number of distinct paths**. If all 32 threads take different paths, you get 32x slower execution. If 16 threads take path A and 16 take path B, you get 2x slower (50% waste).
+
+❌ **Wrong**: "SIMT threads can see each other's registers"
+
+✓ **Correct**: Threads cannot directly access each other's registers. The only way to communicate between threads is via:
+- **Shared memory**: All threads in a block can read/write
+- **Warp shuffle**: `__shfl_sync()` allows direct register-to-register within a warp
+- **Synchronization**: `__syncthreads()` coordinates access to shared memory
+
+## Interview patterns
+
+**Question 1**: "What is SIMT and how does it differ from SIMD?"
+
+**Answer**: SIMT (Single Instruction, Multiple Threads) is like SIMD but with independent program counters per thread. In SIMD, all vector elements execute together; in SIMT, threads can diverge and re-converge. SIMT gives a more natural programming model while retaining parallel efficiency.
+
+**Question 2**: "What happens when threads in a warp take different branches?"
+
+**Answer**: The warp serializes execution. It first executes the "if" path with the "else" threads masked out, then executes the "else" path with the "if" threads masked out. This is called divergence, and it reduces performance proportionally to the number of distinct paths.
+
+**Question 3**: "Where do divergent threads re-converge?"
+
+**Answer**: At the **immediate post-dominator** in the control flow graph. This is typically the point after the if/else block where both paths merge.
+
+**Question 4**: "How does Nsight Compute measure branch efficiency?"
+
+**Answer**: Branch efficiency = non_divergent_branches / total_branches. 100% means no divergence; lower values indicate divergent code paths.
+
+**Question 5**: "What is warp specialization in Hopper?"
+
+**Answer**: Warp specialization allows different warps to execute different roles permanently without re-convergence. For example, one warp group can load data while others compute. This enables more efficient pipelines than traditional divergence/re-convergence.
+
+## Key numbers reference
+
+| Metric | Value |
+|---------|------|
+| Warp size | 32 threads |
+| Min re-convergence latency | 1 cycle (no divergence) |
+| Max divergence penalty | 32x (all threads different paths) |
+| Typical branch efficiency (good code) | >90% |
+| Warp schedulers per SM (A100) | 4 |
+| Warps per SM (A100 max) | 64 |
+
+## Further reading
+
+- **CUDA C++ Execution Model** — Official NVIDIA documentation
+- **PMPP Ch. 4** — Detailed SIMT explanation
+- **gpu-glossary CUDA programming model** — Reference definitions
+- **cuda-mode lecture 002** — SIMT and warp execution walkthrough
+- **Nsight Compute docs** — Measuring warp efficiency and branch divergence
