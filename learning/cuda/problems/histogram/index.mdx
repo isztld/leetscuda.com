@@ -1,0 +1,332 @@
+---
+slug: histogram
+title: Privatized Histogram
+difficulty: medium
+track: cuda
+tags:
+  - histogram
+  - atomics
+  - shared-memory
+  - privatization
+status: published
+author: team
+xp: 350
+runtime: cuda
+cpp_standard: "17"
+cuda_version: "12.6"
+compute_cap: "sm_120"
+---
+
+## Background
+
+**Computing a histogram on the GPU** seems straightforward at first: allocate an array of bins, iterate through N input elements, and for each element increment the corresponding bin counter. But this naive approach fails catastrophically on real GPUs due to **atomic operation contention**.
+
+Consider computing a histogram of 10M pixels into 256 bins. With 65536 threads running in parallel, on average 256 threads will try to update the same bin simultaneously. The result: serialization at atomicAdd, cache thrashing, and performance that can be 10-100× slower than expected.
+
+The solution is **privatization**: each thread block maintains its own private histogram in fast shared memory. Only after all threads complete does each block atomically merge its partial histogram into the global result. This reduces contention dramatically because:
+
+1. Within a block, updates go to shared memory (no atomic serialization)
+2. Inter-block merges happen only once per block, not once per element
+3. The effective contention drops from "threads per bin" to "blocks per bin"
+
+A further optimization, **warp aggregation**, coalesces atomic operations from threads in the same warp hitting the same bin, reducing atomic pressure by up to 32×.
+
+The histogram problem teaches you to reason about contention, privatization patterns, and when atomic operations are actually viable.
+
+## What to Implement
+
+Implement `computeHistogram` that computes the frequency distribution of N integer values into NUM_BINS bins. The values are in the range [0, NUM_BINS-1].
+
+**Your implementation must use the privatization pattern:**
+
+**Step 1: Per-block shared memory histogram**
+- Each block allocates `__shared__ unsigned int smem_hist[NUM_BINS]`
+- Threads clear their portion of the histogram (important: don't rely on zero-initialization)
+- Each thread processes multiple input elements with grid-stride loop
+- Use `atomicAdd(&smem_hist[bin], 1)` for local updates (no contention within block)
+
+**Step 2: Merge partial histograms**
+- After `__syncthreads()`, each block atomically adds its smem_hist to global_hist
+- Only thread 0 (or a subset of threads) performs the merge to reduce atomic traffic
+- For NUM_BINS=256 and 256 threads, thread i can merge bin i directly
+
+**Step 3: Handle large inputs with grid-stride**
+- Each thread processes `stride = blockDim.x * gridDim.x` elements
+- Process elements at indices `tid, tid+stride, tid+2*stride, ...`
+
+**Advanced consideration: Warp aggregation**
+- For NUM_BINS=256 and 65536 threads, expect ~256 threads per bin on average
+- Threads in the same warp that hash to the same bin can coalesce their atomicAdd
+- Use `__activemask()` to identify which threads in a warp hit each bin
+- This reduces global atomic operations by up to 32×
+
+For this problem, implement the basic privatized version. The warp-optimized version is left as an extension.
+
+## Constraints
+
+- `1 <= N <= 100,000,000` (100M elements)
+- `NUM_BINS = 256` (fixed for this problem)
+- Input values are integers in range `[0, NUM_BINS-1]`
+- Use `blockDim.x = 256` threads per block
+- Use grid-stride loop for each thread
+- Initialize shared memory histogram to zero before use
+- Output must match the serial CPU histogram exactly
+
+## Example
+
+**Input:** `10\n0 1 2 0 1 0 2 1 1 2`
+
+**Output:** `4 4 2` (bins 0, 1, 2 have counts 4, 4, 2 respectively)
+
+---starter-code---
+#include <cuda_runtime.h>
+#include <cstdio>
+
+#define NUM_BINS 256
+#define BLOCK_SIZE 256
+
+// Kernel: compute histogram with privatization
+// Each block uses shared memory for its partial histogram
+// Then merges to global_hist via atomicAdd
+__global__ void computeHistogram(const int* input, int* global_hist, int n) {
+    // Your code here:
+    // 1. Declare shared memory histogram: __shared__ unsigned int smem_hist[NUM_BINS];
+    // 2. Clear the portion of smem_hist that this thread is responsible for
+    // 3. Use grid-stride loop to process input elements
+    // 4. For each element, compute bin and do atomicAdd to smem_hist[bin]
+    // 5. __syncthreads()
+    // 6. Merge smem_hist to global_hist atomically
+    //
+    // Tip: Use tid = threadIdx.x to determine which bins this thread clears/merges
+    // Tip: Use blockIdx.x * blockDim.x + threadIdx.x for global thread index
+}
+
+// Do NOT modify below this line
+void solve(const int* h_in, int* h_out, int n) {
+    int *d_in, *d_out;
+    int numBlocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    // Cap at reasonable number of blocks
+    if (numBlocks > 1024) numBlocks = 1024;
+
+    cudaMalloc(&d_in,  n * sizeof(int));
+    cudaMalloc(&d_out, NUM_BINS * sizeof(int));
+
+    // Initialize global histogram to zero
+    cudaMemset(d_out, 0, NUM_BINS * sizeof(int));
+
+    cudaMemcpy(d_in, h_in, n * sizeof(int), cudaMemcpyHostToDevice);
+
+    computeHistogram<<<numBlocks, BLOCK_SIZE>>>(d_in, d_out, n);
+
+    cudaMemcpy(h_out, d_out, NUM_BINS * sizeof(int), cudaMemcpyHostToDevice);
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+}
+
+---test-cases---
+- name: "Small histogram"
+  input: "10\n0 1 2 0 1 0 2 1 1 2"
+  expected: "4 4 2"
+- name: "Uniform distribution"
+  input: "256\nfill:1"
+  expected: "256"
+- name: "Single bin concentration"
+  input: "100\nfill:50"
+  expected: "100"
+- name: "Zero bins"
+  input: "10\n0 1 2 3 4 5 6 7 8 9"
+  expected: "1 1 1 1 1 1 1 1 1 1"
+- name: "Large uniform"
+  input: "1024\nfill:128"
+  expected: "1024"
+
+---solution---
+__global__ void computeHistogram(const int* input, int* global_hist, int n) {
+    int tid = threadIdx.x;
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    // Shared memory histogram for this block
+    __shared__ unsigned int smem_hist[NUM_BINS];
+
+    // Clear the portion of shared memory this thread owns
+    // Each thread clears multiple bins if NUM_BINS > BLOCK_SIZE
+    for (int bin = tid; bin < NUM_BINS; bin += BLOCK_SIZE) {
+        smem_hist[bin] = 0;
+    }
+    __syncthreads();
+
+    // Grid-stride loop: process all input elements
+    for (int i = gid; i < n; i += stride) {
+        int bin = input[i];
+        // Use atomicAdd on shared memory (no contention within block)
+        atomicAdd(&smem_hist[bin], 1);
+    }
+
+    __syncthreads();
+
+    // Merge local histogram to global histogram
+    // Each thread atomically adds its portion of smem_hist to global_hist
+    for (int bin = tid; bin < NUM_BINS; bin += BLOCK_SIZE) {
+        atomicAdd(&global_hist[bin], smem_hist[bin]);
+    }
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <vector>
+#include <map>
+
+// Read integers: either "fill:value" or space-separated values
+static void readInts(std::vector<int>& v, int n) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        int val = atoi(tok + 5);
+        for (int i = 0; i < n; i++) v[i] = val;
+    } else {
+        v[0] = atoi(tok);
+        for (int i = 1; i < n; i++) scanf("%d", &v[i]);
+    }
+}
+
+// Compute reference histogram on CPU
+static void computeRefHist(const std::vector<int>& input, std::vector<int>& ref_hist, int numBins) {
+    ref_hist.assign(numBins, 0);
+    for (int val : input) {
+        if (val >= 0 && val < numBins) {
+            ref_hist[val]++;
+        }
+    }
+}
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        // Parse N, generate test data, run GPU, compare to CPU reference
+        int N;
+        scanf("%d", &N);
+
+        std::vector<int> h_in(N), h_gpu_out(NUM_BINS), h_cpu_ref(NUM_BINS);
+
+        // Generate test input: values 0-9 repeating for good distribution
+        for (int i = 0; i < N; i++) {
+            h_in[i] = i % NUM_BINS;
+        }
+
+        // CPU reference histogram
+        computeRefHist(h_in, h_cpu_ref, NUM_BINS);
+
+        // GPU histogram
+        extern void solve(const int* h_in, int* h_out, int n);
+        solve(h_in.data(), h_gpu_out.data(), N);
+
+        // Check result
+        bool ok = true;
+        for (int b = 0; b < NUM_BINS; b++) {
+            if (h_gpu_out[b] != h_cpu_ref[b]) {
+                ok = false;
+                break;
+            }
+        }
+        printf("%d\n", ok ? 1 : 0);
+    } else {
+        // Parse N and read input values, print histogram
+        int N = atoi(first);
+        std::vector<int> h_in(N), h_out(NUM_BINS);
+
+        readInts(h_in, N);
+
+        extern void solve(const int* h_in, int* h_out, int n);
+        solve(h_in.data(), h_out.data(), N);
+
+        // Print histogram (first 10 bins or all if N <= 10)
+        int printBins = (N <= 10) ? N : 10;
+        for (int b = 0; b < printBins; b++) {
+            if (b > 0) printf(" ");
+            printf("%d", h_out[b]);
+        }
+        printf("\n");
+    }
+
+    return 0;
+}
+
+---editorial---
+## Approach
+
+The histogram problem is a classic example of **contention management** in parallel algorithms. The naive solution—direct atomicAdd to global memory—suffers from severe serialization when multiple threads update the same bin.
+
+**Privatization strategy:**
+
+1. **Local histogram in shared memory**: Each of the ~256 blocks maintains a private `smem_hist[256]`. With 256 threads per block, each thread clears and updates a subset of bins (e.g., thread 0 handles bins 0, 256, 512, ...).
+
+2. **Grid-stride processing**: Each thread processes `n / (blockDim * gridDim)` elements on average. For N=10M and 256×256=65536 threads, that's ~150 elements per thread.
+
+3. **Atomic merge phase**: After `__syncthreads()`, each block atomically adds its local histogram to the global result. This happens once per block (256 blocks × 256 bins = 65536 atomics) rather than once per element (10M atomics).
+
+**Why this works:**
+
+- **Local updates are free**: Within a block, no two threads update the same bin simultaneously because each thread owns a disjoint subset of bins. The `atomicAdd(&smem_hist[bin], 1)` is technically redundant but required because the kernel doesn't know which bins will be hit.
+
+- **Global merge is sparse**: Even with 256 bins, the probability that all 256 blocks hit all bins is low. The merge phase has far fewer atomics than processing all N elements.
+
+**Warp aggregation (advanced):**
+
+For NUM_BINS=256 and 65536 threads, you expect ~256 threads per bin on average. If you have a warp of 32 threads all hashing to bin 42, instead of 32 atomicAdds, you could:
+
+```cpp
+// Warp aggregation pseudocode
+unsigned mask = __activemask();
+for (int bin = tid; bin < NUM_BINS; bin += BLOCK_SIZE) {
+    // Count how many active threads in this warp hit this bin
+    int count = __popc(mask & bin_mask);
+    if (lane == 0) {
+        atomicAdd(&global_hist[bin], count);
+    }
+}
+```
+
+This reduces global atomic operations by up to 32×.
+
+## Complexity
+
+- **Time complexity**: O(N/P + B×B) where N is input size, P is thread count, B is numBlocks
+  - Grid-stride loop: O(N / (blockDim × gridDim)) per thread
+  - Merge phase: O(NUM_BINS) atomics per block
+  - Total: O(N + numBlocks × NUM_BINS)
+
+- **Space complexity**: O(numBlocks × NUM_BINS) for temporary storage (implicit in shared memory)
+  - Shared memory per block: 256 × 4 bytes = 1KB for smem_hist
+
+- **Occupancy**: With 1KB shared memory per block, you can have many blocks per SM. On Hopper (160 SMs), expect ~60-100 blocks per SM.
+
+## Key Insights
+
+1. **Shared memory atomics are not atomic**: The `atomicAdd(&smem_hist[bin], 1)` within a block works because each thread owns a disjoint subset of bins. If multiple threads in the same block hit the same bin simultaneously, you'd need true atomics—but in practice, this is rare for uniform distributions.
+
+2. **Initialization matters**: Always explicitly zero the shared memory histogram. Shared memory is not zero-initialized between kernel launches, and `__syncthreads()` only synchronizes, it doesn't clear memory.
+
+3. **Grid-stride is essential**: For N=100M, you can't launch 100M threads. Use grid-stride so a fixed grid size (e.g., 1024 blocks × 256 threads = 262K threads) can process arbitrary input sizes.
+
+4. **NUM_BINS vs BLOCK_SIZE tradeoff**: If NUM_BINS << BLOCK_SIZE (e.g., 16 bins, 256 threads), each thread handles many bins, leading to poor load balancing. If NUM_BINS >> BLOCK_SIZE (e.g., 65536 bins, 256 threads), each thread handles many bins in the merge phase. The sweet spot is NUM_BINS ≈ BLOCK_SIZE.
+
+## Common Mistakes
+
+- **Not clearing shared memory**: `smem_hist` contains garbage from previous kernel launches. Always zero it before use: `for (int i = tid; i < NUM_BINS; i += BLOCK_SIZE) smem_hist[i] = 0;`
+
+- **Missing __syncthreads() before merge**: If you don't sync, some threads may start merging before others finish updating smem_hist, leading to incorrect results.
+
+- **Wrong grid-stride computation**: Use `stride = blockDim.x * gridDim.x`, not just `blockDim.x`. This ensures each thread processes `n / (blockDim × gridDim)` elements.
+
+- **Out-of-bounds input access**: When processing input[i], check that i < n. Otherwise, you may read garbage values and access invalid bins.
+
+- **Assuming uniform bin distribution**: If the input is highly skewed (e.g., all values are 0), you'll get contention even with privatization. This is where warp aggregation helps.
+
+- **Using too many blocks**: Launching 1M blocks when N=1000 is wasteful. Cap grid size based on input size or use a fixed maximum.
+
+---end---
