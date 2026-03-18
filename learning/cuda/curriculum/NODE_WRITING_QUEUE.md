@@ -58,8 +58,8 @@ Track: learning/cuda/track.mdx (42 nodes)
 *Sources: cluster-algorithms.json | PMPP Ch10 | cuda_by_example Ch5,9,App A | cuda-samples/reduction,scan,histogram | cuda-mode-lectures/lecture_009*
 
 ### Theory nodes
-- [ ] parallel-patterns | Map, Scatter, Gather | CONCEPT | easy | ~20min | source: cluster-algorithms.json parallel-patterns topic; docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html; cuda_by_example Ch4-5
-- [ ] radix-sort | Parallel Sorting (Radix Sort) | CONCEPT | advanced | ~30min | source: cluster-algorithms.json sorting topic; cuda-samples/2_Concepts_and_Techniques/radixSortThrust/; CUB DeviceRadixSort documentation
+- [x] parallel-patterns | Map, Scatter, Gather | CONCEPT | easy | ~20min | source: cluster-algorithms.json parallel-patterns topic; docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html; cuda_by_example Ch4-5
+- [x] radix-sort | Parallel Sorting (Radix Sort) | CONCEPT | advanced | ~30min | source: cluster-algorithms.json sorting topic; cuda-samples/2_Concepts_and_Techniques/radixSortThrust/; CUB DeviceRadixSort documentation
 
 ### Problem nodes
 - [ ] reduce-sum | Parallel Reduction Sum | PROBLEM | intermediate | ~90min | source: cluster-algorithms.json parallel-reduction topic; cuda-samples/2_Concepts_and_Techniques/reduction/; cuda-mode-lectures/lecture_009/reduce_coarsening.cu; llm.c/dev/cuda/global_norm.cu
@@ -72,8 +72,8 @@ Track: learning/cuda/track.mdx (42 nodes)
 *Sources: cluster-linear-algebra.json | PMPP Ch3,5,6 | gpu-glossary/device-hardware/tensor-core.md | gpu-glossary/host-software/cublas.md | docs.nvidia.com/cuda/cublas | cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/ | cutlass/README.md | cuda-mode-lectures/lecture_036,057 | llm.c/dev/cuda/matmul_forward.cu*
 
 ### Theory nodes
-- [ ] gemm-fundamentals | GEMM Fundamentals & Tiling | CONCEPT | intermediate | ~40min | source: cluster-linear-algebra.json gemm-fundamentals+tiled-gemm topics; gpu-glossary/perf/arithmetic-intensity.md; gpu-glossary/perf/arithmetic-bandwidth.md; llm.c/dev/cuda/matmul_forward.cu; PMPP Ch3 §3.3, Ch5 §5.3
-- [ ] tensor-cores | Tensor Cores & WMMA API | CONCEPT | advanced | ~45min | source: cluster-linear-algebra.json tensor-cores-wmma topic; gpu-glossary/device-hardware/tensor-core.md; cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/; docs.nvidia.com/cuda/ampere-tuning-guide/#improved-tensor-core-operations; gpu-glossary/device-software/warpgroup.md
+- [x] gemm-fundamentals | GEMM Fundamentals & Tiling | CONCEPT | intermediate | ~40min | source: cluster-linear-algebra.json gemm-fundamentals+tiled-gemm topics; gpu-glossary/perf/arithmetic-intensity.md; gpu-glossary/perf/arithmetic-bandwidth.md; llm.c/dev/cuda/matmul_forward.cu; PMPP Ch3 §3.3, Ch5 §5.3
+- [x] tensor-cores | Tensor Cores & WMMA API | CONCEPT | advanced | ~45min | source: cluster-linear-algebra.json tensor-cores-wmma topic; gpu-glossary/device-hardware/tensor-core.md; cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/; docs.nvidia.com/cuda/ampere-tuning-guide/#improved-tensor-core-operations; gpu-glossary/device-software/warpgroup.md
 
 ### Problem nodes (in dependency order)
 - [ ] cublas-integration | cuBLAS GEMM Integration | PROBLEM | intermediate | ~45min | source: cluster-linear-algebra.json cublas-usage topic; gpu-glossary/host-software/cublas.md; docs.nvidia.com/cuda/cublas/
@@ -89,8 +89,8 @@ Track: learning/cuda/track.mdx (42 nodes)
 *Sources: cluster-profiling.json | gpu-glossary/perf/roofline-model.md; arithmetic-intensity.md; memory-bound.md; compute-bound.md | cuda-mode-lectures/lecture_001,008 | docs.nvidia.com/cuda/cuda-c-best-practices-guide/#performance-metrics*
 
 ### Theory nodes
-- [ ] roofline-model | Roofline Model | CONCEPT | intermediate | ~30min | source: cluster-profiling.json roofline-model topic; gpu-glossary/perf/roofline-model.md; gpu-glossary/perf/arithmetic-intensity.md; cuda-mode-lectures/lecture_001/
-- [ ] bottleneck-analysis | Memory-Bound vs Compute-Bound | CONCEPT | intermediate | ~25min | source: cluster-profiling.json memory-bound-vs-compute-bound topic; gpu-glossary/perf/memory-bound.md; gpu-glossary/perf/compute-bound.md; gpu-glossary/perf/performance-bottleneck.md; PMPP Ch6 §6.7
+- [x] roofline-model | Roofline Model & Performance Analysis | CONCEPT | intermediate | ~30min | source: cluster-profiling.json roofline-model topic; gpu-glossary/perf/roofline-model.md; gpu-glossary/perf/arithmetic-intensity.md; cuda-mode-lectures/lecture_001/
+- [x] bottleneck-analysis | Memory-Bound vs Compute-Bound | CONCEPT | intermediate | ~25min | source: cluster-profiling.json memory-bound-vs-compute-bound topic; gpu-glossary/perf/memory-bound.md; gpu-glossary/perf/compute-bound.md; gpu-glossary/perf/performance-bottleneck.md; PMPP Ch6 §6.7
 - [ ] nsight-compute | Nsight Compute Profiling Workflow | CONCEPT | intermediate | ~40min | source: cluster-profiling.json nsight-compute-workflow+nsight-systems-concurrency topics; gpu-glossary/host-software/nsight-systems.md; gpu-glossary/perf/issue-efficiency.md; gpu-glossary/perf/pipe-utilization.md; cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/
 
 ### Problem nodes
@@ -102,9 +102,9 @@ Track: learning/cuda/track.mdx (42 nodes)
 *Sources: cluster-llm-kernels.json | llm.c/dev/cuda/*.cu | flash-attention/README.md | papers/flash-attention-1.pdf through flash-attention-3.pdf | papers/megatron-lm.pdf | papers/zero.pdf | cuda-mode-lectures/lecture_012,018,036*
 
 ### Theory nodes (in dependency order)
-- [ ] attention | Scaled Dot-Product Attention | CONCEPT | intermediate | ~40min | source: cluster-llm-kernels.json attention-mechanism topic; llm.c/dev/cuda/attention_forward.cu; cuda-mode-lectures/lecture_012/; papers/flash-attention-1.pdf §1
-- [ ] kernel-fusion | Kernel Fusion | CONCEPT | intermediate | ~30min | source: cluster-llm-kernels.json fused-operations topic; cuda-mode-lectures/lecture_018/; llm.c/dev/cuda/fused_residual_forward.cu; gpu-glossary/perf/arithmetic-intensity.md
-- [ ] kv-cache-design | KV Cache Design | CONCEPT | advanced | ~25min | source: cluster-llm-kernels.json kv-cache topic; flash-attention/README.md (GQA/MQA sections); flash-attention/hopper/benchmark_mla_decode.py
+- [x] attention | Scaled Dot-Product Attention | CONCEPT | intermediate | ~40min | source: cluster-llm-kernels.json attention-mechanism topic; llm.c/dev/cuda/attention_forward.cu; cuda-mode-lectures/lecture_012/; papers/flash-attention-1.pdf §1
+- [x] kernel-fusion | Kernel Fusion | CONCEPT | intermediate | ~30min | source: cluster-llm-kernels.json fused-operations topic; cuda-mode-lectures/lecture_018/; llm.c/dev/cuda/fused_residual_forward.cu; gpu-glossary/perf/arithmetic-intensity.md
+- [x] kv-cache-design | KV Cache Design | CONCEPT | advanced | ~25min | source: cluster-llm-kernels.json kv-cache topic; flash-attention/README.md (GQA/MQA sections); flash-attention/hopper/benchmark_mla_decode.py
 - [ ] tensor-parallelism | Tensor Parallelism | CONCEPT | advanced | ~45min | source: cluster-llm-kernels.json tensor-parallelism topic; papers/megatron-lm.pdf §3; llm.c/dev/cuda/nccl_all_reduce.cu
 - [ ] zero-memory-opt | ZeRO Distributed Memory Optimization | CONCEPT | advanced | ~45min | source: cluster-llm-kernels.json distributed-memory-optimization topic; papers/zero.pdf §5,7
 
