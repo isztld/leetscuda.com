@@ -62,7 +62,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 - [x] radix-sort | Parallel Sorting (Radix Sort) | CONCEPT | advanced | ~30min | source: cluster-algorithms.json sorting topic; cuda-samples/2_Concepts_and_Techniques/radixSortThrust/; CUB DeviceRadixSort documentation
 
 ### Problem nodes
-- [ ] reduce-sum | Parallel Reduction Sum | PROBLEM | intermediate | ~90min | source: cluster-algorithms.json parallel-reduction topic; cuda-samples/2_Concepts_and_Techniques/reduction/; cuda-mode-lectures/lecture_009/reduce_coarsening.cu; llm.c/dev/cuda/global_norm.cu
+- [x] reduce-sum | Parallel Reduction Sum | PROBLEM | intermediate | ~90min | source: cluster-algorithms.json parallel-reduction topic; cuda-samples/2_Concepts_and_Techniques/reduction/; cuda-mode-lectures/lecture_009/reduce_coarsening.cu; llm.c/dev/cuda/global_norm.cu
 - [ ] prefix-scan | Exclusive Prefix Scan | PROBLEM | intermediate | ~120min | source: cluster-algorithms.json prefix-scan topic; cuda-samples/2_Concepts_and_Techniques/scan/; cuda-samples/2_Concepts_and_Techniques/shfl_scan/
 - [ ] histogram | Privatized Histogram | PROBLEM | intermediate | ~60min | source: cluster-algorithms.json histogram topic; cuda-samples/2_Concepts_and_Techniques/histogram/; cuda_by_example Ch9 §9.4
 
