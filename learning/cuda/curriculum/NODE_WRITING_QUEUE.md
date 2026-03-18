@@ -50,7 +50,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 - [x] cooperative-groups | Cooperative Groups | CONCEPT | advanced | ~30min | source: cluster-execution.json cooperative-groups topic; docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cooperative-groups.html; cuda-samples/0_Introduction/simpleCooperativeGroups/; gpu-glossary/device-software/cooperative-thread-array.md; gpu-glossary/device-software/warpgroup.md
 
 ### Problem nodes
-- [ ] streams-overlap | Overlap Transfers with Computation | PROBLEM | intermediate | ~60min | source: cluster-execution.json exerciseId=streams-overlap; cuda-samples/0_Introduction/simpleStreams/; cuda-samples/0_Introduction/asyncAPI/; cuda-mode-lectures/lecture_009/multistream-reduce.cu
+- [x] streams-overlap | Overlap Transfers with Computation | PROBLEM | intermediate | ~60min | source: cluster-execution.json exerciseId=streams-overlap; cuda-samples/0_Introduction/simpleStreams/; cuda-samples/0_Introduction/asyncAPI/; cuda-mode-lectures/lecture_009/multistream-reduce.cu
 
 ---
 
