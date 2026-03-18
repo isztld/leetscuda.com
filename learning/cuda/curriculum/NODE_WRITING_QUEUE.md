@@ -105,7 +105,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 - [x] attention | Scaled Dot-Product Attention | CONCEPT | intermediate | ~40min | source: cluster-llm-kernels.json attention-mechanism topic; llm.c/dev/cuda/attention_forward.cu; cuda-mode-lectures/lecture_012/; papers/flash-attention-1.pdf §1
 - [x] kernel-fusion | Kernel Fusion | CONCEPT | intermediate | ~30min | source: cluster-llm-kernels.json fused-operations topic; cuda-mode-lectures/lecture_018/; llm.c/dev/cuda/fused_residual_forward.cu; gpu-glossary/perf/arithmetic-intensity.md
 - [x] kv-cache-design | KV Cache Design | CONCEPT | advanced | ~25min | source: cluster-llm-kernels.json kv-cache topic; flash-attention/README.md (GQA/MQA sections); flash-attention/hopper/benchmark_mla_decode.py
-- [ ] tensor-parallelism | Tensor Parallelism | CONCEPT | advanced | ~45min | source: cluster-llm-kernels.json tensor-parallelism topic; papers/megatron-lm.pdf §3; llm.c/dev/cuda/nccl_all_reduce.cu
+- [x] tensor-parallelism | Tensor Parallelism | CONCEPT | advanced | ~45min | source: cluster-llm-kernels.json tensor-parallelism topic; papers/megatron-lm.pdf §3; llm.c/dev/cuda/nccl_all_reduce.cu
 - [ ] zero-memory-opt | ZeRO Distributed Memory Optimization | CONCEPT | advanced | ~45min | source: cluster-llm-kernels.json distributed-memory-optimization topic; papers/zero.pdf §5,7
 
 ### Problem nodes (in dependency order)
