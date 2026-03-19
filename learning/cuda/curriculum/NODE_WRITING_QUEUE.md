@@ -115,7 +115,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 - [x] flash-attention-impl | FlashAttention Forward Pass | PROBLEM | advanced | ~300min | source: cluster-llm-kernels.json flash-attention topic exerciseId=flash-attention-naive; papers/flash-attention-1.pdf §3.1 Algorithm 1; cuda-mode-lectures/lecture_012/flash_attention.cu; flash-attention/csrc/flash_attn/flash_fwd_kernel.h
 
 ### Article nodes
-- [ ] hopper-tma-wgmma | Hopper TMA & Warpgroup MMA | ARTICLE | expert | ~60min | source: cluster-llm-kernels.json hopper-tma-wgmma topic; papers/flash-attention-3.pdf §3.1-3.3; flash-attention/hopper/flash_fwd_kernel_sm90.h; gpu-glossary/device-hardware/tensor-memory-accelerator.md; gpu-glossary/device-software/warpgroup.md
+- [x] hopper-tma-wgmma | Hopper TMA & Warpgroup MMA | ARTICLE | expert | ~60min | source: cluster-llm-kernels.json hopper-tma-wgmma topic; papers/flash-attention-3.pdf §3.1-3.3; flash-attention/hopper/flash_fwd_kernel_sm90.h; gpu-glossary/device-hardware/tensor-memory-accelerator.md; gpu-glossary/device-software/warpgroup.md
 
 ---
 

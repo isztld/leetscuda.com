@@ -8,50 +8,82 @@ tags:
   - blelloch-algorithm
   - upsweep-downsweep
   - warp-shuffle
+  - work-efficiency
 status: published
-author: community
+author: team
 xp: 600
 runtime: cuda
 cpp_standard: "17"
-cuda_version: "13.0"
+cuda_version: "12.6"
 compute_cap: "sm_120"
 ---
 
 ## Background
 
-**Prefix scan** (or scan, or parallel prefix) is a fundamental parallel algorithm that computes running prefixes of a sequence. Given an input array `[a, b, c, d, e, ...]` and an associative binary operator (like addition), scan produces:
+**Prefix scan** (also called scan or parallel prefix) is one of the most fundamental parallel algorithms in GPU computing. Given an input array `[a, b, c, d, e, ...]` and an associative binary operator like addition, scan produces running prefixes:
 
 - **Exclusive scan**: `[0, a, a+b, a+b+c, a+b+c+d, ...]` — each output is the sum of all preceding elements
 - **Inclusive scan**: `[a, a+b, a+b+c, a+b+c+d, ...]` — each output includes the element itself
 
-The exclusive scan is more useful for computing output indices in stream compaction and scatter operations.
+The exclusive scan variant is particularly valuable for computing output indices in stream compaction, scatter operations, and variable-length data indexing.
 
-The **Blelloch scan algorithm** achieves O(N) work (same as sequential) with O(log N) parallel steps. It uses two phases:
-1. **Upsweep** (reduce): Build a binary tree of partial sums, bottom-up
-2. **Downsweep** (distribute): Propagate prefix sums top-down, computing the exclusive prefixes
+The **Blelloch scan algorithm**, named by Guy Blelloch, achieves O(N) total work (identical to the sequential algorithm) with O(log N) parallel steps. This dual optimality distinguishes it from the simpler Hillis-Steele algorithm, which achieves O(log N) steps but requires O(N log N) total work — a work-inefficient approach that wastes GPU compute throughput.
+
+The Blelloch algorithm operates in two distinct phases:
+
+1. **Upsweep (reduce phase)**: Build a binary tree of partial sums from bottom to top. At each level, sibling pairs combine, with the right child accumulating the left child's value. After log2(N) levels, the tree root holds the total sum.
+
+2. **Downsweep (distribute phase)**: Propagate prefix sums from top to bottom. The root is initialized to 0 (for exclusive scan). At each level, the right child receives the parent's sum plus its sibling's sum; the left child receives the parent's sum unchanged. This distribution pattern ensures each leaf contains the exclusive prefix sum for its position.
+
+**Work efficiency vs step efficiency** represents a critical design tradeoff in parallel algorithms. Work complexity counts the total operations across all processors; step complexity (also called depth or span) counts the number of parallel rounds. The ideal algorithm is both work-efficient (O(N) total work) and step-efficient (O(log N) steps). On GPUs with thousands of CUDA cores, work-inefficient algorithms waste arithmetic bandwidth even if they have few synchronization barriers.
+
+The Hillis-Steele scan achieves O(log N) steps with N threads but performs N log N additions total. For N=1M, Hillis-Steele executes ~20M additions while Blelloch executes only ~2M additions — a 10× work difference that dominates runtime for large arrays despite Hillis-Steele's simpler dependencies.
 
 ## What to Implement
 
-Implement an exclusive prefix sum over an array of `n` unsigned integers. Your solution should:
+Implement an exclusive prefix sum over an array of unsigned integers using the Blelloch algorithm. Your solution must handle both single-block cases (N <= 256 elements) and large arrays requiring a three-pass grid-level scan.
 
-1. Implement the Blelloch upsweep phase: for each level, add sibling pairs
-2. Set the final element to 0 (exclusive scan base case)
-3. Implement the downsweep phase: propagate sums, swapping children appropriately
-4. Use warp shuffle instructions for the final warp reduction
-5. Handle arrays larger than a single block using a three-pass approach
+**Single-block Blelloch scan:**
+
+1. **Upsweep phase**: For each level d from 0 to log2(BLOCK_SIZE)-1:
+   - Compute stride = 2^(d+1)
+   - If thread index tid satisfies (tid % stride) == (stride/2), add the sibling at (tid - stride/2) to self
+   - Synchronize before next level
+
+2. **Base case**: Set the final element (rightmost leaf) to 0 for exclusive scan semantics
+
+3. **Downsweep phase**: For each level d from log2(BLOCK_SIZE)-1 down to 0:
+   - Compute stride = 2^(d+1)
+   - If tid satisfies (tid % stride) == (stride/2), perform the swap-and-add operation:
+     - Store the left child's value temporarily
+     - Overwrite left child with right child's value
+     - Add the temporary value to the right child
+   - Synchronize before next level
+
+4. **Warp optimization**: For the final downsweep step within each warp, use `__shfl_up_sync(0xffffffff, val, offset)` instead of shared memory to accumulate prefix sums — zero shared memory bank conflicts.
+
+**Three-pass algorithm for N > BLOCK_SIZE:**
+
+1. **Pass 1**: Each block scans its slice independently, storing results to output buffer and writing its total sum to a sums array
+2. **Pass 2**: Recursively scan the sums array (one block, at most 256 elements)
+3. **Pass 3**: Add the appropriate offset from the sums array to each element based on its block membership
 
 ## Constraints
 
-- `n` is a power of 2, `1 ≤ n ≤ 2^20`
-- Block size must be 256 threads
+- `n` is a power of 2, `1 <= n <= 2^20` (up to 1M elements)
+- Block size must be 256 threads (8 warps of 32 threads)
 - Use shared memory for intra-block communication
-- The result must match a sequential CPU scan exactly
+- The result must match a sequential CPU exclusive scan exactly
+- Use `__shfl_up_sync(0xffffffff, val, offset)` for warp-level prefix accumulation
+- Do not modify the provided `solve()` function
 
 ## Example
 
-**Input:** `[1, 2, 3, 4, 5, 6, 7, 8]` (n=8)
+**Input**: `[1, 2, 3, 4, 5, 6, 7, 8]` (n=8)
 
-**Output:** `[0, 1, 3, 6, 10, 15, 21, 28]`
+**Output**: `[0, 1, 3, 6, 10, 15, 21, 28]`
+
+Verification: position 0 gets 0 (exclusive base case); position 1 gets 1; position 2 gets 1+2=3; position 3 gets 1+2+3=6, and so on.
 
 ---starter-code---
 #include <cuda_runtime.h>
@@ -61,7 +93,8 @@ Implement an exclusive prefix sum over an array of `n` unsigned integers. Your s
 
 // Single-block exclusive prefix scan using Blelloch algorithm
 __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
-    // Shared memory for the scan tree
+    // Shared memory for the scan tree — needs 2*BLOCK_SIZE elements
+    // Leaves stored at indices [BLOCK_SIZE, 2*BLOCK_SIZE)
     __shared__ unsigned int tree[2 * BLOCK_SIZE];
 
     int tid = threadIdx.x;
@@ -74,7 +107,8 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
     // Step 2: Upsweep — build partial sums bottom-up
     // TODO: for each level d from 0 to log2(BLOCK_SIZE)-1:
     //   stride = 2^(d+1)
-    //   if (tid % stride == stride/2) add sibling to parent
+    //   if (tid % stride == stride/2) tree[tid] += tree[tid - stride/2]
+    //   __syncthreads() after each level
 
     // Step 3: Set last element to 0 (exclusive scan base case)
     if (tid == 0) tree[2 * BLOCK_SIZE - 1] = 0;
@@ -83,7 +117,8 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
     // Step 4: Downsweep — propagate sums top-down
     // TODO: for each level d from log2(BLOCK_SIZE)-1 down to 0:
     //   stride = 2^(d+1)
-    //   if (tid % stride == stride/2) swap and add
+    //   if (tid % stride == stride/2) perform swap-and-add
+    //   __syncthreads() after each level
 
     // Step 5: Store exclusive prefix to output
     out[i] = tree[BLOCK_SIZE + tid];
@@ -97,12 +132,12 @@ void scanPass1(const unsigned int* d_in, unsigned int* d_blocks,
 }
 
 void scanPass2(unsigned int* d_sums, int numBlocks) {
-    // TODO: Recursively scan the block sums (one block at a time)
+    // TODO: Recursively scan the block sums (single block)
 }
 
-void scanPass3(const unsigned int* d_in, const unsigned int* d_offsets,
+void scanPass3(const unsigned int* d_blocks, const unsigned int* d_offsets,
                unsigned int* d_out, int n) {
-    // TODO: Add offset to each element based on its block
+    // TODO: Add offset from sums array to each element based on block membership
 }
 
 void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
@@ -133,18 +168,27 @@ void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
 }
 
 ---test-cases---
-- name: "Simple scan"
+- name: "Simple exclusive scan"
   input: "8\n1 2 3 4 5 6 7 8"
   expected: "0 1 3 6 10 15 21 28"
 - name: "Single element"
-  input: "1\n5"
+  input: "1\n42"
   expected: "0"
 - name: "Two elements"
   input: "2\n3 7"
   expected: "0 3"
-- name: "Large sequential"
+- name: "Sequential 16 elements"
   input: "16\nseq:1"
   expected: "0 1 3 6 10 15 21 28 36 45 55 66 78 91 105 120"
+- name: "All zeros"
+  input: "4\n0 0 0 0"
+  expected: "0 0 0 0"
+- name: "Large uniform fill"
+  input: "64\nfill:5"
+  expected: "0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 105 110 115 120 125 130 135 140 145 150 155 160 165 170 175 180 185 190 195 200 205 210 215 220 225 230 235 240 245 250 255 260 265 270 275 280 285 290 295 300 305"
+- name: "Verify N=128"
+  input: "verify\n128"
+  expected: "1"
 
 ---solution---
 #include <cuda_runtime.h>
@@ -158,12 +202,13 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
     int tid = threadIdx.x;
     int i = blockIdx.x * BLOCK_SIZE + tid;
 
-    // Step 1: Load input into shared memory
+    // Step 1: Load input into shared memory (upsweep leaves)
     tree[BLOCK_SIZE + tid] = (i < n) ? in[i] : 0;
     __syncthreads();
 
     // Step 2: Upsweep — build partial sums bottom-up
-    for (int d = 0; d < 8; d++) {  // log2(256) = 8 levels
+    // log2(256) = 8 levels for BLOCK_SIZE=256
+    for (int d = 0; d < 8; d++) {
         int stride = 1 << (d + 1);  // 2, 4, 8, 16, 32, 64, 128, 256
         if ((tid & (stride - 1)) == (stride / 2)) {
             tree[tid] += tree[tid - stride / 2];
@@ -176,7 +221,7 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
     __syncthreads();
 
     // Step 4: Downsweep — propagate sums top-down
-    for (int d = 7; d >= 0; d--) {  // Reverse order
+    for (int d = 7; d >= 0; d--) {  // Reverse order: 7, 6, 5, 4, 3, 2, 1, 0
         int stride = 1 << (d + 1);
         if ((tid & (stride - 1)) == (stride / 2)) {
             unsigned int t = tree[tid - stride / 2];
@@ -190,48 +235,52 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
     out[i] = tree[BLOCK_SIZE + tid];
 }
 
+// Extract block sums (last element of each block)
+__global__ void extractSums(const unsigned int* blocks,
+                            unsigned int* sums, int numBlocks) {
+    int bid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (bid < numBlocks) {
+        sums[bid] = blocks[(bid + 1) * BLOCK_SIZE - 1];
+    }
+}
+
 void scanPass1(const unsigned int* d_in, unsigned int* d_blocks,
                unsigned int* d_sums, int n) {
     int numBlocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     blockScan<<<numBlocks, BLOCK_SIZE>>>(d_in, d_blocks, n);
 
     // Extract block sums (last element of each block)
-    __global__ void extractSums(const unsigned int* blocks,
-                                unsigned int* sums, int numBlocks) {
-        int bid = blockIdx.x * blockDim.x + threadIdx.x;
-        if (bid < numBlocks) {
-            sums[bid] = blocks[(bid + 1) * BLOCK_SIZE - 1];
-        }
-    }
     extractSums<<<(numBlocks + 255) / 256, 256>>>(d_blocks, d_sums, numBlocks);
 }
 
 void scanPass2(unsigned int* d_sums, int numBlocks) {
-    // Scan the block sums recursively (one block)
+    // Recursively scan the block sums (single block)
     blockScan<<<1, BLOCK_SIZE>>>(d_sums, d_sums, numBlocks);
+}
+
+// Add offset from sums array to each element based on block membership
+__global__ void addOffsets(unsigned int* blocks, const unsigned int* offsets,
+                           int n, int numBlocks) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int bid = tid / BLOCK_SIZE;
+    int local_idx = tid % BLOCK_SIZE;
+
+    if (tid < n && bid > 0) {
+        blocks[tid] += offsets[bid - 1];
+    }
+}
+
+// Copy result back to output
+__global__ void copyOut(const unsigned int* blocks, unsigned int* out, int n) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < n) out[tid] = blocks[tid];
 }
 
 void scanPass3(const unsigned int* d_blocks, const unsigned int* d_offsets,
                unsigned int* d_out, int n) {
     int numBlocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-    __global__ void addOffsets(unsigned int* blocks, const unsigned int* offsets,
-                               int n, int numBlocks) {
-        int tid = blockIdx.x * blockDim.x + threadIdx.x;
-        int bid = tid / BLOCK_SIZE;
-        int local_idx = tid % BLOCK_SIZE;
-
-        if (tid < n && bid > 0) {
-            blocks[tid] += offsets[bid - 1];
-        }
-    }
     addOffsets<<<(n + 255) / 256, 256>>>(d_blocks, d_offsets, n, numBlocks);
-
-    // Copy result back
-    __global__ void copyOut(const unsigned int* blocks, unsigned int* out, int n) {
-        int tid = blockIdx.x * blockDim.x + threadIdx.x;
-        if (tid < n) out[tid] = blocks[tid];
-    }
     copyOut<<<(n + 255) / 256, 256>>>(d_blocks, d_out, n);
 }
 
@@ -264,84 +313,159 @@ void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
 
 ---harness---
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
+// Read unsigned int array: either "fill:value" or space-separated values
+static void readUInts(std::vector<unsigned int>& v, int n) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        unsigned int val = atoi(tok + 5);
+        for (int i = 0; i < n; i++) v[i] = val;
+    } else {
+        v[0] = atoi(tok);
+        for (int i = 1; i < n; i++) scanf("%u", &v[i]);
+    }
+}
+
+// Verify correctness against CPU reference
+bool verifyScan(const std::vector<unsigned int>& h_in,
+                const std::vector<unsigned int>& h_out, int n) {
+    std::vector<unsigned int> cpu_out(n);
+    unsigned int prefix = 0;
+    for (int i = 0; i < n; i++) {
+        cpu_out[i] = prefix;
+        prefix += h_in[i];
+    }
+
+    for (int i = 0; i < n; i++) {
+        if (h_out[i] != cpu_out[i]) return false;
+    }
+    return true;
+}
+
 int main() {
-    int n;
-    scanf("%d", &n);
-    std::vector<unsigned int> h_in(n);
-    for (int i = 0; i < n; i++) {
-        int val;
-        scanf("%d", &val);
-        h_in[i] = val;
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        // Parse N, generate test data, run GPU, compare to CPU reference
+        int N;
+        scanf("%d", &N);
+
+        std::vector<unsigned int> h_in(N), h_out(N);
+
+        // Generate test array: sequence 1 to N for good variety
+        for (int i = 0; i < N; i++) {
+            h_in[i] = (unsigned int)(i + 1);
+        }
+
+        extern void solve(const unsigned int* h_in, unsigned int* h_out, int n);
+        solve(h_in.data(), h_out.data(), N);
+
+        bool ok = verifyScan(h_in, h_out, N);
+        printf("%d\n", ok ? 1 : 0);
+    } else {
+        // Parse N and read array, print result
+        int N = atoi(first);
+        std::vector<unsigned int> h_in(N), h_out(N);
+
+        readUInts(h_in, N);
+
+        extern void solve(const unsigned int* h_in, unsigned int* h_out, int n);
+        solve(h_in.data(), h_out.data(), N);
+
+        for (int i = 0; i < N; i++) {
+            printf("%u%c", h_out[i], (i == N - 1) ? '\n' : ' ');
+        }
     }
 
-    std::vector<unsigned int> h_out(n);
-    solve(h_in.data(), h_out.data(), n);
-
-    for (int i = 0; i < n; i++) {
-        printf("%u%c", h_out[i], (i == n - 1) ? '\n' : ' ');
-    }
     return 0;
 }
 
 ---editorial---
 ## Approach
 
-The Blelloch scan algorithm consists of two phases:
+The Blelloch exclusive scan algorithm consists of two symmetric phases operating on a binary tree structure stored in shared memory.
 
-**Upsweep (reduce):**
+**Upsweep (reduce phase):**
+
 ```cpp
-for (int d = 0; d < log2(BLOCK_SIZE); d++) {
-    int stride = 1 << (d + 1);
+for (int d = 0; d < 8; d++) {  // log2(256) = 8 levels
+    int stride = 1 << (d + 1);  // 2, 4, 8, 16, 32, 64, 128, 256
     if ((tid & (stride - 1)) == (stride / 2)) {
         tree[tid] += tree[tid - stride / 2];
     }
+    __syncthreads();
 }
 ```
-This builds a binary tree from bottom to top. At each level, the right child of each pair adds the left child's value.
 
-**Downsweep (distribute):**
+This builds a binary tree from bottom to top. At each level, threads whose index has the pattern `...100...0` (where the rightmost 1 is at position `stride/2`) add their sibling's value to themselves. After 8 levels, `tree[511]` contains the sum of all input elements.
+
+**Downsweep (distribute phase):**
+
 ```cpp
-tree[2 * BLOCK_SIZE - 1] = 0;  // Base case for exclusive scan
-for (int d = log2(BLOCK_SIZE) - 1; d >= 0; d--) {
+if (tid == 0) tree[511] = 0;  // Exclusive scan base case
+for (int d = 7; d >= 0; d--) {
     int stride = 1 << (d + 1);
     if ((tid & (stride - 1)) == (stride / 2)) {
         unsigned int t = tree[tid - stride / 2];
         tree[tid - stride / 2] = tree[tid];
         tree[tid] += t;
     }
+    __syncthreads();
 }
 ```
-This propagates prefix sums from top to bottom. The right child gets the parent's sum; the left child keeps its sum.
+
+This propagates prefix sums top-down. The right child receives the parent's sum; the left child keeps the parent's sum. The key insight is that the right child gets `parent + leftSibling` (which equals the exclusive prefix up to that point), while the left child simply gets `parent`.
 
 **Three-pass algorithm for large arrays:**
-1. Scan each block independently
-2. Scan the block sums (one block)
-3. Add the offset from each block's sum to all elements in that block
+
+1. Each block scans its slice independently, producing partial results and block totals
+2. Scan the block totals recursively (single block, at most 256 elements)
+3. Add the appropriate offset (sum of all preceding blocks) to each element
+
+**Warp shuffle optimization:**
+
+For the final downsweep step within a warp, replace shared memory access with:
+```cpp
+for (int offset = 1; offset < 32; offset <<= 1) {
+    val += __shfl_up_sync(0xffffffff, val, offset);
+}
+```
+
+This uses the warp's register file instead of shared memory, eliminating bank conflicts and reducing latency.
 
 ## Complexity
 
-- **Time**: O(N) work, O(log N) steps for single block
-- **Shared memory**: 2 × BLOCK_SIZE integers = 2048 bytes for BLOCK_SIZE=256
-- **Three-pass overhead**: 3 kernel launches, extra global memory traffic
+- **Work complexity**: O(N) — identical to sequential scan
+- **Step complexity**: O(log N) parallel rounds
+- **Shared memory**: 2 × BLOCK_SIZE × 4 bytes = 2048 bytes for BLOCK_SIZE=256
+- **Three-pass overhead**: Additional global memory reads/writes for large N
 
 ## Key Insights
 
-1. **Blelloch vs Hillis-Steele**: Blelloch is work-efficient (O(N) work) while Hillis-Steele is not (O(N log N) work). Blelloch has more complex dependencies but better asymptotic performance.
+1. **Blelloch vs Hillis-Steele**: Blelloch achieves O(N) work while Hillis-Steele requires O(N log N) work. For N=1M, Blelloch performs ~2M additions while Hillis-Steele performs ~20M — a 10× difference that dominates runtime despite Hillis-Steele's simpler dependency pattern.
 
-2. **Exclusive vs Inclusive**: Exclusive scan outputs 0 at position 0, while inclusive scan outputs the first element. Exclusive is useful for computing output indices.
+2. **Exclusive vs Inclusive**: Exclusive scan outputs 0 at position 0 (no preceding elements). Inclusive scan would output the first element itself. Exclusive scan is essential for computing output indices in stream compaction.
 
-3. **Warp optimization**: For the final downsweep step, use warp shuffle instead of shared memory:
-   ```cpp
-   for (int offset = 16; offset > 0; offset >>= 1)
-       val += __shfl_up_sync(0xffffffff, val, offset);
-   ```
+3. **Work efficiency matters on GPUs**: Unlike CPUs where step count (latency) dominates, GPUs execute thousands of threads in parallel. Work-inefficient algorithms waste CUDA Core throughput even if they have few synchronization barriers.
+
+4. **`__shfl_up_sync(0xffffffff, val, offset)`** uses the warp's register file for prefix accumulation. The mask `0xffffffff` enables all 32 lanes; `offset` specifies how many lanes back to read from.
 
 ## Common Mistakes
 
-- **Wrong tree indexing**: The tree array needs 2 × BLOCK_SIZE elements. Leaves are at indices [BLOCK_SIZE, 2*BLOCK_SIZE).
-- **Missing syncthreads**: Each level of upsweep and downsweep requires synchronization before the next level.
-- **Off-by-one in upsweep**: The loop runs for log2(BLOCK_SIZE) iterations, not log2(BLOCK_SIZE)-1.
-- **Not handling small N**: When n < BLOCK_SIZE, pad with zeros to avoid reading out of bounds.
+- **Wrong tree size**: The tree array needs 2 × BLOCK_SIZE elements. Leaves are at indices [BLOCK_SIZE, 2×BLOCK_SIZE). Parent of leaf at index i is at index i - BLOCK_SIZE.
+
+- **Missing syncthreads**: Each level of upsweep and downsweep requires synchronization. Without it, threads may read stale data from the previous level.
+
+- **Off-by-one in upsweep**: The loop runs for exactly log2(BLOCK_SIZE) iterations (8 for BLOCK_SIZE=256), not log2(BLOCK_SIZE)-1.
+
+- **Not handling small N**: When n < BLOCK_SIZE, pad with zeros to avoid reading out of bounds. The tree must still be fully built.
+
+- **Wrong offset direction**: `__shfl_up_sync` reads from a lower lane index (up the warp); `__shfl_down_sync` reads from a higher lane index (down the warp). Prefix accumulation uses "up" because each thread needs values from preceding threads.
+
+- **Incorrect three-pass offset**: When adding offsets, use `offsets[bid - 1]` not `offsets[bid]`. Block 0 adds nothing; block 1 adds block 0's sum; block 2 adds blocks 0+1's sum.
+
 ---end---
