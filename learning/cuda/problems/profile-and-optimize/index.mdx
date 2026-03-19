@@ -1,0 +1,436 @@
+---
+slug: profile-and-optimize
+title: Profile and Optimize a Kernel with Nsight Compute
+difficulty: medium
+track: cuda
+tags:
+  - profiling
+  - memory-coalescing
+  - nsight-compute
+  - performance-optimization
+status: published
+author: team
+xp: 350
+runtime: cuda
+cpp_standard: "17"
+cuda_version: "12.6"
+compute_cap: "sm_120"
+---
+
+## Background
+
+**Performance profiling** is the systematic process of measuring where a GPU kernel spends its time and why. Without profiling, optimization is guesswork. With profiling, you can identify the single bottleneck that, when fixed, yields the biggest speedup.
+
+The **roofline model** provides the theoretical framework: a kernel's performance is bounded by either (1) memory bandwidth or (2) arithmetic bandwidth. The **arithmetic intensity** (FLOPs/byte) determines where a kernel sits on this model. A memory-bound kernel needs fewer FLOPs per byte moved; a compute-bound kernel needs more.
+
+**Nsight Compute** is NVIDIA's per-kernel profiler that measures:
+- **Roofline positioning**: Where does your kernel sit relative to the memory bandwidth roof and arithmetic bandwidth roof?
+- **Memory workload**: What fraction of HBM bandwidth is achieved? What's the L1 hit rate?
+- **Warp efficiency**: What fraction of cycles are wasted on stalls, divergence, or idle warps?
+- **Stall reasons**: Why isn't the GPU doing more work? (Long scoreboard, memory throttle, execution dependency, etc.)
+
+The canonical optimization workflow:
+1. **Profile** with `ncu --set full` to get baseline metrics
+2. **Identify the bottleneck** using roofline position and warp efficiency
+3. **Apply a targeted fix** (coalesce memory accesses, increase occupancy, fuse operations)
+4. **Re-profile** to measure improvement and confirm the bottleneck moved
+
+A classic mistake: **non-coalesced memory access**. When threads in a warp access strided memory (e.g., `data[threadIdx.x * stride]` instead of `data[threadIdx.x]`), the GPU must perform multiple memory transactions instead of one. This can reduce global load efficiency from 100% to 10% or worse.
+
+Understanding this workflow is essential for engineering interviews at NVIDIA, Meta, and AI infrastructure teams. They don't just want to know that you can write CUDA kernels; they want to know that you can **make them fast**.
+
+## What to Implement
+
+You are given a kernel that computes the **row-wise maximum** of a 2D matrix. The initial implementation has a critical performance bug: it accesses memory in a **non-coalesced pattern** that causes terrible memory throughput.
+
+**The buggy kernel** (you'll fix it):
+```cpp
+__global__ void rowMaxBroken(const float* matrix, float* results, int rows, int cols) {
+    int row = blockIdx.x;
+    int tid = threadIdx.x;
+
+    // BUG: Each thread in the warp accesses strided locations
+    // Thread 0: matrix[row * cols + 0], matrix[row * cols + 32], ...
+    // Thread 1: matrix[row * cols + 1], matrix[row * cols + 33], ...
+    // This creates 32 separate memory transactions instead of 1 coalesced transaction
+    float maxVal = -INFINITY;
+    for (int col = tid; col < cols; col += 32) {
+        float val = matrix[row * cols + col];
+        if (val > maxVal) maxVal = val;
+    }
+
+    // Write result (only thread 0 per block)
+    if (tid == 0) results[row] = maxVal;
+}
+```
+
+**The fix**: Transpose the access pattern so that adjacent threads read adjacent memory:
+```cpp
+// For row-wise reduction, you cannot fix this without a different algorithm
+// The correct approach is to use a proper reduction within each row
+```
+
+Actually, for row-wise maximum of a matrix, the coalesced approach is:
+- Each thread block handles one row
+- Threads load **contiguous** chunks of the row (not strided)
+- Use a tree reduction within the block to find the max
+- This ensures **100% global load efficiency** on the initial load
+
+**Your task**:
+1. Start with the broken version and run it
+2. Profile it: `ncu --set full ./program`
+3. In the Nsight Compute report, find:
+   - **Memory Workload Analysis**: global load efficiency will be terrible (~3-10%)
+   - **Roofline Analysis**: you'll see the kernel at the memory bandwidth roof
+   - **Warp State Statistics**: look for "Long Scoreboard" stalls (waiting for memory)
+4. Fix the kernel to use coalesced access
+5. Re-profile to confirm global load efficiency > 90%
+
+**Note**: You don't need Nsight Compute installed to complete this problem. The harness will simulate the profiling feedback by checking your access pattern. If you use coalesced access (adjacent threads read adjacent memory), you'll pass.
+
+## Constraints
+
+- Matrix dimensions: `rows * cols` where `1 <= rows <= 1024` and `1 <= cols <= 4096`
+- Use `blockDim.x = 256` threads per block (8 warps)
+- Each block processes exactly one row
+- Results must be correct: `results[i] = max(matrix[i * cols : (i+1) * cols])`
+- **Coalescing requirement**: Adjacent threads (tid 0-31, 32-63, etc.) must read adjacent memory locations
+- Do not modify the provided `solve()` function
+- For the harness verification, use `ncu` if available, or run with timing comparison
+
+## Example
+
+**Input** (3x8 matrix, row-wise max):
+```
+3 8
+1.0 5.0 3.0 8.0 2.0 7.0 4.0 6.0
+9.0 2.0 1.0 4.0 7.0 3.0 5.0 8.0
+2.0 2.0 8.0 1.0 3.0 9.0 2.0 7.0
+```
+
+**Output** (max of each row):
+```
+8.0
+9.0
+9.0
+```
+
+**Profiling verification** (using harness):
+```
+$ ./program verify 1024 1024
+1
+```
+Output `1` means your kernel has coalesced access pattern and should achieve > 90% global load efficiency. Output `0` means non-coalesced access.
+
+---starter-code---
+#include <cuda_runtime.h>
+#include <cstdio>
+#include <cmath>
+#include <limits>
+
+#define BLOCK_SIZE 256
+
+// Broken version: non-coalesced strided access
+// DO NOT use this pattern in production
+__global__ void rowMaxBroken(const float* matrix, float* results, int rows, int cols) {
+    int row = blockIdx.x;
+    int tid = threadIdx.x;
+
+    // BUG: Strided access creates 32 separate memory transactions
+    float maxVal = -INFINITY;
+    for (int col = tid; col < cols; col += 32) {
+        float val = matrix[row * cols + col];
+        if (val > maxVal) maxVal = val;
+    }
+
+    if (tid == 0) results[row] = maxVal;
+}
+
+// Fixed version: coalesced access with tree reduction
+__global__ void rowMax(const float* matrix, float* results, int rows, int cols) {
+    int row = blockIdx.x;
+    int tid = threadIdx.x;
+
+    // TODO: Implement coalesced row-wise maximum
+    // 1. Each thread loads multiple contiguous elements from the row
+    // 2. Compute local max for each thread's chunk
+    // 3. Use shared memory and tree reduction to combine thread results
+    // 4. Block 0 writes the final row maximum to results[row]
+
+    // Hint: First load coalesced, then reduce within block
+    // Use __shfl_down_sync for warp-level reduction
+}
+
+// Do NOT modify below this line
+void solve(const float* h_matrix, float* h_results, int rows, int cols) {
+    float *d_matrix, *d_results;
+
+    cudaMalloc(&d_matrix, rows * cols * sizeof(float));
+    cudaMalloc(&d_results, rows * sizeof(float));
+
+    cudaMemcpy(d_matrix, h_matrix, rows * cols * sizeof(float), cudaMemcpyHostToDevice);
+
+    // Launch one block per row
+    rowMax<<<rows, BLOCK_SIZE>>>(d_matrix, d_results, rows, cols);
+
+    cudaMemcpy(h_results, d_results, rows * sizeof(float), cudaMemcpyHostToDevice);
+
+    cudaFree(d_matrix);
+    cudaFree(d_results);
+}
+
+---test-cases---
+- name: "Small 3x8 matrix"
+  input: "3 8\n1.0 5.0 3.0 8.0 2.0 7.0 4.0 6.0\n9.0 2.0 1.0 4.0 7.0 3.0 5.0 8.0\n2.0 2.0 8.0 1.0 3.0 9.0 2.0 7.0"
+  expected: "8.0 9.0 9.0"
+- name: "Single row"
+  input: "1 5\n1.0 3.0 2.0 5.0 4.0"
+  expected: "5.0"
+- name: "Single column"
+  input: "4 1\n1.0\n5.0\n3.0\n2.0"
+  expected: "1.0 5.0 3.0 2.0"
+- name: "All same values"
+  input: "2 4\nfill:7.0\nfill:7.0"
+  expected: "7.0 7.0"
+- name: "Negative values"
+  input: "2 3\n-1.0 -5.0 -3.0\n-2.0 -8.0 -4.0"
+  expected: "-1.0 -2.0"
+
+---solution---
+__global__ void rowMax(const float* matrix, float* results, int rows, int cols) {
+    int row = blockIdx.x;
+    int tid = threadIdx.x;
+
+    // Shared memory for block-wide reduction
+    __shared__ float sharedMax[BLOCK_SIZE];
+
+    // Each thread loads multiple contiguous elements (coalesced access)
+    // Thread 0: cols[0], cols[8], cols[16], ... (stride = BLOCK_SIZE)
+    // Thread 1: cols[1], cols[9], cols[17], ...
+    // This ensures adjacent threads read adjacent memory = coalesced
+    float localMax = -INFINITY;
+    for (int col = tid; col < cols; col += BLOCK_SIZE) {
+        float val = matrix[row * cols + col];
+        if (val > localMax) localMax = val;
+    }
+
+    // Store thread's local max in shared memory
+    sharedMax[tid] = localMax;
+    __syncthreads();
+
+    // Tree reduction in shared memory to find block maximum
+    for (int stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            float other = sharedMax[tid + stride];
+            if (other > sharedMax[tid]) {
+                sharedMax[tid] = other;
+            }
+        }
+        __syncthreads();
+    }
+
+    // Thread 0 writes the result
+    if (tid == 0) {
+        results[row] = sharedMax[0];
+    }
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <limits>
+#include <algorithm>
+
+// Read a row of floats: either "fill:value" or space-separated values
+static void readRow(std::vector<float>& row, int cols) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float val = atof(tok + 5);
+        std::fill(row.begin(), row.end(), val);
+    } else {
+        row[0] = atof(tok);
+        for (int i = 1; i < cols; i++) scanf("%f", &row[i]);
+    }
+}
+
+// Check if a kernel uses coalesced access pattern
+// For row-wise reduction: threads should load with stride = BLOCK_SIZE
+// This ensures adjacent threads read adjacent memory locations
+static bool checkCoalescedAccess() {
+    // Simulated check: we verify the kernel source contains the correct pattern
+    // In a real harness, we'd use CUPTI or ncu to measure global load efficiency
+
+    // For this exercise, we check that the solution uses stride = BLOCK_SIZE
+    // instead of the buggy stride = 32 pattern
+
+    // Read the source file (simplified: just check for the pattern)
+    FILE* f = fopen("learning/cuda/problems/profile-and-optimize/index.mdx", "r");
+    if (!f) return false;
+
+    char line[512];
+    bool hasCoalescedPattern = false;
+    bool hasBrokenPattern = false;
+
+    while (fgets(line, sizeof(line), f)) {
+        // Check for broken pattern: col += 32 (strided by warp size)
+        if (strstr(line, "col += 32")) {
+            hasBrokenPattern = true;
+        }
+        // Check for coalesced pattern: col += BLOCK_SIZE or col += blockDim.x
+        if (strstr(line, "col += BLOCK_SIZE") || strstr(line, "col += blockDim.x")) {
+            hasCoalescedPattern = true;
+        }
+    }
+    fclose(f);
+
+    return hasCoalescedPattern && !hasBrokenPattern;
+}
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        int N, M;
+        scanf("%d %d", &N, &M);
+
+        // Generate test matrix
+        std::vector<float> matrix(N * M);
+        for (int i = 0; i < N * M; i++) {
+            matrix[i] = (float)(i % 100 + 1);
+        }
+
+        // Compute CPU reference
+        std::vector<float> cpuResults(N);
+        for (int i = 0; i < N; i++) {
+            float maxVal = -std::numeric_limits<float>::infinity();
+            for (int j = 0; j < M; j++) {
+                if (matrix[i * M + j] > maxVal) {
+                    maxVal = matrix[i * M + j];
+                }
+            }
+            cpuResults[i] = maxVal;
+        }
+
+        // Run GPU solution
+        std::vector<float> gpuResults(N);
+        extern void solve(const float* matrix, float* results, int rows, int cols);
+        solve(matrix.data(), gpuResults.data(), N, M);
+
+        // Compare results
+        bool correct = true;
+        for (int i = 0; i < N; i++) {
+            if (fabs(cpuResults[i] - gpuResults[i]) > 1e-3) {
+                correct = false;
+                break;
+            }
+        }
+
+        // Check coalesced access pattern
+        bool coalesced = checkCoalescedAccess();
+
+        // Output: 1 if correct AND coalesced, 0 otherwise
+        printf("%d\n", (correct && coalesced) ? 1 : 0);
+    } else {
+        // Parse dimensions
+        int rows = atoi(first);
+        int cols;
+        scanf("%d", &cols);
+
+        // Read matrix
+        std::vector<float> matrix(rows * cols);
+        for (int i = 0; i < rows; i++) {
+            std::vector<float> row(cols);
+            readRow(row, cols);
+            for (int j = 0; j < cols; j++) {
+                matrix[i * cols + j] = row[j];
+            }
+        }
+
+        // Run GPU solution
+        std::vector<float> results(rows);
+        extern void solve(const float* matrix, float* results, int rows, int cols);
+        solve(matrix.data(), results.data(), rows, cols);
+
+        // Print results
+        for (int i = 0; i < rows; i++) {
+            if (i) printf(" ");
+            printf("%.1f", results[i]);
+        }
+        printf("\n");
+    }
+
+    return 0;
+}
+
+---editorial---
+## Approach
+
+The key insight for coalesced memory access: **adjacent threads should read adjacent memory addresses**. When threads 0-31 (a warp) execute a load instruction, the GPU can combine their requests into a single memory transaction if the addresses are contiguous.
+
+**The broken pattern** (non-coalesced):
+```cpp
+for (int col = tid; col < cols; col += 32) {
+    float val = matrix[row * cols + col];
+```
+- Thread 0 reads: cols[0], cols[32], cols[64], ...
+- Thread 1 reads: cols[1], cols[33], cols[65], ...
+- Thread 31 reads: cols[31], cols[63], cols[95], ...
+
+Each thread in the warp accesses addresses that are **32 floats apart**. This creates 32 separate memory transactions instead of 1 coalesced transaction. Global load efficiency drops to ~3%.
+
+**The fixed pattern** (coalesced):
+```cpp
+for (int col = tid; col < cols; col += BLOCK_SIZE) {
+    float val = matrix[row * cols + col];
+```
+- Thread 0 reads: cols[0], cols[256], cols[512], ...
+- Thread 1 reads: cols[1], cols[257], cols[513], ...
+- Thread 255 reads: cols[255], cols[511], cols[767], ...
+
+Now threads 0-31 (a warp) read cols[0-31] in the first iteration. This is **contiguous memory** = one coalesced transaction. Global load efficiency is ~100%.
+
+**The reduction**: After loading, each thread finds the max of its chunk. Then a tree reduction combines all thread results:
+1. Each thread writes its local max to shared memory
+2. Synchronize all threads
+3. Reduce in shared memory: `sharedMax[tid] = max(sharedMax[tid], sharedMax[tid + stride])`
+4. Thread 0 writes the final result
+
+## Complexity
+
+- **Time complexity**: O(cols / BLOCK_SIZE) per row
+  - Each thread loads `cols / BLOCK_SIZE` elements
+  - Tree reduction takes O(log BLOCK_SIZE) steps
+- **Memory**: O(BLOCK_SIZE) shared memory per block
+- **Global load efficiency**: ~100% with coalesced access, ~3% without
+
+## Key Insights
+
+1. **Coalescing is about stride**: The stride in your for-loop should equal `BLOCK_SIZE`, not `warpSize` (32). Using stride=32 causes each warp to access strided addresses; using stride=256 means each warp accesses contiguous addresses.
+
+2. **Nsight Compute metrics to check**:
+   - `sm__throughput.avg.pct_of_peak_sustained_elapsed`: SM active time (should be high for compute-bound, low for memory-bound)
+   - `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum`: Global load sectors
+   - `sm__warps_executed_per_sm.avg`: Warp execution efficiency
+   - Look at "Global Load Efficiency" in Memory Workload Analysis
+
+3. **Roofline positioning**: A memory-bound kernel sits on the memory bandwidth roof. Moving it to the compute roof requires increasing arithmetic intensity (more FLOPs per byte).
+
+4. **Tree reduction pattern**: The shared memory reduction uses `stride` going from `BLOCK_SIZE/2` down to 1. At each step, thread `tid` combines with thread `tid + stride`.
+
+## Common Mistakes
+
+- **Using stride=32 instead of stride=BLOCK_SIZE**: This is the broken pattern that causes non-coalesced access. The problem explicitly shows the buggy code with `col += 32`. Don't copy it!
+
+- **Missing __syncthreads()**: After loading elements and before the reduction, you must synchronize all threads. Otherwise, some threads may not have written their local max yet.
+
+- **Incorrect shared memory size**: The shared array needs `BLOCK_SIZE` entries (one per thread), not `warpSize` entries.
+
+- **Forgetting the tree reduction**: Just loading coalescedly isn't enough. You still need to combine all thread results using a tree reduction in shared memory.
+
+- **Not handling edge cases**: If `cols < BLOCK_SIZE`, some threads won't load anything. Initialize `localMax = -INFINITY` to handle this.
+
+---end---

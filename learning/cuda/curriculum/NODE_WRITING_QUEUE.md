@@ -94,7 +94,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 - [x] nsight-compute | Nsight Compute Profiling Workflow | CONCEPT | intermediate | ~40min | source: cluster-profiling.json nsight-compute-workflow+nsight-systems-concurrency topics; gpu-glossary/host-software/nsight-systems.md; gpu-glossary/perf/issue-efficiency.md; gpu-glossary/perf/pipe-utilization.md; cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/
 
 ### Problem nodes
-- [ ] profile-and-optimize | Profile and Optimize a Kernel | PROBLEM | intermediate | ~90min | source: cluster-profiling.json exerciseId=profile-and-optimize; cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/
+- [x] profile-and-optimize | Profile and Optimize a Kernel | PROBLEM | intermediate | ~90min | source: cluster-profiling.json exerciseId=profile-and-optimize; cuda-mode-lectures/lecture_001/; cuda-mode-lectures/lecture_008/
 
 ---
 
