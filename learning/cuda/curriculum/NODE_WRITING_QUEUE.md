@@ -81,7 +81,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 - [x] tensor-core-gemm | HGEMM with WMMA Tensor Cores | PROBLEM | advanced | ~180min | source: cluster-linear-algebra.json tensor-cores-wmma exerciseId=wmma-hgemm; cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/
 
 ### Article nodes
-- [ ] cutlass | CUTLASS Abstractions | ARTICLE | expert | ~60min | source: cluster-linear-algebra.json cutlass-abstractions topic; resources/cutlass/README.md; cuda-mode-lectures/lecture_036/; cuda-mode-lectures/lecture_057/
+- [x] cutlass | CUTLASS Abstractions | ARTICLE | expert | ~60min | source: cluster-linear-algebra.json cutlass-abstractions topic; resources/cutlass/README.md; cuda-mode-lectures/lecture_036/; cuda-mode-lectures/lecture_057/
 
 ---
 
