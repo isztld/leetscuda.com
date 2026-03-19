@@ -1,0 +1,339 @@
+---
+slug: cuda-core
+title: CUDA Programming
+shortTitle: CUDA Core
+description: "Master GPU programming from first principles. Threading model, memory hierarchy, execution optimization, parallel algorithms, and profiling."
+icon: "⚡"
+color: "#7C3AED"
+order: 1
+difficulty: beginner-to-intermediate
+estimatedHours: 40
+prerequisites: []
+previewNodes: 3
+nodes:
+  # ── Cluster 1: Foundations ────────────────────────────────────────────────
+  - slug: gpu-architecture
+    title: "GPU Architecture & SM Model"
+    type: CONCEPT
+    cluster: foundations
+    order: 1
+    difficulty: easy
+    estimatedMinutes: 30
+    prerequisites: []
+    description: "Understand how GPU silicon is organized into Streaming Multiprocessors, warp schedulers, CUDA Cores, and Tensor Cores, and why this design optimizes throughput over latency."
+    interviewRelevance: high
+
+  - slug: thread-hierarchy
+    title: "Thread Hierarchy"
+    type: CONCEPT
+    cluster: foundations
+    order: 2
+    difficulty: easy
+    estimatedMinutes: 35
+    prerequisites:
+      - gpu-architecture
+    description: "Learn the three-level CUDA parallelism hierarchy — grid, block, and thread — and how to compute global thread indices for 1-D and 2-D problems."
+    interviewRelevance: high
+
+  - slug: warp-execution
+    title: "Warp Execution & SIMT Model"
+    type: CONCEPT
+    cluster: foundations
+    order: 3
+    difficulty: easy
+    estimatedMinutes: 25
+    prerequisites:
+      - thread-hierarchy
+    description: "Understand how 32 threads form a warp that executes in lockstep under SIMT, how zero-cost warp switching hides latency, and what independent thread scheduling means on Volta and later architectures."
+    interviewRelevance: high
+
+  - slug: vector-add
+    title: "Vector Addition"
+    type: PROBLEM
+    cluster: foundations
+    order: 4
+    difficulty: easy
+    estimatedMinutes: 30
+    prerequisites:
+      - thread-hierarchy
+    description: "Implement parallel element-wise vector addition as your first CUDA kernel, covering cudaMalloc, cudaMemcpy, kernel launch syntax, and bounds checking."
+    interviewRelevance: high
+
+  - slug: grid-stride-saxpy
+    title: "Grid-Stride SAXPY"
+    type: PROBLEM
+    cluster: foundations
+    order: 5
+    difficulty: easy
+    estimatedMinutes: 25
+    prerequisites:
+      - thread-hierarchy
+      - vector-add
+    description: "Implement SAXPY using a grid-stride loop so the kernel handles arrays of any size regardless of launch configuration."
+    interviewRelevance: medium
+
+  - slug: compute-capability
+    title: "Compute Capability & Architecture Generations"
+    type: CONCEPT
+    cluster: foundations
+    order: 6
+    difficulty: intermediate
+    estimatedMinutes: 30
+    prerequisites:
+      - gpu-architecture
+    description: "Map NVIDIA's compute capability version numbers (Volta 7.0 through Blackwell 10.0) to the hardware features — Tensor Core generations, TMA, async copy, WGMMA — they unlock."
+    interviewRelevance: medium
+
+  # ── Cluster 2: Memory ─────────────────────────────────────────────────────
+  - slug: global-memory
+    title: "Global Memory & Coalescing"
+    type: CONCEPT
+    cluster: memory
+    order: 7
+    difficulty: intermediate
+    estimatedMinutes: 30
+    prerequisites:
+      - warp-execution
+    description: "Understand the HBM memory hierarchy (global → L2 → L1), how coalescing merges 32-thread warp accesses into a single 128-byte transaction, and how cache-line alignment affects achieved bandwidth."
+    interviewRelevance: high
+
+  - slug: shared-memory
+    title: "Shared Memory & Bank Conflicts"
+    type: CONCEPT
+    cluster: memory
+    order: 8
+    difficulty: intermediate
+    estimatedMinutes: 35
+    prerequisites:
+      - global-memory
+    description: "Learn to use the SM's software-managed SRAM scratchpad, understand the 32-bank organization that makes it 100× faster than global memory, and eliminate bank conflicts with array padding."
+    interviewRelevance: high
+
+  - slug: register-pressure
+    title: "Register Pressure & Occupancy"
+    type: CONCEPT
+    cluster: memory
+    order: 9
+    difficulty: intermediate
+    estimatedMinutes: 25
+    prerequisites:
+      - shared-memory
+    description: "Analyze how per-thread register usage limits the number of concurrent warps per SM, how register spilling to local memory incurs global-memory latency, and how to use nvcc -Xptxas=-v to measure register consumption."
+    interviewRelevance: high
+
+  - slug: unified-memory
+    title: "Unified Memory"
+    type: CONCEPT
+    cluster: memory
+    order: 10
+    difficulty: intermediate
+    estimatedMinutes: 20
+    prerequisites:
+      - global-memory
+    description: "Use cudaMallocManaged to allocate a single pointer valid on both CPU and GPU, understand page-fault migration costs, and eliminate fault overhead with cudaMemPrefetchAsync."
+    interviewRelevance: medium
+
+  - slug: matrix-transpose
+    title: "Matrix Transpose"
+    type: PROBLEM
+    cluster: memory
+    order: 11
+    difficulty: intermediate
+    estimatedMinutes: 60
+    prerequisites:
+      - global-memory
+      - shared-memory
+    description: "Implement a coalesced tiled matrix transpose that uses shared memory as a staging buffer to avoid the 32× bandwidth penalty of naïve column writes, and add padding to eliminate bank conflicts."
+    interviewRelevance: high
+
+  - slug: matrix-multiply
+    title: "Tiled Matrix Multiplication"
+    type: PROBLEM
+    cluster: memory
+    order: 12
+    difficulty: intermediate
+    estimatedMinutes: 90
+    prerequisites:
+      - shared-memory
+    description: "Write a tiled GEMM kernel that loads TILE×TILE blocks of A and B into shared memory, improving the CGMA ratio from 1 to TILE and cutting global memory traffic by a factor of TILE."
+    interviewRelevance: high
+
+  # ── Cluster 3: Execution ──────────────────────────────────────────────────
+  - slug: warp-divergence
+    title: "Warp Divergence & Branch Efficiency"
+    type: CONCEPT
+    cluster: execution
+    order: 13
+    difficulty: intermediate
+    estimatedMinutes: 30
+    prerequisites:
+      - warp-execution
+    description: "Explain how threads within a warp taking different branch paths serialize execution via predicate masking, measure divergence with Nsight Compute's Branch Efficiency metric, and restructure conditionals to reduce serialization."
+    interviewRelevance: high
+
+  - slug: occupancy
+    title: "Occupancy & Latency Hiding"
+    type: CONCEPT
+    cluster: execution
+    order: 14
+    difficulty: intermediate
+    estimatedMinutes: 35
+    prerequisites:
+      - register-pressure
+      - warp-divergence
+    description: "Calculate theoretical occupancy as the minimum of three SM resource limits (threads, registers, shared memory), understand how Little's Law governs how many warps are needed to hide 400-cycle memory latency, and identify the sweet spot between 50–75% occupancy."
+    interviewRelevance: high
+
+  - slug: cuda-streams
+    title: "CUDA Streams & Async Transfers"
+    type: CONCEPT
+    cluster: execution
+    order: 15
+    difficulty: intermediate
+    estimatedMinutes: 30
+    prerequisites:
+      - occupancy
+    description: "Create named streams to overlap kernel execution with H2D/D2H transfers, use CUDA events for cross-stream synchronization, and understand why the default stream serializes with all other streams."
+    interviewRelevance: high
+
+  - slug: streams-overlap
+    title: "Overlap Transfers with Computation"
+    type: PROBLEM
+    cluster: execution
+    order: 16
+    difficulty: intermediate
+    estimatedMinutes: 60
+    prerequisites:
+      - cuda-streams
+    description: "Build a multi-stream pipeline that splits an array into chunks and interleaves H2D copy, kernel execution, and D2H copy in separate streams to achieve transfer/compute overlap."
+    interviewRelevance: medium
+
+  - slug: cooperative-groups
+    title: "Cooperative Groups"
+    type: CONCEPT
+    cluster: execution
+    order: 17
+    difficulty: advanced
+    estimatedMinutes: 30
+    prerequisites:
+      - cuda-streams
+    description: "Use the cooperative_groups API to obtain typed handles for thread groups at warp, block, and grid granularity, enabling portable synchronization and the coalesced_threads() primitive for post-divergence synchronization."
+    interviewRelevance: medium
+
+  # ── Cluster 4: Algorithms ─────────────────────────────────────────────────
+  - slug: parallel-patterns
+    title: "Map, Scatter, Gather"
+    type: CONCEPT
+    cluster: algorithms
+    order: 18
+    difficulty: easy
+    estimatedMinutes: 20
+    prerequisites:
+      - thread-hierarchy
+    description: "Identify the three fundamental data-parallel primitives — map (independent element-wise), scatter (write to computed index), and gather (read from computed index) — and analyze their coalescing and contention properties."
+    interviewRelevance: medium
+
+  - slug: reduce-sum
+    title: "Parallel Reduction Sum"
+    type: PROBLEM
+    cluster: algorithms
+    order: 19
+    difficulty: intermediate
+    estimatedMinutes: 90
+    prerequisites:
+      - shared-memory
+      - warp-divergence
+    description: "Optimize a parallel sum reduction through six stages: naïve divergent tree → divergence-free → __shfl_down_sync warp reduction → thread coarsening, understanding the performance impact of each transformation."
+    interviewRelevance: high
+
+  - slug: prefix-scan
+    title: "Exclusive Prefix Scan"
+    type: PROBLEM
+    cluster: algorithms
+    order: 20
+    difficulty: intermediate
+    estimatedMinutes: 120
+    prerequisites:
+      - reduce-sum
+      - parallel-patterns
+    description: "Implement the Blelloch work-efficient exclusive scan with upsweep and downsweep phases, extend it to large arrays with a three-pass block-scan approach, and contrast it with the work-inefficient Hillis-Steele algorithm."
+    interviewRelevance: high
+
+  - slug: histogram
+    title: "Privatized Histogram"
+    type: PROBLEM
+    cluster: algorithms
+    order: 21
+    difficulty: intermediate
+    estimatedMinutes: 60
+    prerequisites:
+      - reduce-sum
+      - parallel-patterns
+    description: "Implement a privatized histogram kernel that maintains per-block shared memory counters to eliminate global atomic contention, then merges partial histograms into the final output."
+    interviewRelevance: medium
+
+  - slug: radix-sort
+    title: "Parallel Sorting (Radix Sort)"
+    type: CONCEPT
+    cluster: algorithms
+    order: 22
+    difficulty: advanced
+    estimatedMinutes: 30
+    prerequisites:
+      - prefix-scan
+      - histogram
+    description: "Understand how GPU radix sort processes 4-bit digits in repeated passes of histogram → prefix scan → scatter, achieving ~95% of HBM bandwidth on H100, and when to use CUB DeviceRadixSort instead of a custom implementation."
+    interviewRelevance: medium
+
+  # ── Cluster 5: Profiling ──────────────────────────────────────────────────
+  - slug: roofline-model
+    title: "Roofline Model"
+    type: CONCEPT
+    cluster: profiling
+    order: 23
+    difficulty: intermediate
+    estimatedMinutes: 30
+    prerequisites:
+      - thread-hierarchy
+    description: "Plot a kernel's arithmetic intensity against the roofline to determine whether it is memory-bound or compute-bound, compute the H100 ridge point (295 FLOPs/byte for BF16 Tensor Cores), and use this to set optimization priorities."
+    interviewRelevance: high
+
+  - slug: bottleneck-analysis
+    title: "Memory-Bound vs Compute-Bound"
+    type: CONCEPT
+    cluster: profiling
+    order: 24
+    difficulty: intermediate
+    estimatedMinutes: 25
+    prerequisites:
+      - roofline-model
+    description: "Diagnose whether a kernel's runtime is dominated by HBM bandwidth or arithmetic throughput, apply the correct class of optimizations (tiling/fusion for memory-bound; ILP/Tensor Cores for compute-bound), and understand why kernel fusion is the highest-ROI optimization for LLM inference."
+    interviewRelevance: high
+
+  - slug: nsight-compute
+    title: "Nsight Compute Profiling Workflow"
+    type: CONCEPT
+    cluster: profiling
+    order: 25
+    difficulty: intermediate
+    estimatedMinutes: 40
+    prerequisites:
+      - roofline-model
+    description: "Run ncu --set full to collect per-kernel hardware counters, interpret Warp State Statistics (Long Scoreboard, Wait, Barrier stall reasons), Global Load Efficiency, and the roofline section, and use Nsight Systems alongside Nsight Compute for system-wide timeline analysis."
+    interviewRelevance: medium
+
+  - slug: profile-and-optimize
+    title: "Profile and Optimize a Kernel"
+    type: PROBLEM
+    cluster: profiling
+    order: 26
+    difficulty: intermediate
+    estimatedMinutes: 90
+    prerequisites:
+      - nsight-compute
+      - reduce-sum
+    description: "Apply a complete Nsight Compute profiling workflow to an unoptimized kernel: identify the top bottleneck from the roofline section, apply the fix, re-profile to confirm improvement, and document the bandwidth or throughput gain."
+    interviewRelevance: medium
+---
+
+CUDA Programming — foundations, memory, execution, algorithms, and profiling.

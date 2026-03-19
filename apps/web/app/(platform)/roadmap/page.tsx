@@ -10,14 +10,19 @@ export const metadata = {
 
 export default async function RoadmapPage() {
   const tracks = await prisma.track.findMany({
+    where: {
+      slug: { in: ['cuda-core', 'cuda-hpc', 'gpu-llm', 'ml-systems', 'kubernetes-ai', 'foundations'] },
+    },
     orderBy: { order: 'asc' },
     include: { roadmapNodes: { orderBy: { order: 'asc' } } },
   })
 
+  const defaultExpanded = tracks[0]?.slug ?? 'cuda-core'
+
   return (
     <main className="min-h-screen">
       <div className="bg-white border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <h1 className="text-4xl font-bold tracking-tight text-slate-900">
             Your AI Infrastructure Roadmap
           </h1>
@@ -27,13 +32,13 @@ export default async function RoadmapPage() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <ErrorBoundary
           fallback={
             <p className="text-slate-500 text-sm">Failed to load roadmap. Please refresh.</p>
           }
         >
-          <RoadmapClient tracks={tracks} />
+          <RoadmapClient tracks={tracks} defaultExpandedTrack={defaultExpanded} />
         </ErrorBoundary>
       </div>
     </main>

@@ -1,0 +1,324 @@
+---
+slug: tensor-cores
+title: Tensor Cores & WMMA API
+track: cuda-hpc
+type: concept
+cluster: linear-algebra
+difficulty: advanced
+estimatedMinutes: 45
+interviewRelevance: high
+tags:
+  - tensor-cores
+  - wmma-api
+  - mixed-precision
+  - matrix-multiply
+  - hgemm
+status: published
+author: team
+sources:
+  - "NVIDIA CUDA Programming Guide — Chapter 10: Warp-Level Matrix Multiply"
+  - "NVIDIA Ampere Tuning Guide — Improved Tensor Core Operations"
+  - "cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/"
+  - "gpu-glossary/device-hardware/tensor-core.md"
+  - "cutlass/README.md"
+---
+
+# Tensor Cores & WMMA API
+
+Tensor Cores represent the most significant performance breakthrough for machine learning workloads since the introduction of CUDA itself. These specialized matrix multiply-accumulate units deliver 5-15x throughput gains over FP32 CUDA Cores for deep learning operations. Understanding how to program Tensor Cores through the WMMA API, and when to use mixed precision, is essential for anyone building high-performance LLM inference or training systems.
+
+## Why this matters for interviews
+
+Tensor Core questions are mandatory at NVIDIA, Google DeepMind, Meta AI, Microsoft Azure ML, and any company building transformer-based models. Expect these patterns:
+
+- **"How would you implement a matrix multiplication using Tensor Cores?"** — Requires knowledge of WMMA fragment loading, MMA sync, and tiling.
+- **"What's the difference between FP16, BF16, and TF32? When would you use each?"** — Tests mixed precision fundamentals.
+- **"Why isn't my kernel using Tensor Cores even though I'm using FP16?"** — Requires understanding of alignment requirements and compute mode.
+- **"Explain how CUTLASS or cuBLAS achieves 90%+ Tensor Core efficiency."** — Requires knowledge of tiling, double buffering, and Hopper's WGMMA.
+
+Incorrect answers signal that you've only used high-level frameworks (PyTorch, TensorFlow) without understanding the underlying hardware.
+
+## What are Tensor Cores?
+
+Tensor Cores are dedicated matrix multiply-accumulate (MMA) execution units that perform a full matrix multiply in a single instruction. Introduced with Volta (cc 7.0) for FP16, they have since expanded support to BF16, TF32, FP8, and FP4. Each Tensor Core instruction operates on **opaque fragments** distributed across all 32 threads in a warp.
+
+**Key distinction**: Tensor Cores are *not* faster FP32 units. They execute a *different* operation — matrix MMA — that requires explicit programming via:
+- `nvcuda::wmma` API (warp-level intrinsics, deprecated)
+- `cutlass::arch::Mma` or `Wgmma` (CUTLASS C++ templates)
+- Inline PTX (`mma.sync` or `wgmma.mma_async`)
+- cuBLAS `cublasGemmEx()` with Tensor Core compute mode
+
+Tensor Cores do *not* accelerate standard FP32 arithmetic. A `float` multiply-add always uses CUDA Cores.
+
+## The WMMA API: Warp-Level Matrix Multiply
+
+The Warp-Level Matrix Multiply Accumulate (WMMA) API, exposed via `#include <mma.h>`, provides the most direct C++ interface to Tensor Cores.
+
+### Fragment structure
+
+A WMMA fragment is an opaque data structure representing a submatrix distributed across warp threads. The compiler determines the internal layout; **you cannot directly index into a fragment**.
+
+```cpp
+#include <mma.h>
+using namespace nvcuda::wmma;
+
+// Declare fragments
+fragment<matrix_a, 16, 16, 16, half, row_major> a_frag;
+fragment<matrix_b, 16, 16, 16, half, row_major> b_frag;
+fragment<accumulator, 16, 16, 16, float, row_major> c_frag;
+
+// Fill accumulator with zero
+fill_fragment(c_frag, 0.0f);
+```
+
+The supported matrix shapes for cc 7.0+ are:
+- **m16n16k16**: The fundamental Tensor Core tile (16×16 output, 16×16×16 computation)
+- **m8n32k16**: Column-heavy variant
+- **m32n8k16**: Row-heavy variant
+
+Each shape requires all 32 warp threads to participate. The `fragment` template parameters specify:
+1. Role (matrix_a, matrix_b, accumulator)
+2. M dimension (output rows)
+3. N dimension (output columns)
+4. K dimension (reduction dimension)
+5. Data type (half, float, tf32)
+6. Layout (row_major, col_major)
+
+### The three-step MMA workflow
+
+Every WMMA kernel follows the same pattern:
+
+**Step 1: Load matrices from shared memory**
+```cpp
+// Each thread loads its portion of the matrix
+// The 'lda' parameter is the leading dimension (stride between rows)
+load_matrix_sync(a_frag, a_ptr, lda);
+load_matrix_sync(b_frag, b_ptr, ldb);
+```
+
+The `load_matrix_sync` operation gathers elements from shared memory into the fragment's register locations. Threads cooperate: each thread loads 16 half-precision elements for an m16n16k16 fragment.
+
+**Step 2: Perform matrix multiply-accumulate**
+```cpp
+// c_frag = a_frag * b_frag + c_frag
+mma_sync(c_frag, a_frag, b_frag, c_frag);
+```
+
+The `mma_sync` instruction triggers the Tensor Core MMA operation. All 32 threads in the warp must execute the same `mma_sync` with matching fragments, or you get undefined behavior (typically a synchronization error).
+
+**Step 3: Store result to shared or global memory**
+```cpp
+store_matrix_sync(c_ptr, c_frag, ldc, mem_row_major);
+```
+
+Like `load_matrix_sync`, the store is cooperative across the warp. The destination pointer must be properly aligned (16-byte alignment for FP16/FP32).
+
+### Complete minimal HGEMM example
+
+Here's a complete warp-level half-precision GEMM kernel computing C = A×B where A is M×K, B is K×N, C is M×N:
+
+```cpp
+#include <mma.h>
+using namespace nvcuda::wmma;
+
+__global__ void wmma_hgemm(const half* A, const half* B, half* C,
+                           int M, int N, int K) {
+    // Each warp computes a 16x16 output tile
+    const int warpRow = blockIdx.y * 16;
+    const int warpCol = blockIdx.x * 16;
+
+    // Get warp ID and thread ID within warp
+    int warpId = (blockIdx.x + blockIdx.y * gridDim.x) * 1;  // 1 warp per block
+    int laneId = threadIdx.x & 31;
+
+    // Declare fragments
+    fragment<matrix_a, 16, 16, 16, half, row_major> a_frag;
+    fragment<matrix_b, 16, 16, 16, half, row_major> b_frag;
+    fragment<accumulator, 16, 16, 16, float, row_major> c_frag;
+
+    // Initialize accumulator
+    fill_fragment(c_frag, 0.0f);
+
+    // Load A and B fragments from global memory
+    // In production code, you'd tile over K with shared memory
+    const half* a_ptr = &A[warpRow * K + 0];  // First 16x16 tile of A
+    const half* b_ptr = &B[0 * N + warpCol];  // First 16x16 tile of B
+
+    load_matrix_sync(a_frag, a_ptr, K);
+    load_matrix_sync(b_frag, b_ptr, N);
+
+    // Perform MMA
+    mma_sync(c_frag, a_frag, b_frag, c_frag);
+
+    // Store result
+    half* c_ptr = &C[warpRow * N + warpCol];
+    store_matrix_sync(c_ptr, c_frag, N, mem_row_major);
+}
+
+// Launch configuration: gridDim.x = (N+15)/16, gridDim.y = (M+15)/16
+// blockDim = 32 (one warp per block)
+```
+
+This example is educational only — production kernels need:
+- **K-tiling**: Loop over K in 16-element steps, accumulating into c_frag
+- **Shared memory staging**: Load K-tiles into shared memory with async copies
+- **Bank conflict avoidance**: Pad shared memory to avoid bank conflicts during warp loads
+- **Double buffering**: Overlap computation with the next K-tile load
+
+## Mixed Precision Training and Inference
+
+Tensor Cores enable mixed precision computation: lower-precision inputs with higher-precision accumulation. This trades some numerical accuracy for massive throughput gains.
+
+### FP16 vs BF16 vs TF32
+
+| Format | Exponent | Mantissa | Range | Precision | Use Case |
+|--------|----------|----------|-------|-----------|----------|
+| FP32 | 8 bits | 23 bits | ±3.4×10^38 | ~7 decimal digits | Baseline |
+| FP16 | 5 bits | 10 bits | ±65,504 | ~3 decimal digits | Inference (A100/H100) |
+| BF16 | 8 bits | 7 bits | ±3.4×10^38 | ~3 decimal digits | Training (A100/H100/B200) |
+| TF32 | 8 bits | 10 bits | ±3.4×10^38 | ~3 decimal digits | TF32 mode (A100/H100) |
+
+**FP16** (IEEE half-precision) has the same exponent range as FP8, making it prone to overflow during training. The 5-bit exponent can only represent values up to 65,504, and gradients often exceed this bound without loss scaling.
+
+**BF16** (Bfloat16) was developed by Google for ML workloads. It uses 8 exponent bits (same as FP32) and 7 mantissa bits. This preserves the FP32 dynamic range while reducing memory bandwidth by 50%. BF16 is the default for modern LLM training (Llama 2, Llama 3, GPT-4).
+
+**TF32** (Tensor Float 32) was introduced with Ampere. It uses FP32 exponent range but only 10 mantissa bits. TF32 provides a "drop-in" speedup for FP32 workloads without code changes — just set `cublasSetMathMode(CUBLAS_TENSOR_OP_MATH)` or use `cudaSetDeviceFlags(cudaDeviceEnablePeerAccess)`.
+
+**TF32 tradeoff**: ~15-20% accuracy loss on some tasks vs FP32, but 2x throughput on A100/H100.
+
+### Hardware throughput by architecture
+
+| GPU | Architecture | FP16 TC | BF16 TC | TF32 TC | FP8 TC | FP4 TC |
+|-----|--------------|---------|---------|---------|--------|--------|
+| A100 80GB | Ampere (cc 8.0) | 312 TFLOPS | 312 TFLOPS | 156 TFLOPS | — | — |
+| H100 SXM | Hopper (cc 9.0) | 989 TFLOPS | 989 TFLOPS | 495 TFLOPS | 1,979 TFLOPS | — |
+| B200 | Blackwell (cc 10.0) | 2,250 TFLOPS | 2,250 TFLOPS | — | 4,500 TFLOPS | 9,000 TFLOPS |
+
+*FP8 TFLOPS figures assume 2:1 sparse aggregation where applicable. All figures are Tensor Core peak; actual kernel throughput depends on tiling efficiency.*
+
+**Key insight**: H100's FP8 throughput (1,979 TFLOPS) exceeds B200's BF16 throughput (2,250 TFLOPS) when comparing sparse vs dense. For FP8-quantized models, H100 is competitive with B200.
+
+### When mixed precision helps (and when it doesn't)
+
+**Mixed precision doubles throughput only when:**
+1. The bottleneck is Tensor Core arithmetic, not memory bandwidth
+2. The model can tolerate the reduced precision without accuracy degradation
+3. You're using Tensor Core-optimized libraries (cuBLAS, CUTLASS, FlashAttention)
+
+**Mixed precision does NOT help when:**
+1. The kernel is memory-bound (small N GEMM, sequence-heavy attention)
+2. The algorithm requires FP32 precision (e.g., certain numerical solvers, reductions with catastrophic cancellation)
+3. You're running on non-Tensor Core hardware (old GPUs, integrated graphics)
+
+**FP8 requires calibration or dynamic scaling**: E4M3 format has smaller range than FP32, so naive FP8 casting causes underflow. Training with FP8 needs:
+- Loss scaling (multiply loss by a constant before backward)
+- Dynamic scaling factors per tensor (per-tensor or per-token quantization)
+- Careful gradient accumulation to avoid overflow
+
+## Common Misconceptions
+
+### ❌ Wrong: WMMA fragments can be freely read/written per thread
+
+**✓ Correct**: WMMA fragment layout is opaque and compiler-defined. You must use `load_matrix_sync` and `store_matrix_sync` — direct indexing or manual construction of fragments is undefined behavior.
+
+The compiler decides how to distribute the 16×16 matrix across 32 threads. Each thread holds 8 elements (for m16n16k16 with half inputs). The exact mapping depends on the compiler version and target architecture.
+
+### ❌ Wrong: WMMA is the only way to use Tensor Cores
+
+**✓ Correct**: WMMA is deprecated in favor of CUTLASS and inline PTX. cuBLAS also uses Tensor Cores automatically when configured correctly.
+
+**Alternative paths**:
+- **cuBLAS**: `cublasGemmEx(handle, ..., CUBLAS_COMPUTE_16F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)`
+- **CUTLASS**: `cutlass::gemm::device::Gemm<half, half, half, ...>`
+- **Inline PTX**: `mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32`
+
+CUTLASS is the production path: it handles tiling, bank conflicts, and architecture-specific tuning that WMMA requires you to manage manually.
+
+### ❌ Wrong: TF32 is the same as FP32
+
+**✓ Correct**: TF32 has FP32 exponent range but only 10 mantissa bits (vs 23 for FP32). This means TF32 has ~3 decimal digits of precision vs FP32's ~7 digits.
+
+**Consequence**: TF32 can lose accuracy in numerically sensitive operations (deep reductions, small gradient magnitudes). For training large models, BF16 is preferred over TF32 because BF16 preserves better gradient precision.
+
+### ❌ Wrong: FP16 and BF16 are interchangeable
+
+**✓ Correct**: FP16 has 5-bit exponents (range ±65,504); BF16 has 8-bit exponents (range ±3.4×10^38). BF16 matches FP32's dynamic range, making it much more stable for training.
+
+**When to use FP16**: Inference where you can calibrate the model's activation range (e.g., through quantization-aware training).
+
+**When to use BF16**: Training from scratch, fine-tuning, or any scenario where gradient magnitudes are unpredictable.
+
+### ❌ Wrong: Mixed precision always doubles throughput
+
+**✓ Correct**: Mixed precision only helps when the bottleneck is Tensor Core arithmetic. For memory-bound kernels (small batch inference, sequence-heavy attention), reducing precision may not improve throughput.
+
+**Example**: A batch-size-1 Llama-7B inference on H100 is memory-bound. Using FP8 instead of BF16 reduces memory traffic but the Tensor Cores are already idle waiting on HBM. You see minimal speedup.
+
+### ❌ Wrong: FP8 training requires no changes to the training loop
+
+**✓ Correct**: FP8 requires careful scaling to avoid underflow (E4M3 max = 448) and overflow (E5M2 max = 57,344). You need loss scaling, gradient scaling, and often per-tensor or per-token quantization.
+
+**PyTorch 2.0+ approach**: `torch.amp.autocast('cuda', dtype=torch.float8_e4m3fn)` with automatic scaling.
+
+## Interview Patterns
+
+### Whiteboard: Describe the WMMA workflow
+
+**Question**: "Walk me through how you'd implement a matrix multiplication using Tensor Cores."
+
+**Expected answer**:
+1. Declare WMMA fragments for A, B, and C with appropriate types and layout
+2. Initialize the accumulator fragment with `fill_fragment`
+3. Loop over K in 16-element steps (K-tiling)
+4. For each K-tile: load A and B fragments from shared memory with `load_matrix_sync`
+5. Call `mma_sync` to compute the partial product
+6. After the loop, store the result with `store_matrix_sync`
+7. Add shared memory double buffering to overlap loads with compute
+
+### Coding: Fix Tensor Core performance issues
+
+**Question**: "My WMMA kernel is only 200 GFLOPS, but cuBLAS achieves 900 GFLOPS on the same GEMM. What's wrong?"
+
+**Expected diagnostic**:
+- **Occupancy**: Are you using enough warps? H100 needs ~64 warps/SM for peak utilization
+- **Memory coalescing**: Are warp threads loading contiguous memory?
+- **Bank conflicts**: Is shared memory padded correctly?
+- **K-tiling**: Are you streaming over K efficiently with double buffering?
+- **Sync overhead**: Are you doing unnecessary `__syncthreads()` between K-steps?
+
+### Design: Choose the right precision
+
+**Question**: "You're training a 70B-parameter model on an H100 cluster. Should you use FP16, BF16, or TF32?"
+
+**Expected answer**: BF16. It provides the same dynamic range as FP32 (preventing overflow during gradient accumulation) while halving memory bandwidth. TF32 is a fallback if BF16 support is unavailable, but FP16 requires loss scaling and may still overflow on large gradients.
+
+## Key Numbers to Memorize
+
+| Hardware | FP16/BF16 Tensor Core | FP8 Tensor Core | Ridge Point (BF16) |
+|----------|----------------------|-----------------|-------------------|
+| A100 80GB | 312 TFLOPS | — | 156 FLOPs/byte |
+| H100 SXM | 989 TFLOPS | 1,979 TFLOPS | 295 FLOPs/byte |
+| B200 | 2,250 TFLOPS | 4,500 TFLOPS | 281 FLOPs/byte |
+
+**WMAPI basics**:
+- Minimum tile: 16×16×16 (m16n16k16)
+- All 32 warp threads must participate
+- Fragments are opaque — use load/store APIs
+- `#include <mma.h>` and `nvcuda::wmma` namespace
+
+**Precision tradeoffs**:
+- FP16: 5-bit exp, 10-bit mantissa — overflow risk in training
+- BF16: 8-bit exp, 7-bit mantissa — preferred for training
+- TF32: 8-bit exp, 10-bit mantissa — 2x FP32 on A100/H100
+- FP8 E4M3: 4-bit mantissa, 4-bit exponent — max value 448
+- FP8 E5M2: 2-bit exponent, 5-bit mantissa — max value 57,344
+
+## Further Reading
+
+- **NVIDIA CUDA Programming Guide — Chapter 10**: WMMA API specification and examples
+- **NVIDIA Ampere Tuning Guide**: "Improved Tensor Core Operations" section
+- **NVIDIA Hopper Tuning Guide**: WGMMA and TMA programming
+- **cuda-samples/3_CUDA_Features/cudaTensorCoreGemm/**: Reference WMMA implementation
+- **cutlass/README.md**: CUTLASS 4 abstractions for Tensor Cores
+- **llm.c/dev/cuda/matmul_forward.cu**: Minimal Tensor Core GEMM from scratch
+- **Modal GPU Glossary**: Tensor Core, Warpgroup definitions

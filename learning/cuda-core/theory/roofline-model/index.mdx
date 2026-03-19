@@ -1,0 +1,282 @@
+---
+slug: roofline-model
+title: Roofline Model & Performance Analysis
+track: cuda-core
+type: concept
+cluster: profiling
+difficulty: intermediate
+estimatedMinutes: 30
+interviewRelevance: high
+tags:
+  - performance-analysis
+  - roofline-model
+  - arithmetic-intensity
+  - memory-bound
+  - compute-bound
+status: published
+author: team
+sources:
+  - "gpu-glossary/perf/roofline-model.md"
+  - "gpu-glossary/perf/arithmetic-intensity.md"
+  - "gpu-glossary/perf/memory-bandwidth.md"
+  - "gpu-glossary/perf/arithmetic-bandwidth.md"
+  - "cuda-mode-lectures/lecture_001/"
+  - "Williams, Waterman, and Patterson (2008)"
+---
+
+# Roofline Model & Performance Analysis
+
+When you write a CUDA kernel and it runs slower than expected, the first question is: **what is actually limiting performance?** Is your GPU waiting on memory transfers, or is it maxed out doing arithmetic? The roofline model provides a rigorous framework to answer this question.
+
+## Why this matters for interviews
+
+At senior and principal levels, interviewers expect you to diagnose GPU performance bottlenecks systematically. The roofline model is the standard framework for this:
+
+- **Diagnose kernel bottlenecks** in 30 seconds from a single metric (arithmetic intensity)
+- **Predict scaling behavior** when problem sizes change
+- **Choose the right optimization strategy** (memory vs compute optimizations)
+- **Estimate intertoken latency** for LLM inference (memory-bound vs compute-bound cases)
+
+Expect questions like: "Is this kernel memory-bound or compute-bound?" or "Why does matrix multiplication scale better than elementwise operations on GPUs?"
+
+## The Roofline Model: Visual Performance Bounds
+
+The roofline model is a visual performance model that relates a kernel's **arithmetic intensity** (FLOPs/byte) to its achievable **performance** (FLOPs/s). The model is bounded by two roofs:
+
+### The Two Roofs
+
+1. **Memory roof (slanted line)**: Performance = memory_bandwidth × arithmetic_intensity
+   - Slope equals the memory bandwidth (bytes/s)
+   - Applies to kernels with low arithmetic intensity (left side of the diagram)
+
+2. **Compute roof (flat ceiling)**: Performance = arithmetic_bandwidth
+   - Horizontal line at the peak arithmetic throughput
+   - Applies to kernels with high arithmetic intensity (right side of the diagram)
+
+The **ridge point** is where the two roofs meet:
+
+```
+ridge_point = arithmetic_bandwidth / memory_bandwidth  (FLOPs/byte)
+```
+
+A kernel's performance is bounded by the **minimum** of the two roofs. Its x-coordinate (arithmetic intensity) determines which roof it hits.
+
+### Interpreting the Diagram
+
+On a roofline plot:
+- **X-axis**: Arithmetic intensity (FLOPs/byte) — log scale
+- **Y-axis**: Achievable performance (FLOPs/s) — log scale
+- **Kernels left of ridge**: Memory-bound, performance limited by memory bandwidth
+- **Kernels right of ridge**: Compute-bound, performance limited by arithmetic bandwidth
+
+## Arithmetic Intensity: The Key Metric
+
+Arithmetic intensity determines where a kernel sits on the roofline. It is calculated as:
+
+```
+arithmetic_intensity = total_FLOPs / (bytes_read + bytes_written)
+```
+
+### Key Calculations
+
+**SAXPY (y = ax + y)**:
+- FLOPs: 2 per element (1 multiply, 1 add)
+- Bytes: 3 elements × N × 4 bytes = 12N bytes
+- Arithmetic intensity: 2N / 12N = **1/6 FLOPs/byte ≈ 0.17 FLOPs/byte**
+- This is 3500× below the H100 ridge point (295 FLOPs/byte) → **deeply memory-bound**
+
+**SGEMM (C = A @ B + C)**:
+- FLOPs: 2N³ (N × N matrix multiply, 2 FLOPs per multiply-accumulate)
+- Bytes: 3 matrices × N² × 4 bytes = 12N² bytes
+- Arithmetic intensity: 2N³ / 12N² = **N/6 FLOPs/byte**
+- For N > 1770: N/6 > 295 → **compute-bound on H100**
+- **Crucial insight**: Arithmetic intensity scales as **O(N)** — larger matrices are more efficient
+
+**FFT**:
+- FLOPs: (5/2) N log₂(N)
+- Bytes: 2 passes × N × 8 bytes = 16N bytes
+- Arithmetic intensity: **5/32 log₂(N) FLOPs/byte**
+- Scales as **O(log N)** — better than elementwise, worse than GEMM
+
+### Scaling Behavior
+
+The scaling behavior of arithmetic intensity explains why different algorithms perform differently on GPUs:
+
+| Kernel | FLOPs | Bytes Moved | Arithmetic Intensity | Scaling |
+|--------|-------|-------------|---------------------|---------|
+| SAXPY | 2N | 12N | 1/6 | O(1) |
+| FFT | 5/2 N log(N) | 16N | 5/32 log(N) | O(log N) |
+| SGEMM | 2N³ | 12N² | N/6 | O(N) |
+
+**Matrix multiplication's O(N) scaling** is why it dominates GPU workloads: as problem sizes grow, kernels become more compute-bound and saturate the GPU better.
+
+## Hardware Numbers: A100, H100, B200
+
+The following table shows the roofline parameters for modern NVIDIA data center GPUs. These numbers are derived from official datasheets and tuning guides.
+
+| System (Compute / Memory) | Arithmetic Bandwidth (TFLOPs/s) | Memory Bandwidth (TB/s) | Ridge Point (FLOPs/byte) |
+|---------------------------|--------------------------------|------------------------|-------------------------|
+| A100 80GB SXM BF16 TC / HBM2e | 312 | 2.0 | 156 |
+| H100 SXM BF16 TC / HBM3 | 989 | 3.35 | 295 |
+| B200 BF16 TC / HBM3e | 2250 | 8.0 | 281 |
+| H100 SXM FP8 TC / HBM3 | 1979 | 3.35 | 592 |
+| B200 FP8 TC / HBM3e | 4500 | 8.0 | 562 |
+| B200 FP4 TC / HBM3e | 9000 | 8.0 | 1125 |
+
+**Important observations**:
+
+1. **FP8/FP4 operations dramatically increase ridge points** — H100 FP8 requires 592 FLOPs/byte to be compute-bound
+2. **Higher arithmetic bandwidth widens the gap** — B200's FP4 compute is 9000 TFLOPS/s but memory is still only 8 TB/s
+3. **Each subsystem has its own roofline** — HBM, L2 cache, shared memory each have different bandwidths
+
+## Common Misconceptions
+
+### ❌ Wrong: "A kernel at the roofline is optimal"
+
+**✓ Correct**: A kernel at the roofline is at the **theoretical maximum for its arithmetic intensity**, but still has overheads in practice. Real kernels rarely hit the roof due to:
+- Instruction scheduling inefficiencies
+- Pipeline bubbles
+- Cache misses
+- Memory transaction overheads (e.g., uncoalesced accesses)
+
+In Nsight Compute, achieving 80-90% of the theoretical roofline is considered excellent.
+
+### ❌ Wrong: "Roofline uses wall-clock time for bandwidth calculations"
+
+**✓ Correct**: Bandwidth is measured as **bytes actually transferred**, not bytes allocated or kernel runtime. The denominator includes only:
+- Data moved between DRAM and L2 (or directly to SM)
+- Not data reused from cache
+- Not time spent with the GPU idle
+
+Using wall-clock time (including kernel launch overhead, host-side delays) will understate the actual performance.
+
+### ❌ Wrong: "There is only one roofline for a GPU"
+
+**✓ Correct**: There are **multiple rooflines** for different memory levels:
+- **HBM roofline**: Uses HBM bandwidth (e.g., 3.35 TB/s for H100)
+- **L2 roofline**: Uses L2 bandwidth (typically 5-10 TB/s effective)
+- **Shared memory roofline**: Uses shared memory bandwidth (typically 10-20 TB/s effective)
+
+A well-tiled kernel that fits in shared memory operates on the **shared memory roofline**, not the HBM roofline. This is the key insight behind tiling optimizations.
+
+## Memory-Bound vs Compute-Bound: Optimization Strategies
+
+Once you've identified which roof a kernel hits, apply the appropriate optimization strategy.
+
+### Memory-Bound Kernels (left of ridge)
+
+**Characteristics**:
+- Arithmetic intensity < ridge point
+- Performance scales with memory bandwidth
+- SMs spend cycles waiting on memory
+
+**Optimization strategies**:
+1. **Increase arithmetic intensity**:
+   - Kernel fusion (merge elementwise operations)
+   - Quantization (reduce bytes per element)
+   - Gradient checkpointing (trade compute for memory)
+
+2. **Reduce memory traffic**:
+   - Shared memory tiling (reuse loaded data)
+   - Register blocking (reduce redundant loads)
+   - Vectorized loads (float4 instead of float)
+
+3. **Improve memory coalescing**:
+   - Ensure contiguous thread access patterns
+   - Avoid strided or scattered accesses
+
+### Compute-Bound Kernels (right of ridge)
+
+**Characteristics**:
+- Arithmetic intensity > ridge point
+- Performance scales with arithmetic bandwidth
+- Memory subsystem is saturated
+
+**Optimization strategies**:
+1. **Increase arithmetic efficiency**:
+   - Use Tensor Cores (100× bandwidth vs CUDA cores)
+   - Improve instruction-level parallelism (ILP)
+   - Reduce register pressure (increase occupancy)
+
+2. **Reduce overhead**:
+   - Unroll loops to reduce control overhead
+   - Use warp-level primitives (shfl operations)
+   - Minimize branch divergence
+
+**Key insight**: For memory-bound kernels, increasing compute power does nothing. For compute-bound kernels, increasing memory bandwidth does nothing. Know which bound you're under before optimizing.
+
+## LLM Inference: Memory-Bound vs Compute-Bound
+
+Large language model inference exhibits different bottleneck behavior depending on the phase:
+
+### Prefill Phase (compute-bound)
+
+- All tokens in the prompt are processed in parallel
+- Weights are loaded once and reused across all tokens
+- High batch sizes increase arithmetic intensity
+- **Optimization focus**: Tensor Core utilization, matrix fusion
+
+### Decode Phase (memory-bound)
+
+- One token generated at a time (autoregressive)
+- Weights loaded once per token
+- Low arithmetic intensity: O(1/seq_len) scaling
+- **Optimization focus**: Quantization (FP8, INT4), KV cache compression, speculative decoding
+
+**Example calculation**: A 500B parameter model in BF16 (2 bytes) requires 1 TB of memory. On an H100 (3.35 TB/s), minimum intertoken latency is 1 TB / 3.35 TB/s ≈ **300 ms** if memory-bound. With batch size 100, arithmetic intensity increases 100×, potentially moving the workload toward compute-bound.
+
+## Interview Patterns
+
+### Pattern 1: "Is this kernel memory-bound or compute-bound?"
+
+**Answer framework**:
+1. Calculate arithmetic intensity
+2. Compare to ridge point
+3. State which roof applies
+
+**Example**: "This reduction kernel does 2N FLOPs over 8N bytes (4-byte floats, read+write). Arithmetic intensity is 0.25 FLOPs/byte. On H100 with ridge 295, this is 1000× below the ridge → memory-bound."
+
+### Pattern 2: "How does doubling N affect GEMM performance?"
+
+**Answer**: GEMM arithmetic intensity is N/6 FLOPs/byte. Doubling N doubles intensity. If N is small (left of ridge), performance scales linearly with N. If N is already large (right of ridge), performance plateaus at the compute roof.
+
+### Pattern 3: "Why is FlashAttention needed?"
+
+**Answer**: Standard attention has O(N²) memory complexity and O(N²) compute, giving O(1) arithmetic intensity. For long sequences, this is deeply memory-bound. FlashAttention tiles the attention computation, keeping intermediates in shared memory, reducing HBM traffic and increasing effective arithmetic intensity.
+
+## Nsight Compute: Automated Roofline Analysis
+
+NVIDIA's Nsight Compute profiler automatically generates roofline positioning for profiled kernels. Key workflow:
+
+```bash
+ncu --set full --export report.ncu-rep -o report ./kernel_binary
+```
+
+**Key metrics to look for**:
+- `sm__throughput.avg.pct_of_peak_sustained_elapsed`: SM active time as % of peak
+- `l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum`: Global memory load bytes
+- Roofline section: Shows kernel's position on the roofline plot
+- Compute Workload Analysis: Arithmetic intensity calculation
+- Memory Workload Analysis: Bandwidth utilization
+
+**Caveat**: Nsight Compute uses kernel replay passes to collect metrics, introducing 3-10× slowdown. Don't use it for accurate timing — use CUDA events for that.
+
+## Key Numbers Reference Table
+
+| Metric | A100 (BF16 TC) | H100 (BF16 TC) | B200 (BF16 TC) | H100 (FP8 TC) | B200 (FP8 TC) |
+|--------|---------------|---------------|---------------|--------------|--------------|
+| Arithmetic Bandwidth | 312 TFLOPS | 989 TFLOPS | 2250 TFLOPS | 1979 TFLOPS | 4500 TFLOPS |
+| Memory Bandwidth | 2.0 TB/s | 3.35 TB/s | 8.0 TB/s | 3.35 TB/s | 8.0 TB/s |
+| Ridge Point | 156 FLOPs/byte | 295 FLOPs/byte | 281 FLOPs/byte | 592 FLOPs/byte | 562 FLOPs/byte |
+| SAXPY Intensity | 0.17 FLOPs/byte | 0.17 FLOPs/byte | 0.17 FLOPs/byte | 0.17 FLOPs/byte | 0.17 FLOPs/byte |
+| SGEMM (N=1024) | 171 FLOPs/byte | 171 FLOPs/byte | 171 FLOPs/byte | 171 FLOPs/byte | 171 FLOPs/byte |
+| SGEMM (N=2048) | 341 FLOPs/byte | 341 FLOPs/byte | 341 FLOPs/byte | 341 FLOPs/byte | 341 FLOPs/byte |
+
+## Further Reading
+
+- **Original paper**: Williams, Waterman, and Patterson, "Roofline: An Insightful Visual Performance Model for Multicore Architectures," Communications of the ACM, 2008. [PDF](https://people.eecs.berkeley.edu/~kubitron/cs252/handouts/papers/RooflineVyNoYellow.pdf)
+- **CUDA Mode Lecture 1**: Profiling and the roofline model in practice
+- **Nsight Compute Documentation**: [Performance Metrics](https://docs.nvidia.com/nsight-compute/)
+- **PMPP Ch.6**: Performance considerations, including roofline analysis
+
+The roofline model is simple but powerful. Once you internalize the relationship between arithmetic intensity and bottleneck type, you can diagnose and optimize GPU kernels with precision.

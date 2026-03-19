@@ -1,0 +1,145 @@
+---
+slug: gpu-llm
+title: GPU Kernel Engineering for LLMs
+shortTitle: GPU for LLMs
+description: "Write the kernels that power production LLM inference. Attention, softmax fusion, LayerNorm, quantization, FlashAttention, and distributed GPU techniques."
+icon: "🤖"
+color: "#059669"
+order: 3
+difficulty: advanced
+estimatedHours: 30
+prerequisites:
+  - cuda-hpc
+previewNodes: 3
+nodes:
+  # ── Cluster 1: LLM Kernels ────────────────────────────────────────────────
+  - slug: attention
+    title: "Scaled Dot-Product Attention"
+    type: CONCEPT
+    cluster: llm-kernels
+    order: 1
+    difficulty: intermediate
+    estimatedMinutes: 40
+    prerequisites:
+      - thread-hierarchy
+    description: "Derive the O(N²) memory cost of materializing the attention matrix, explain why attention is memory-bound for long sequences despite its GEMM subproblems, and compare Multi-Head, Grouped-Query, and Multi-Query Attention tradeoffs for KV cache size."
+    interviewRelevance: high
+
+  - slug: fused-softmax
+    title: "Fused Online Softmax"
+    type: PROBLEM
+    cluster: llm-kernels
+    order: 2
+    difficulty: intermediate
+    estimatedMinutes: 90
+    prerequisites:
+      - reduce-sum
+      - roofline-model
+    description: "Implement a numerically stable per-row softmax kernel using the online algorithm (Milakov & Gimelshein 2018) that maintains running (max, sum) statistics in a single pass, reducing memory traffic from 3× to 2× per row."
+    interviewRelevance: high
+
+  - slug: layer-norm-kernel
+    title: "LayerNorm + Residual Fusion"
+    type: PROBLEM
+    cluster: llm-kernels
+    order: 3
+    difficulty: intermediate
+    estimatedMinutes: 60
+    prerequisites:
+      - fused-softmax
+      - bottleneck-analysis
+    description: "Implement a fused kernel that adds the residual stream and computes LayerNorm in one pass using Welford's online mean/variance algorithm, eliminating the intermediate global memory write of the unfused version."
+    interviewRelevance: high
+
+  - slug: kernel-fusion
+    title: "Kernel Fusion"
+    type: CONCEPT
+    cluster: llm-kernels
+    order: 4
+    difficulty: intermediate
+    estimatedMinutes: 30
+    prerequisites:
+      - layer-norm-kernel
+      - bottleneck-analysis
+    description: "Explain how fusing N memory-bound kernels into one reduces HBM traffic from N × X to X bytes, identify when fusion is profitable versus counter-productive due to register pressure, and contrast manual fusion with torch.compile and CUDA Graphs."
+    interviewRelevance: high
+
+  - slug: quantization-exercise
+    title: "INT8 Quantize/Dequantize Kernel"
+    type: PROBLEM
+    cluster: llm-kernels
+    order: 5
+    difficulty: intermediate
+    estimatedMinutes: 60
+    prerequisites:
+      - layer-norm-kernel
+      - tensor-cores
+    description: "Implement per-tensor and per-channel INT8 quantization kernels using absmax scaling and saturating cast to int8_t, with vectorized char4 loads and dequantization fused into an activation function."
+    interviewRelevance: high
+
+  - slug: flash-attention-impl
+    title: "FlashAttention Forward Pass"
+    type: PROBLEM
+    cluster: llm-kernels
+    order: 6
+    difficulty: advanced
+    estimatedMinutes: 300
+    prerequisites:
+      - attention
+      - fused-softmax
+      - gemm-optimization
+    description: "Implement the FA1 tiling algorithm from scratch: outer loop over Q blocks, inner loop over K/V blocks, online softmax rescaling of running (m, l, O) statistics, and final normalization, producing O(N) HBM traffic instead of O(N²)."
+    interviewRelevance: high
+
+  - slug: kv-cache-design
+    title: "KV Cache Design"
+    type: CONCEPT
+    cluster: llm-kernels
+    order: 7
+    difficulty: advanced
+    estimatedMinutes: 25
+    prerequisites:
+      - flash-attention-impl
+    description: "Explain why storing K and V for all previous tokens enables O(1)-per-step autoregressive decoding, calculate KV cache memory requirements for LLaMA-3 70B at various sequence lengths, and contrast paged KV (vLLM), GQA, and MQA tradeoffs."
+    interviewRelevance: high
+
+  - slug: tensor-parallelism
+    title: "Tensor Parallelism"
+    type: CONCEPT
+    cluster: llm-kernels
+    order: 8
+    difficulty: advanced
+    estimatedMinutes: 45
+    prerequisites:
+      - flash-attention-impl
+      - gemm-optimization
+    description: "Implement Megatron-LM column-parallel and row-parallel linear layers using the f/g conjugate all-reduce operators, achieving intra-layer model parallelism with only two all-reduces per transformer block in the forward pass."
+    interviewRelevance: high
+
+  - slug: zero-memory-opt
+    title: "ZeRO Distributed Memory Optimization"
+    type: CONCEPT
+    cluster: llm-kernels
+    order: 9
+    difficulty: advanced
+    estimatedMinutes: 45
+    prerequisites:
+      - tensor-parallelism
+    description: "Explain ZeRO Stages 1, 2, and 3 memory partitioning, derive the per-device memory formula (16Ψ/Nd bytes at Stage 3), and analyze the 50% communication overhead of Stage 3 vs standard data parallelism using reduce-scatter + all-gather decomposition."
+    interviewRelevance: high
+
+  - slug: hopper-tma-wgmma
+    title: "Hopper TMA & Warpgroup MMA"
+    type: ARTICLE
+    cluster: llm-kernels
+    order: 10
+    difficulty: expert
+    estimatedMinutes: 60
+    prerequisites:
+      - flash-attention-impl
+      - tensor-cores
+    description: "Read the FlashAttention-3 architecture: TMA descriptors replace scalar address loops with a hardware copy engine, WGMMA issues non-blocking 4-warp matrix multiplies, and warp specialization splits producer (TMA loads) and consumer (WGMMA) roles within a 128-thread CTA."
+    interviewRelevance: medium
+---
+
+GPU Kernel Engineering for LLMs — attention, fusion, quantization, FlashAttention, and distributed GPU.

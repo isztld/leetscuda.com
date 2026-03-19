@@ -1,0 +1,291 @@
+---
+slug: tensor-parallelism
+title: Tensor Parallelism
+track: gpu-llm
+type: concept
+cluster: llm-kernels
+difficulty: advanced
+estimatedMinutes: 45
+interviewRelevance: high
+tags:
+  - model-parallelism
+  - distributed-training
+  - nccl
+  - all-reduce
+  - megatron-lm
+status: published
+author: team
+sources:
+  - "papers/megatron-lm.pdf Section 3 Model Parallel Transformers"
+  - "llm.c/dev/cuda/nccl_all_reduce.cu"
+  - "Megatron-LM GitHub repository"
+---
+
+# Tensor Parallelism for Large Model Training
+
+## Why this matters for interviews
+
+Tensor parallelism is essential when training models that don't fit on a single GPU. If you're interviewing for roles in AI infrastructure, you'll be asked: "How do you train a 100B parameter model on 256 GPUs?" or "What's the difference between tensor parallelism and pipeline parallelism?"
+
+Understanding tensor parallelism requires grasping both the linear algebra (how to split a matrix multiply) and the distributed systems (how to coordinate GPUs with all-reduce). This is exactly the kind of cross-cutting knowledge that distinguishes senior engineers from staff/principal engineers.
+
+## The scaling problem: models don't fit on one GPU
+
+Modern LLMs have grown beyond single-GPU memory:
+- LLaMA-3 70B: 140 GB (FP16 weights alone)
+- GPT-4: Estimated 1+ trillion parameters
+- Training requires storing: weights + gradients + optimizer states + activations
+
+For training in FP16 with Adam optimizer:
+- Weights: 2 bytes × params
+- Gradients: 2 bytes × params
+- Optimizer states (momentum + variance): 8 bytes × params
+- Total: ~12 bytes per parameter
+
+A 70B model needs ~840 GB just for training state. This is why we need distributed training across multiple GPUs.
+
+## Three strategies for distributed training
+
+**Data parallelism**: Replicate the model on all GPUs; each GPU sees different data; gradients are all-reduced. Good for scaling batch size, but doesn't help if the model doesn't fit.
+
+**Pipeline parallelism**: Split the model by layers (e.g., layers 1-10 on GPU 1, layers 11-20 on GPU 2). Each GPU processes different micro-batches at different pipeline stages. Introduces pipeline bubbles (idle time).
+
+**Tensor parallelism**: Split each layer across GPUs. Each operation (e.g., matrix multiply) is computed in parallel, with synchronization at boundaries. No pipeline bubbles, but high communication overhead.
+
+Megatron-LM uses **tensor parallelism within a node** (NVLink bandwidth) and **pipeline parallelism across nodes** (InfiniBand bandwidth).
+
+## Column-row parallel linear layers
+
+The core insight of tensor parallelism: split the weight matrix of a linear layer, compute in parallel, then combine with all-reduce.
+
+### Column-parallel linear
+
+For Y = GeLU(XA), where A has shape [hidden, output]:
+
+```
+Split A column-wise: A = [A1 | A2]
+A1 has shape [hidden, output/2]
+A2 has shape [hidden, output/2]
+
+GPU 1 computes: Y1 = GeLU(X @ A1)
+GPU 2 computes: Y2 = GeLU(X @ A2)
+
+Result: Y = [Y1 | Y2] (concatenated)
+```
+
+Key observation: **no synchronization needed** before GeLU. Each GPU can apply GeLU independently because GeLU is element-wise. The result is the same as if we computed Y = GeLU(X @ A) on a single GPU.
+
+### Row-parallel linear
+
+For Z = YB, where B has shape [output, hidden] and Y is already sharded:
+
+```
+Split B row-wise: B = [B1; B2]
+B1 has shape [output/2, hidden]
+B2 has shape [output/2, hidden]
+
+GPU 1 computes: Z1 = Y1 @ B1
+GPU 2 computes: Z2 = Y2 @ B2
+
+Then: Z = Z1 + Z2 (all-reduce)
+```
+
+Notice the math:
+```
+Y @ B = [Y1 | Y2] @ [B1; B2]
+      = Y1 @ B1 + Y2 @ B2
+      = Z1 + Z2
+```
+
+The all-reduce combines partial sums. Each GPU ends up with the full Z tensor.
+
+### The conjugate pair
+
+Column-parallel followed by row-parallel is a conjugate pair:
+- Column-parallel: no all-reduce before non-linearity
+- Row-parallel: one all-reduce after the linear
+
+This pattern appears in the MLP block:
+```
+FFN(X) = RowParallel( GeLU( ColParallel(X) ) )
+       = all_reduce( GeLU( X @ A1 ) @ B1 + GeLU( X @ A2 ) @ B2 )
+```
+
+## Self-attention with tensor parallelism
+
+Self-attention splits naturally by head:
+
+```
+Q = X @ W_Q    (shape: [seq, num_heads × d_k])
+K = X @ W_K
+V = X @ W_V
+
+Split W_Q, W_K, W_V column-wise by head:
+  GPU 1 handles heads 0..h/2-1
+  GPU 2 handles heads h/2..h-1
+
+Each GPU computes attention independently on its heads.
+
+Output projection W_O is row-parallel (all-reduce after).
+```
+
+This is efficient because attention between different heads is independent. Each GPU only needs to communicate at the output projection.
+
+## f and g: conjugate all-reduce operators
+
+Megatron-LM introduces a clever abstraction using PyTorch autograd:
+
+**f operator** (used at start of model-parallel region):
+- Forward: identity (pass X through unchanged)
+- Backward: all-reduce(gradient)
+
+**g operator** (used at end of model-parallel region):
+- Forward: all-reduce (combine partial results)
+- Backward: identity (pass gradient through unchanged)
+
+Why does this work? Consider the chain rule:
+
+For f (column-parallel input):
+```
+Forward: Y = X (identity, then split and compute)
+Backward: dX = all_reduce(dY)  # gradients from all GPUs sum up
+```
+
+For g (row-parallel output):
+```
+Forward: Z = all_reduce(Z1, Z2)  # combine partial results
+Backward: dY = dZ  # same gradient goes to all GPUs (identity)
+```
+
+The all-reduce in f's backward and g's forward are conjugates: one happens in forward, one in backward, never both at the same time.
+
+### Implementation (10 lines of PyTorch)
+
+```python
+class f(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        return x  # identity
+    @staticmethod
+    def backward(ctx, grad_output):
+        return all_reduce(grad_output)  # sum gradients
+
+class g(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        return all_reduce(x)  # sum partial results
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output  # identity
+```
+
+### Communication cost
+
+For a transformer block with tensor parallelism:
+- MLP: 1 all-reduce (between the two linear layers)
+- Self-attention: 1 all-reduce (at output projection)
+- **Total: 2 all-reduces per layer in forward pass**
+- **Total: 2 all-reduces per layer in backward pass**
+
+This is optimal. You can't reduce the number of all-reduces further without changing the math.
+
+## Performance: when tensor parallelism shines
+
+### Within-node vs cross-node
+
+All-reduce scales well within a node (NVLink):
+- NVLink bandwidth: 900 GB/s (H100)
+- 8 GPUs can all-reduce in milliseconds
+
+All-reduce is slow across nodes (InfiniBand):
+- InfiniBand bandwidth: 100-400 Gb/s = 12-50 GB/s
+- 100x slower than NVLink
+
+**Megatron-LM strategy**:
+- Tensor parallelism **within** a node (8-way max)
+- Pipeline parallelism **across** nodes
+
+### Efficiency numbers
+
+Megatron-LM paper results (512 V100 GPUs):
+- 8-way tensor parallelism: 94% efficiency
+- 16-way tensor parallelism: 85% efficiency
+- 32-way tensor parallelism: 76% efficiency
+
+Efficiency drops because:
+1. All-reduce overhead grows with GPU count
+2. Smaller per-GPU batch size reduces compute utilization
+3. Memory bandwidth becomes the bottleneck
+
+For production training:
+- Use 4-8 way tensor parallelism
+- Use pipeline parallelism for larger models
+- Consider 3D parallelism: data + tensor + pipeline
+
+## Common misconceptions
+
+❌ **Wrong**: "Tensor parallelism and pipeline parallelism are the same"
+
+✓ **Correct**: Tensor parallelism splits **within a layer** (e.g., a matrix multiply across GPUs). Pipeline parallelism splits **across layers** (e.g., layers 1-20 on GPU 1, layers 21-40 on GPU 2). Tensor parallelism has no pipeline bubbles but high communication. Pipeline parallelism has bubbles but less frequent communication.
+
+❌ **Wrong**: "All-reduce must happen at every layer boundary"
+
+✓ **Correct**: Megatron-LM fuses two GEMMs to reduce to **one all-reduce per block** (not per layer). The column-parallel and row-parallel pair needs only one all-reduce between them. A transformer block has 2 such pairs (MLP + attention), so 2 all-reduces total.
+
+❌ **Wrong**: "Tensor parallelism works well across nodes"
+
+✓ **Correct**: Tensor parallelism is limited to **within a node** due to all-reduce bandwidth requirements. Beyond ~8 GPUs, pipeline parallelism or 3D parallelism is needed. Cross-node all-reduce over InfiniBand is 10-100x slower than NVLink.
+
+## Interview patterns
+
+**Question 1**: "Explain how to implement a tensor-parallel linear layer."
+
+**Answer**: Split the weight matrix. For column-parallel, each GPU computes Y_i = X @ W_i independently. For row-parallel, each GPU computes Z_i = Y_i @ W_i, then all-reduce to get Z = sum(Z_i). Use f/g operators to place all-reduce correctly in forward/backward.
+
+**Question 2**: "Why does column-parallel linear not need all-reduce before GeLU?"
+
+**Answer**: GeLU is element-wise. Computing GeLU on Y1 = X @ W1 and Y2 = X @ W2 independently gives the same result as GeLU on Y = X @ [W1 | W2]. No communication needed until the row-parallel layer.
+
+**Question 3**: "What's the communication cost of tensor-parallel transformer block?"
+
+**Answer**: 2 all-reduces in forward (one after MLP, one after attention), 2 all-reduces in backward. Each all-reduce communicates the full hidden state size. For hidden=4096, FP16: 4096 × 2 bytes = 8 KB per all-reduce.
+
+**Question 4**: "When would you use tensor parallelism vs pipeline parallelism?"
+
+**Answer**: Use tensor parallelism within a node (up to 8 GPUs) for low-latency training. Use pipeline parallelism across nodes for very large models. Combine both in 3D parallelism with data parallelism.
+
+**Question 5**: "Implement the f operator in PyTorch."
+
+**Answer**:
+```python
+class f(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        return x
+    @staticmethod
+    def backward(ctx, grad_output):
+        return nccl_all_reduce(grad_output, op=SUM)
+```
+
+## Key numbers reference
+
+| Configuration | All-reduce bandwidth | Max practical TP | Efficiency |
+|---------------|---------------------|------------------|------------|
+| NVLink (H100) | 900 GB/s | 8-way | 94% |
+| InfiniBand HDR | 200 Gb/s = 25 GB/s | 2-way | 60% |
+| Ethernet 100GbE | 12.5 GB/s | 1-way (no TP) | N/A |
+
+| Model size | Min GPUs (FP16 + Adam) | Recommended TP | Recommended PP |
+|------------|------------------------|----------------|----------------|
+| 7B | 1 × A100 (80 GB) | 1 | 1 |
+| 70B | 8 × A100 (80 GB) | 4 | 2 |
+| 175B (GPT-3) | 16 × A100 | 4 | 4 |
+| 1T+ | 256+ × H100 | 8 | 32 |
+
+## Further reading
+
+- **Megatron-LM paper** (Shoeybi et al. 2019) — Original tensor parallelism formulation
+- **Megatron-LM GitHub** — Production implementation with f/g operators
+- **NCCL documentation** — All-reduce algorithms and performance tuning
+- **llm.c nccl_all_reduce.cu** — Minimal NCCL example for multi-GPU communication
+- **DeepSpeed documentation** — ZeRO optimization complementary to tensor parallelism

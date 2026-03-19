@@ -4,7 +4,7 @@ export const ProblemFrontmatterSchema = z
   .object({
     slug: z.string().min(1).regex(/^[a-z0-9-]+$/, 'slug must be lowercase alphanumeric with hyphens'),
     title: z.string().min(1),
-    track: z.enum(['cuda', 'ml-systems', 'kubernetes-ai', 'foundations']),
+    track: z.enum(['cuda-core', 'cuda-hpc', 'gpu-llm', 'ml-systems', 'kubernetes-ai', 'foundations']),
     difficulty: z.enum(['easy', 'medium', 'hard']),
     xp: z.number().int().positive(),
     runtime: z.enum(['cpp', 'cuda', 'k8s']),

@@ -1,0 +1,516 @@
+---
+slug: tensor-core-gemm
+title: HGEMM with WMMA Tensor Core API
+track: cuda-hpc
+difficulty: hard
+tags:
+  - tensor-cores
+  - wmma
+  - mixed-precision
+  - gemm
+  - half-precision
+status: published
+author: team
+xp: 400
+runtime: cuda
+cpp_standard: "17"
+cuda_version: "12.6"
+compute_cap: "sm_120"
+---
+
+## Background
+
+Tensor Cores are specialized matrix multiply units introduced in NVIDIA's Volta architecture (SM70) that can perform a 16×16×16 matrix multiply-accumulate in a single instruction. While a traditional CUDA core executes one FP32 multiply-add per cycle, a Tensor Core executes 16×16×16 = 4096 FLOPs per warp per instruction — a 128× throughput multiplier for suitable workloads.
+
+The **WMMA API** (Warp Matrix Multiply Accumulate) is the CUDA C++ interface for Tensor Cores. It abstracts the complexity of fragment distribution across warp threads, exposing three core operations: `wmma::load_matrix_sync()`, `wmma::mma_sync()`, and `wmma::store_matrix_sync()`. The API requires matrices to be loaded into register fragments, but the fragment layout is **opaque** — you cannot directly index into a fragment; you must use the provided APIs.
+
+**Why mixed precision?** Tensor Cores operate on low-precision inputs (FP16, BF16, TF32, INT8) but accumulate in FP32. This tradeoff is intentional: FP16 has 11 bits of precision (5-bit exponent, 10-bit mantissa) vs FP32's 24 bits, but modern models use BF16 (8-bit exponent, 7-bit mantissa) which preserves FP32's dynamic range while halving memory traffic. The accumulation in FP32 prevents the catastrophic underflow that would occur with pure FP16 accumulation.
+
+**The challenge:** Implementing a Tensor Core GEMM requires understanding three levels of tiling:
+1. **Grid-level**: Each thread block computes a tile of the output matrix
+2. **Warp-level**: Each warp within a block computes a subtile using WMMA's m16n16k16 fragment shape
+3. **Thread-level**: Each thread in the warp holds a fragment of the matrix (16 elements for m16n16k16 with row_major layout)
+
+Unlike the tiled SGEMM where you explicitly manage shared memory, WMMA adds another layer: **shared memory is optional**. The reference cudaTensorCoreGemm sample uses shared memory to avoid random global memory accesses during the inner loop, but a naive implementation could load directly from global memory — at the cost of massive memory traffic.
+
+## What to Implement
+
+Implement `hgemm`, a half-precision GEMM kernel using the WMMA API. Compute `D = α × A × B + β × C` where:
+- A is M×K, stored in **row-major** order (FP16)
+- B is K×N, stored in **column-major** order (FP16)
+- C and D are M×N, stored in **row-major** order (FP32)
+- α and β are scalar floats (use α=1.0f, β=0.0f for the basic variant)
+
+**Thread-block configuration**: Use 8 warps per block (256 threads). Each block computes a 128×128 output tile.
+
+**Warp configuration**: Each warp computes a 16×16 WMMA fragment. With 8 warps arranged as 2×4, you get 2×4 = 8 fragments per block tile (2 warps vertically × 4 warps horizontally = 128×128).
+
+**Algorithm** (per block):
+
+1. **Load C tile from global to shared memory** (if β ≠ 0). Each warp loads its 16×16 subtile.
+2. **Initialize accumulator fragment** with `fill_fragment(acc, 0.0f)`.
+3. **Loop over K dimension in steps of 16**:
+   - Each warp loads its fragment of A (from shared memory, row-major) and B (from shared memory, column-major) using `load_matrix_sync()`.
+   - Perform `mma_sync(acc, a_frag, b_frag, acc)` — this accumulates A×B into acc.
+   - `__syncthreads()` after loading all warps' fragments.
+4. **Scale accumulator by α** and store to shared memory with `store_matrix_sync()`.
+5. **Stream result from shared memory to global memory D**.
+
+**Key insight from cudaTensorCoreGemm.cu**: The A matrix is loaded row-major and B matrix column-major into the WMMA fragments. This matches the mathematical formulation of C = A×B where A is row-major and B is column-major. If your matrices are both row-major, you must transpose B before passing it to the kernel, or swap the A/B roles in the WMMA call (which requires careful dimension swapping).
+
+**Starter code hints**:
+```cpp
+#include <mma.h>
+using namespace nvcuda::wmma;
+
+// Fragment declarations (inside kernel, per warp)
+fragment<matrix_a, 16, 16, 16, half, row_major> a_frag;
+fragment<matrix_b, 16, 16, 16, half, col_major> b_frag;
+fragment<accumulator, 16, 16, 16, float> acc_frag;
+
+// Load matrices
+load_matrix_sync(a_frag, A_ptr, leading_dimension);
+load_matrix_sync(b_frag, B_ptr, leading_dimension);
+
+// Matrix multiply-accumulate
+mma_sync(acc_frag, a_frag, b_frag, acc_frag);
+
+// Store result
+store_matrix_sync(D_ptr, acc_frag, leading_dimension, row_major);
+```
+
+## Constraints
+
+- `M`, `N`, `K` are multiples of 16
+- `16 ≤ M, N, K ≤ 2048`
+- Input matrices A and B are FP16 (half); output C is FP32 (float)
+- Use `cudaMallocAsync` for memory allocation
+- Use `half` from `<cuda_fp16.h>` for FP16 storage
+- Do not modify the host code in `solve()`
+- Your kernel must be compatible with sm_80 (Ampere) and higher
+
+## Example
+
+**Input**: M=16, N=16, K=16, A = all 1.0 (FP16), B = all 1.0 (FP16), C = all 0.0 (FP32)
+
+**Output**: D is 16×16 matrix where each element is 16.0 (because 16 elements × 1.0 × 1.0 = 16.0)
+
+Because: D[i][j] = Σ(k=0..15) A[i][k] × B[k][j] = 16 × 1.0 × 1.0 = 16.0
+
+---starter-code---
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#include <mma.h>
+
+using namespace nvcuda::wmma;
+
+#define WMMA_M 16
+#define WMMA_N 16
+#define WMMA_K 16
+#define BLOCK_M 128
+#define BLOCK_N 128
+#define WARPS_PER_BLOCK 8
+#define THREADS_PER_BLOCK (WARPS_PER_BLOCK * 32)
+
+// TODO: Implement HGEMM using WMMA API.
+// Compute D = alpha * A * B + beta * C
+// A: M×K row-major FP16, B: K×N column-major FP16
+// C, D: M×N row-major FP32
+__global__ void hgemm(
+    const half* __restrict__ A,
+    const half* __restrict__ B,
+    float* __restrict__ C,
+    float* __restrict__ D,
+    float alpha, float beta,
+    int M, int N, int K
+) {
+    // Thread-block identification
+    const int tid = threadIdx.x;
+    const int warpId = tid / 32;
+    const int laneId = tid % 32;
+
+    // Block tile offsets
+    const int blockRow = blockIdx.y;
+    const int blockCol = blockIdx.x;
+
+    // Warp tile offsets within block
+    const int warpRow = warpId / 4;  // 0..1
+    const int warpCol = warpId % 4;  // 0..3
+
+    // Shared memory for C tile (optional if beta != 0)
+    // TODO: Declare shared memory and load C tile if needed
+
+    // TODO: Initialize accumulator fragment
+
+    // TODO: Loop over K dimension and perform WMMA mma_sync
+
+    // TODO: Store result to D
+}
+
+// Do NOT modify below this line.
+void solve(const half* h_A, const half* h_B, float* h_C, int M, int N, int K) {
+    half *d_A, *d_B;
+    float *d_C;
+    size_t bytesA = (size_t)M * K * sizeof(half);
+    size_t bytesB = (size_t)K * N * sizeof(half);
+    size_t bytesC = (size_t)M * N * sizeof(float);
+
+    cudaMallocAsync(&d_A, bytesA);
+    cudaMallocAsync(&d_B, bytesB);
+    cudaMallocAsync(&d_C, bytesC);
+
+    cudaMemcpyAsync(d_A, h_A, bytesA, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_B, h_B, bytesB, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_C, h_C, bytesC, cudaMemcpyHostToDevice);
+
+    dim3 grid(N / BLOCK_N, M / BLOCK_M);
+    dim3 block(THREADS_PER_BLOCK);
+    hgemm<<<grid, block>>>(d_A, d_B, d_C, d_C, 1.0f, 0.0f, M, N, K);
+
+    cudaMemcpyAsync(h_C, d_C, bytesC, cudaMemcpyDeviceToHost);
+    cudaFreeAsync(d_A);
+    cudaFreeAsync(d_B);
+    cudaFreeAsync(d_C);
+}
+
+---test-cases---
+- name: "Zero matrices"
+  input: "16 16 16\nfill:0.0\nfill:0.0"
+  expected: "fill:256:0.0"
+- name: "Ones times ones"
+  input: "16 16 16\nfill:1.0\nfill:1.0"
+  expected: "fill:256:16.0"
+- name: "Correctness vs cuBLAS"
+  input: "verify 128"
+  expected: "1"
+- name: "Larger matrix"
+  input: "verify 256"
+  expected: "1"
+
+---solution---
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#include <mma.h>
+
+using namespace nvcuda::wmma;
+
+#define WMMA_M 16
+#define WMMA_N 16
+#define WMMA_K 16
+#define BLOCK_M 128
+#define BLOCK_N 128
+#define BLOCK_K 16
+#define WARPS_PER_BLOCK 8
+#define THREADS_PER_BLOCK (WARPS_PER_BLOCK * 32)
+#define SKEW 16  // Avoid shared memory bank conflicts
+
+extern __shared__ char shmem_raw[];
+
+__global__ void hgemm(
+    const half* __restrict__ A,
+    const half* __restrict__ B,
+    float* __restrict__ C,
+    float* __restrict__ D,
+    float alpha, float beta,
+    int M, int N, int K
+) {
+    const int tid = threadIdx.x;
+    const int warpId = threadIdx.x / 32;
+    const int laneId = threadIdx.x % 32;
+    const int blockRow = blockIdx.y;
+    const int blockCol = blockIdx.x;
+    const int warpRow = warpId / 4;
+    const int warpCol = warpId % 4;
+
+    // Shared memory layout:
+    // sA: 128 x BLOCK_K x 2 (row-major, with skew)
+    // sB: 128 x BLOCK_K x 2 (col-major stored as row-major with skew)
+    // sC: 128 x 128 x 4 (float)
+    half* sA = reinterpret_cast<half*>(shmem_raw);
+    half* sB = reinterpret_cast<half*>(shmem_raw + BLOCK_M * BLOCK_K * 2 + SKEW * 2);
+    float* sC = reinterpret_cast<float*>(shmem_raw + (BLOCK_M * BLOCK_K * 2 + SKEW * 2) * 2);
+
+    // Thread-block and warp tile offsets
+    const int threadRow = warpRow * WMMA_M;
+    const int threadCol = warpCol * WMMA_N;
+
+    // Global memory pointers for this block
+    const half* A_block = A + blockRow * BLOCK_M * K;
+    const half* B_block = B + blockCol * BLOCK_N;
+    float* C_block = C + (blockRow * BLOCK_M) * N + blockCol * BLOCK_N;
+    float* D_block = D + (blockRow * BLOCK_M) * N + blockCol * BLOCK_N;
+
+    // Load C tile from global to shared memory (for beta != 0)
+    if (beta != 0.0f) {
+        float* c_load = sC + threadRow * BLOCK_M + threadCol;
+        for (int i = laneId; i < WMMA_M * WMMA_N; i += 32) {
+            int r = i / WMMA_N;
+            int c = i % WMMA_N;
+            c_load[r * BLOCK_N + c] = C_block[(threadRow + r) * N + (threadCol + c)];
+        }
+    } else {
+        // Initialize sC if beta == 0
+        for (int i = laneId; i < WMMA_M * WMMA_N; i += 32) {
+            int r = i / WMMA_N;
+            int c = i % WMMA_N;
+            sC[(threadRow + r) * BLOCK_N + (threadCol + c)] = 0.0f;
+        }
+    }
+    __syncthreads();
+
+    // Declare fragments
+    fragment<matrix_a, WMMA_M, WMMA_N, WMMA_K, half, row_major> a_frag;
+    fragment<matrix_b, WMMA_M, WMMA_N, WMMA_K, half, col_major> b_frag;
+    fragment<accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
+
+    // Initialize accumulator
+    fill_fragment(acc_frag, 0.0f);
+
+    // Loop over K dimension
+    for (int k = 0; k < K; k += BLOCK_K) {
+        __syncthreads();
+
+        // Each warp loads its portion of A and B into shared memory
+        // Warps 0-3 load A, warps 4-7 load B
+        if (warpId < 4) {
+            // Load A: warp row loads rows [warpId*16, (warpId+1)*16)
+            int warpA_row = warpId * WMMA_M;
+            for (int i = laneId; i < WMMA_M * BLOCK_K; i += 32) {
+                int r = i / BLOCK_K;
+                int c = i % BLOCK_K;
+                int globalRow = blockRow * BLOCK_M + warpA_row + r;
+                sA[(warpA_row + r) * (BLOCK_K + SKEW) + c] = A_block[globalRow * K + k + c];
+            }
+        } else {
+            // Load B: warp col loads columns [(warpId-4)*16, (warpId-3)*16)
+            int warpB_col = (warpId - 4) * WMMA_N;
+            for (int i = laneId; i < BLOCK_K * WMMA_N; i += 32) {
+                int r = i / WMMA_N;
+                int c = i % WMMA_N;
+                int globalCol = blockCol * BLOCK_N + warpB_col + c;
+                sB[(warpB_col + c) * (BLOCK_K + SKEW) + r] = B_block[(k + r) * N + globalCol];
+            }
+        }
+        __syncthreads();
+
+        // Load fragments from shared memory and perform MMA
+        // Each warp loads its A and B fragments
+        const half* a_ptr = sA + threadRow * (BLOCK_K + SKEW);
+        const half* b_ptr = sB + threadCol * (BLOCK_K + SKEW);
+
+        load_matrix_sync(a_frag, a_ptr, BLOCK_K + SKEW);
+        load_matrix_sync(b_frag, b_ptr, BLOCK_K + SKEW);
+
+        mma_sync(acc_frag, a_frag, b_frag, acc_frag);
+    }
+
+    // Scale and store to shared memory
+    for (int i = 0; i < acc_frag.num_elements; i++) {
+        acc_frag.x[i] *= alpha;
+    }
+
+    float* acc_shared = sC + threadRow * BLOCK_M + threadCol;
+    store_matrix_sync(acc_shared, acc_frag, BLOCK_M, row_major);
+    __syncthreads();
+
+    // Stream result to global memory
+    float* c_store = sC + threadRow * BLOCK_M + threadCol;
+    for (int i = laneId; i < WMMA_M * WMMA_N; i += 32) {
+        int r = i / WMMA_N;
+        int c = i % WMMA_N;
+        D_block[(threadRow + r) * N + (threadCol + c)] = c_store[r * BLOCK_N + c];
+    }
+}
+
+void solve(const half* h_A, const half* h_B, float* h_C, int M, int N, int K) {
+    half *d_A, *d_B;
+    float *d_C;
+    size_t bytesA = (size_t)M * K * sizeof(half);
+    size_t bytesB = (size_t)K * N * sizeof(half);
+    size_t bytesC = (size_t)M * N * sizeof(float);
+
+    cudaMallocAsync(&d_A, bytesA);
+    cudaMallocAsync(&d_B, bytesB);
+    cudaMallocAsync(&d_C, bytesC);
+
+    cudaMemcpyAsync(d_A, h_A, bytesA, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_B, h_B, bytesB, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_C, h_C, bytesC, cudaMemcpyHostToDevice);
+
+    // Shared memory: sA (128 x 176 x 2) + sB (128 x 176 x 2) + sC (128 x 128 x 4)
+    // = 45056 + 45056 + 65536 = 155648 bytes
+    size_t shmemSize = (BLOCK_M * (BLOCK_K + SKEW) * 2 +
+                        BLOCK_M * (BLOCK_K + SKEW) * 2 +
+                        BLOCK_M * BLOCK_M * 4) * sizeof(float);
+
+    cudaFuncSetAttribute(hgemm, cudaFuncAttributeMaxDynamicSharedMemorySize, shmemSize);
+
+    dim3 grid(N / BLOCK_N, M / BLOCK_M);
+    dim3 block(THREADS_PER_BLOCK);
+    hgemm<<<grid, block, shmemSize>>>(d_A, d_B, d_C, d_C, 1.0f, 0.0f, M, N, K);
+
+    cudaMemcpyAsync(h_C, d_C, bytesC, cudaMemcpyDeviceToHost);
+    cudaFreeAsync(d_A);
+    cudaFreeAsync(d_B);
+    cudaFreeAsync(d_C);
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#include <cublas_v2.h>
+
+// Declare solve() from problem file
+extern void solve(const half* h_A, const half* h_B, float* h_C, int M, int N, int K);
+
+// Read matrix: either "fill:X" or space-separated values
+static void readMatrixHalf(std::vector<half>& m, int size) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float v = atof(tok + 5);
+        for (int i = 0; i < size; i++) m[i] = __float2half(v);
+    } else {
+        m[0] = __float2half(atof(tok));
+        for (int i = 1; i < size; i++) scanf("%f", &m[i]);
+        // Note: input is read as float, convert to half
+    }
+}
+
+static void readMatrixFloat(std::vector<float>& m, int size) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float v = atof(tok + 5);
+        for (int i = 0; i < size; i++) m[i] = v;
+    } else {
+        m[0] = atof(tok);
+        for (int i = 1; i < size; i++) scanf("%f", &m[i]);
+    }
+}
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        int N;
+        scanf("%d", &N);
+        int M = N, K = N;
+
+        // Generate test matrices
+        std::vector<half> hA(M * K), hB(K * N);
+        std::vector<float> hC_ref(M * N, 0.0f);
+
+        for (int i = 0; i < M * K; i++) {
+            hA[i] = __float2half((float)((i % 5) + 1));
+        }
+        for (int i = 0; i < K * N; i++) {
+            hB[i] = __float2half((float)((i % 3) + 1));
+        }
+
+        // Compute reference using cuBLAS
+        cublasHandle_t handle;
+        cublasCreate(&handle);
+        float alpha = 1.0f, beta = 0.0f;
+
+        // cuBLAS uses column-major, so we compute C^T = B^T @ A^T
+        // which means we need to swap A and B and their dimensions
+        cublasGemmEx(handle,
+            CUBLAS_OP_N, CUBLAS_OP_N,
+            N, N, N,
+            &alpha,
+            hB.data(), CUDA_R_16F, N,
+            hA.data(), CUDA_R_16F, N,
+            &beta,
+            hC_ref.data(), CUDA_R_16F, N,
+            CUBLAS_COMPUTE_32F,
+            CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+        cublasDestroy(handle);
+
+        // Run our implementation
+        std::vector<float> hC(M * N);
+        solve(hA.data(), hB.data(), hC.data(), M, N, K);
+
+        // Compare
+        bool ok = true;
+        float tol = 1.0f;  // FP16 has limited precision
+        for (int i = 0; i < M * N && ok; i++) {
+            float diff = fabsf(hC[i] - hC_ref[i]);
+            if (diff > tol * fabsf(hC_ref[i]) + 0.1f) {
+                ok = false;
+            }
+        }
+        printf("%d\n", ok ? 1 : 0);
+    } else {
+        int M = atoi(first);
+        int N, K;
+        scanf("%d %d", &N, &K);
+
+        std::vector<half> hA(M * K), hB(K * N);
+        readMatrixHalf(hA, M * K);
+        readMatrixHalf(hB, K * N);
+
+        std::vector<float> hC(M * N);
+        solve(hA.data(), hB.data(), hC.data(), M, N, K);
+
+        for (int i = 0; i < M * N; i++) {
+            if (i) printf(" ");
+            printf("%.1f", hC[i]);
+        }
+        printf("\n");
+    }
+    return 0;
+}
+
+---editorial---
+## Approach
+
+The WMMA API provides a high-level interface for Tensor Core computation. The key challenge is understanding how data flows through the pipeline:
+
+1. **Data layout**: WMMA expects specific layouts. For m16n16k16, the A matrix is row-major, B matrix is column-major, and the accumulator (C/D) is row-major. This matches the mathematical formula C = A×B.
+
+2. **Fragment distribution**: A WMMA fragment is distributed across 32 threads in a warp. For m16n16k16 with row_major layout, each thread holds 16 elements. You cannot directly access these elements; you must use `load_matrix_sync` and `store_matrix_sync`.
+
+3. **Shared memory usage**: While the simple `simple_wmma_gemm` in cudaTensorCoreGemm.cu loads directly from global memory, this is inefficient. The production `compute_gemm` kernel uses shared memory to:
+   - Avoid random global memory accesses in the inner loop
+   - Enable coalesced loads from global to shared
+   - Reuse data across warp loads
+
+4. **Bank conflict mitigation**: The SKEW constant (16 half-elements = 32 bytes) shifts matrix rows to reduce shared memory bank conflicts when warps load non-contiguous rows.
+
+## Complexity
+
+- **Global memory reads**: O(MNK / 16) for FP16 matrices, with 128-byte coalesced loads
+- **Shared memory per block**: ~156 KB (sA: 45KB, sB: 45KB, sC: 65KB)
+- **Register pressure**: Each thread holds ~16 floats for the accumulator fragment
+- **Arithmetic intensity**: 2×MNK FLOPs / (2×MNK bytes for FP16 inputs + 4×MNK bytes for FP32 output) ≈ MNK / (3×MNK) = 1/3 FLOPs/byte for the kernel alone
+
+## Key Insights
+
+1. **Fragment opacity**: You cannot iterate over fragment elements with meaningful indices. The fragment is a compiler-internal data structure. Use `num_elements` for iteration but don't assume any particular layout.
+
+2. **Column-major B**: WMMA expects B in column-major. If your matrices are row-major (like typical deep learning frameworks), you have three options:
+   - Transpose B before calling the kernel
+   - Use the cuBLAS trick: C = A×B ↔ C^T = B^T×A^T (swap A and B roles, swap dimensions)
+   - Accept the performance penalty of loading in non-optimal order
+
+3. **Syncthreads placement**: The `__syncthreads()` after shared memory loads is critical. Without it, warps starting the MMA operation might read stale data from warps still loading.
+
+## Common Mistakes
+
+- **❌ Using FP32 for A and B**: Tensor Cores only accept FP16/BF16/TF32 inputs. Using FP32 will compile but won't use Tensor Cores.
+
+- **❌ Wrong leading dimension in load_matrix_sync**: The leading dimension must match the shared memory layout, not the original matrix dimensions. For skewed shared memory, use `BLOCK_K + SKEW`.
+
+- **❌ Forgetting to scale by alpha**: The WMMA `mma_sync` only accumulates. You must manually scale the result by alpha before storing.
+
+- **❌ Assuming fragment element order**: The fragment's internal layout is opaque. Iterating with `for (int i = 0; i < num_elements; i++)` works for scaling but not for reading specific matrix elements.
+
+- **❌ Insufficient shared memory**: The default 48 KB per block on modern GPUs may not be enough for large tile sizes. Use `cudaFuncSetAttribute` to request more.
+
+---end---

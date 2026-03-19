@@ -1,0 +1,92 @@
+---
+slug: cuda-hpc
+title: CUDA for High Performance Computing
+shortTitle: HPC & Linear Algebra
+description: "Deep-dive into high-performance matrix math on GPU. Tiling hierarchies, Tensor Cores, cuBLAS, and CUTLASS for production-grade GEMM kernels."
+icon: "🔢"
+color: "#0891B2"
+order: 2
+difficulty: intermediate-to-advanced
+estimatedHours: 20
+prerequisites:
+  - cuda-core
+previewNodes: 3
+nodes:
+  # ── Cluster 1: Linear Algebra ─────────────────────────────────────────────
+  - slug: gemm-fundamentals
+    title: "GEMM Fundamentals & Tiling"
+    type: CONCEPT
+    cluster: linear-algebra
+    order: 1
+    difficulty: intermediate
+    estimatedMinutes: 40
+    prerequisites:
+      - thread-hierarchy
+    description: "Derive the arithmetic intensity of GEMM as O(N) FLOPs/byte for N×N matrices, identify the ridge point where GEMM transitions from memory-bound to compute-bound, and understand the three-level tiling hierarchy (grid → warp → thread) that high-performance GEMM implementations use."
+    interviewRelevance: high
+
+  - slug: tensor-cores
+    title: "Tensor Cores & WMMA API"
+    type: CONCEPT
+    cluster: linear-algebra
+    order: 2
+    difficulty: advanced
+    estimatedMinutes: 45
+    prerequisites:
+      - gemm-fundamentals
+      - compute-capability
+    description: "Understand how Tensor Cores perform warp-wide MMA operations that deliver 15× more FLOPs/cycle than CUDA Cores, use the WMMA API (wmma::load_matrix_sync / mma_sync / store_matrix_sync) for m16n16k16 FP16 GEMMs, and contrast WMMA with Hopper's asynchronous WGMMA instructions."
+    interviewRelevance: high
+
+  - slug: cublas-integration
+    title: "cuBLAS GEMM Integration"
+    type: PROBLEM
+    cluster: linear-algebra
+    order: 3
+    difficulty: intermediate
+    estimatedMinutes: 45
+    prerequisites:
+      - gemm-fundamentals
+    description: "Call cublasGemmEx with FP16 inputs and FP32 accumulation, handle the column-major convention with the A↔B transpose trick, and benchmark peak throughput against a custom tiled kernel."
+    interviewRelevance: high
+
+  - slug: gemm-optimization
+    title: "Optimized SGEMM from Scratch"
+    type: PROBLEM
+    cluster: linear-algebra
+    order: 4
+    difficulty: advanced
+    estimatedMinutes: 240
+    prerequisites:
+      - gemm-fundamentals
+    description: "Build a high-performance SGEMM kernel through the full optimization journey: shared memory tiling → register blocking → vectorized float4 loads → double buffering, targeting >70% of cuBLAS throughput."
+    interviewRelevance: high
+
+  - slug: tensor-core-gemm
+    title: "HGEMM with WMMA Tensor Cores"
+    type: PROBLEM
+    cluster: linear-algebra
+    order: 5
+    difficulty: advanced
+    estimatedMinutes: 180
+    prerequisites:
+      - tensor-cores
+      - gemm-optimization
+    description: "Implement a Tensor Core HGEMM kernel using WMMA fragments tiled at the warp level, understanding that fragment layout is opaque and must only be accessed through load/store/mma_sync intrinsics."
+    interviewRelevance: high
+
+  - slug: cutlass
+    title: "CUTLASS Abstractions"
+    type: ARTICLE
+    cluster: linear-algebra
+    order: 6
+    difficulty: expert
+    estimatedMinutes: 60
+    prerequisites:
+      - tensor-cores
+      - gemm-optimization
+    description: "Understand CUTLASS's three-level GEMM decomposition (GemmKernel, Mma, Epilogue), the CuTe layout abstraction (Tensor = Pointer + Layout), and how the Epilogue Visitor Tree enables custom post-GEMM fusions without writing new kernels."
+    interviewRelevance: medium
+---
+
+CUDA for High Performance Computing — linear algebra, GEMM, Tensor Cores, and CUTLASS.

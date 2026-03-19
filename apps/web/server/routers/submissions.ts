@@ -145,7 +145,6 @@ export const submissionsRouter = router({
           problemId: true,
           status: true,
           runtimeMs: true,
-          output: true,
           errorMsg: true,
           testResults: true,
           submittedAt: true,

@@ -130,15 +130,20 @@ model User {
 }
 
 model Track {
-  id           String        @id @default(cuid())
-  slug         String        @unique
-  title        String
-  description  String
-  icon         String
-  color        String
-  order        Int
-  problems     Problem[]
-  roadmapNodes RoadmapNode[]
+  id             String        @id @default(cuid())
+  slug           String        @unique
+  title          String
+  shortTitle     String?
+  description    String
+  icon           String
+  color          String
+  order          Int
+  difficulty     String?
+  estimatedHours Int?
+  prerequisites  String[]
+  previewNodes   Int           @default(3)
+  problems       Problem[]
+  roadmapNodes   RoadmapNode[]
 }
 
 model Problem {

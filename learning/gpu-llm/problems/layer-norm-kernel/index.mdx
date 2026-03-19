@@ -1,0 +1,782 @@
+---
+slug: layer-norm-kernel
+title: LayerNorm + Residual Fusion
+track: gpu-llm
+type: problem
+cluster: llm-kernels
+difficulty: medium
+runtime: cuda
+cpp_standard: "17"
+compute_cap: sm_120
+cuda_version: "12.6"
+status: published
+xp: 120
+tags:
+  - layer-normalization
+  - kernel-fusion
+  - memory-bound
+  - llm-kernels
+---
+
+# LayerNorm + Residual Fusion
+
+## Background
+
+Layer normalization is a cornerstone operation in modern deep learning, particularly critical for training large language models. Introduced in the 2017 "Attention Is All You Need" paper, layer normalization stabilizes training by normalizing activations across the feature dimension for each individual sample, in contrast to batch normalization which normalizes across the batch dimension.
+
+The mathematical formulation of layer normalization is deceptively simple:
+
+```
+LayerNorm(x) = γ × (x - μ) / √(σ² + ε) + β
+```
+
+where:
+- μ = (1/D) Σᵢ xᵢ is the mean across the D feature dimensions
+- σ² = (1/D) Σᵢ (xᵢ - μ)² is the variance
+- γ (weight) and β (bias) are learnable parameters, one per feature
+- ε is a small constant (typically 10⁻⁵) for numerical stability
+
+In transformer architectures, layer normalization is invariably applied after residual connections. The standard pattern is:
+
+```
+x' = residual + x_in      # Elementwise addition
+x'' = LayerNorm(x')       # Normalize the sum
+output = γ × x'' / √(var(x'') + ε) + β
+```
+
+Naively implementing this as two separate kernels creates a significant performance bottleneck. The addition kernel reads both `residual` and `x_in`, writes the intermediate result. Then the LayerNorm kernel reads that intermediate, computes statistics, and writes the final output. For typical LLM hidden sizes (D=2048 to D=16384), this means reading and writing gigabytes of data that could be eliminated through fusion.
+
+Consider a hidden size of D=4096. Each row contains 16KB of FP32 data. A non-fused implementation performs:
+- **Addition kernel**: 2 reads (32KB) + 1 write (16KB) = 48KB memory traffic
+- **LayerNorm kernel**: 1 read (16KB) + 1 write (16KB) + statistics writes (~negligible) = 32KB
+- **Total**: 80KB per row
+
+A fused implementation performs:
+- **Fused kernel**: 2 reads (32KB) + 1 write (16KB) = 48KB per row
+
+This represents a **40% reduction in memory traffic**. For an LLM processing sequences of thousands of tokens across dozens of layers, these savings compound dramatically.
+
+The challenge is made more interesting by the two-pass nature of LayerNorm. Computing the variance requires knowing the mean first, which traditionally demands two passes over the data. However, using the identity:
+
+```
+var(x) = E[x²] - (E[x])²
+```
+
+we can compute both mean and variance in a single pass by accumulating both the sum and sum of squares. This is analogous to Welford's online algorithm for numerically stable running statistics.
+
+## What to Implement
+
+You will implement a fused LayerNorm + residual kernel that:
+
+1. **Fuses residual addition with normalization**: Read the residual and input once, compute their sum, normalize in-place, and write the final output. This eliminates the intermediate write to global memory.
+
+2. **Uses single-pass variance computation**: Maintain running sums of both values and squared values to compute mean and variance in one pass, using the formula var = mean(x²) - mean(x)².
+
+3. **Applies proper thread mapping**: Each thread block handles one sequence position (one row of D features). Within the block, threads cooperatively reduce over the hidden dimension using warp-level primitives and shared memory.
+
+4. **Leverages vectorized memory operations**: Use 128-bit vectorized loads (float4 or custom x128 type) to maximize memory throughput. Each thread processes 4 floats per iteration.
+
+5. **Uses streaming cache hints**: Apply `__ldcs()` (streaming load) and `__stcs()` (streaming store) for data that won't be reused soon, preserving L1 cache space for the shared weight and bias parameters.
+
+6. **Caches weights in shared memory**: Load the γ and β parameters once per block into shared memory, allowing all threads in the block to access them with low latency.
+
+The kernel signature you will implement:
+
+```cpp
+__global__ void fused_layer_norm_forward_kernel(
+    float* residual_out,      // Output of residual addition (also input to LayerNorm)
+    float* normed_out,        // Final normalized output
+    float* mean_out,          // Mean per row (for backward pass)
+    float* rstd_out,          // 1/sqrt(var + eps) per row (for backward pass)
+    const float* inp1,        // First input (e.g., previous layer output)
+    const float* inp2,        // Second input (residual connection)
+    const float* weight,      // γ scale parameters
+    const float* bias,        // β shift parameters
+    int N,                    // Number of rows (B × T)
+    int C                     // Hidden dimension (e.g., 4096)
+);
+```
+
+Key implementation hints:
+
+- Use one block per row (gridDim.x = N)
+- Use blockDim.x = 128 or 256 threads per block
+- Each thread processes C / blockDim.x elements with grid-stride loop
+- Use `__syncthreads()` to coordinate within block
+- First pass: thread-local sum of values and squares, reduce to get global mean/var
+- Second pass: normalize and apply weight/bias fusion
+
+## Constraints
+
+- Input N (number of rows) ranges from 1 to 65536
+- Input C (hidden dimension) ranges from 64 to 16384
+- All inputs are FP32 floats
+- The residual_out array may be nullptr if you only want normalized output
+- The mean_out and rstd_out arrays may be nullptr if backward pass stats are not needed
+- You must NOT modify the weight and bias arrays
+- You must use the provided `solve()` function signature; only modify the kernel implementation
+- Memory allocations are handled by the harness; only implement device kernels
+
+Rules:
+- Do not use cuBLAS or any external GPU libraries
+- Do not use dynamic parallelism (no kernel launches from within kernels)
+- The kernel must work correctly for all valid N and C values
+- Handle edge cases where C is not a multiple of blockDim.x
+
+## Example
+
+For a single row with C=4, inputs:
+- inp1 = [1.0, 2.0, 3.0, 4.0]
+- inp2 = [0.5, 0.5, 0.5, 0.5]
+- weight = [1.0, 1.0, 1.0, 1.0]
+- bias = [0.0, 0.0, 0.0, 0.0]
+
+The fused operation:
+1. Compute residual = inp1 + inp2 = [1.5, 2.5, 3.5, 4.5]
+2. Mean μ = (1.5 + 2.5 + 3.5 + 4.5) / 4 = 3.0
+3. Variance σ² = ((1.5-3)² + (2.5-3)² + (3.5-3)² + (4.5-3)²) / 4 = 1.25
+4. rstd = 1 / √(1.25 + 1e-5) ≈ 0.8944
+5. Output = weight × rstd × (residual - mean) + bias
+         = [0.8944×(1.5-3), 0.8944×(2.5-3), 0.8944×(3.5-3), 0.8944×(4.5-3)]
+         = [-1.073, -0.447, 0.447, 1.073]
+
+---starter-code---
+
+```cpp
+#include <cuda_runtime.h>
+#include <cstdio>
+#include <cmath>
+#include <vector>
+#include <cassert>
+
+// Kernel configuration
+constexpr int THREADS_PER_BLOCK = 128;
+
+// Fused LayerNorm + Residual kernel
+// Implements: residual = inp1 + inp2; output = LayerNorm(residual)
+__global__ void fused_layer_norm_forward_kernel(
+    float* residual_out,
+    float* normed_out,
+    float* mean_out,
+    float* rstd_out,
+    const float* inp1,
+    const float* inp2,
+    const float* weight,
+    const float* bias,
+    int N,
+    int C
+) {
+    // TODO: Implement the fused LayerNorm + residual kernel
+    // Hint 1: One block per row ( blockIdx.x in [0, N) )
+    // Hint 2: Use two passes: first compute mean, then variance, then normalize
+    // Hint 3: Use __syncthreads() to synchronize within block
+    // Hint 4: Each thread processes multiple elements with grid-stride loop
+    // Hint 5: Store mean in shared memory after first block-wide reduction
+    // Hint 6: For best performance, consider using warp-level reductions
+}
+
+// Host-side solver function - do not modify this
+void solve(
+    float* residual_out,
+    float* normed_out,
+    float* mean_out,
+    float* rstd_out,
+    const float* h_inp1,
+    const float* h_inp2,
+    const float* h_weight,
+    const float* h_bias,
+    int N,
+    int C
+) {
+    // Allocate device memory
+    float *d_inp1, *d_inp2, *d_weight, *d_bias;
+    float *d_residual_out, *d_normed_out, *d_mean_out, *d_rstd_out;
+
+    size_t row_size = C * sizeof(float);
+    size_t stats_size = N * sizeof(float);
+
+    cudaMalloc(&d_inp1, N * row_size);
+    cudaMalloc(&d_inp2, N * row_size);
+    cudaMalloc(&d_weight, row_size);
+    cudaMalloc(&d_bias, row_size);
+    cudaMalloc(&d_residual_out, N * row_size);
+    cudaMalloc(&d_normed_out, N * row_size);
+    cudaMalloc(&d_mean_out, stats_size);
+    cudaMalloc(&d_rstd_out, stats_size);
+
+    // Copy inputs to device
+    cudaMemcpy(d_inp1, h_inp1, N * row_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_inp2, h_inp2, N * row_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_weight, h_weight, row_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_bias, h_bias, row_size, cudaMemcpyHostToDevice);
+
+    // Launch kernel
+    int num_blocks = N;
+    fused_layer_norm_forward_kernel<<<num_blocks, THREADS_PER_BLOCK>>>(
+        d_residual_out, d_normed_out, d_mean_out, d_rstd_out,
+        d_inp1, d_inp2, d_weight, d_bias,
+        N, C
+    );
+
+    // Check for errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Kernel launch failed: %s\n", cudaGetErrorString(err));
+    }
+
+    // Copy outputs back to host
+    cudaMemcpy(residual_out, d_residual_out, N * row_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(normed_out, d_normed_out, N * row_size, cudaMemcpyDeviceToHost);
+    if (mean_out) {
+        cudaMemcpy(mean_out, d_mean_out, stats_size, cudaMemcpyDeviceToHost);
+    }
+    if (rstd_out) {
+        cudaMemcpy(rstd_out, d_rstd_out, stats_size, cudaMemcpyDeviceToHost);
+    }
+
+    // Free device memory
+    cudaFree(d_inp1);
+    cudaFree(d_inp2);
+    cudaFree(d_weight);
+    cudaFree(d_bias);
+    cudaFree(d_residual_out);
+    cudaFree(d_normed_out);
+    cudaFree(d_mean_out);
+    cudaFree(d_rstd_out);
+}
+
+// CPU reference implementation
+void fused_layer_norm_forward_cpu(
+    float* residual_out,
+    float* normed_out,
+    float* mean_out,
+    float* rstd_out,
+    const float* inp1,
+    const float* inp2,
+    const float* weight,
+    const float* bias,
+    int N,
+    int C
+) {
+    const float eps = 1e-5f;
+
+    for (int n = 0; n < N; n++) {
+        const float* row_inp1 = inp1 + n * C;
+        const float* row_inp2 = inp2 + n * C;
+        float* row_residual = residual_out + n * C;
+        float* row_normed = normed_out + n * C;
+
+        // Step 1: Compute residual (elementwise addition)
+        float mean = 0.0f;
+        for (int c = 0; c < C; c++) {
+            row_residual[c] = row_inp1[c] + row_inp2[c];
+            mean += row_residual[c];
+        }
+        mean /= C;
+
+        // Step 2: Compute variance
+        float var = 0.0f;
+        for (int c = 0; c < C; c++) {
+            float diff = row_residual[c] - mean;
+            var += diff * diff;
+        }
+        var /= C;
+
+        // Step 3: Compute rstd (reciprocal of standard deviation)
+        float rstd = 1.0f / sqrtf(var + eps);
+
+        // Step 4: Normalize and apply weight/bias
+        for (int c = 0; c < C; c++) {
+            float normalized = rstd * (row_residual[c] - mean);
+            row_normed[c] = normalized * weight[c] + bias[c];
+        }
+
+        // Store statistics for backward pass
+        if (mean_out) mean_out[n] = mean;
+        if (rstd_out) rstd_out[n] = rstd;
+    }
+}
+```
+
+---test-cases---
+
+**Test Case 1: Basic correctness with small matrix**
+
+Input format:
+```
+verify 1 8 4
+inp1: 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0
+inp2: 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+weight: 1.0 1.0 1.0 1.0
+bias: 0.0 0.0 0.0 0.0
+```
+
+Expected: Output must match CPU reference within tolerance of 1e-4.
+
+---
+
+**Test Case 2: Larger hidden dimension (C=128)**
+
+Input format:
+```
+verify 1 128
+inp1: fill:1.0
+inp2: fill:0.0
+weight: fill:1.0
+bias: fill:0.0
+```
+
+Expected: Output must match CPU reference within tolerance of 1e-4. Since inp1 has all 1s and inp2 has all 0s, residual is all 1s. After normalization (mean=1, var=0), output should be all zeros (since rstd×(1-1) = 0).
+
+---
+
+**Test Case 3: Multiple rows (N=4, C=64)**
+
+Input format:
+```
+verify 4 64
+inp1: fill:2.0
+inp2: fill:1.0
+weight: fill:1.0
+bias: fill:0.0
+```
+
+Expected: Output must match CPU reference within tolerance of 1e-4. Each row has identical values (residual=3), so after normalization all outputs should be zero.
+
+---
+
+**Test Case 4: Non-trivial weights and biases**
+
+Input format:
+```
+verify 2 8
+inp1: 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0
+inp2: 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+weight: 2.0 1.5 1.0 0.5 0.5 1.0 1.5 2.0
+bias: 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+```
+
+Expected: Output must match CPU reference within tolerance of 1e-4.
+
+---
+
+**Test Case 5: Edge case with N=1, C=64**
+
+Input format:
+```
+verify 1 64
+inp1: fill:3.14159
+inp2: fill:2.71828
+weight: fill:1.0
+bias: fill:0.0
+```
+
+Expected: Output must match CPU reference within tolerance of 1e-4.
+
+---
+
+**Test Case 6: Large hidden dimension (C=1024)**
+
+Input format:
+```
+verify 2 1024
+inp1: 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 (repeating pattern)
+inp2: fill:0.0
+weight: fill:1.0
+bias: fill:0.0
+```
+
+Expected: Output must match CPU reference within tolerance of 1e-4.
+
+---
+
+**Test Case 7: Negative and mixed values**
+
+Input format:
+```
+verify 2 16
+inp1: -1.0 -0.5 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0 5.5 6.0 6.5
+inp2: 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+weight: 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+bias: -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0
+```
+
+Expected: Output must match CPU reference within tolerance of 1e-4.
+
+---
+
+**Test Case 8: Explicit matrix input for manual verification**
+
+Input format:
+```
+2 4
+inp1: 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0
+inp2: 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+weight: 1.0 1.0 1.0 1.0
+bias: 0.0 0.0 0.0 0.0
+```
+
+Expected output (two rows of normalized values):
+```
+-1.341641 -0.447214 0.447214 1.341641
+-1.341641 -0.447214 0.447214 1.341641
+```
+
+---solution---
+
+```cpp
+__global__ void fused_layer_norm_forward_kernel(
+    float* residual_out,
+    float* normed_out,
+    float* mean_out,
+    float* rstd_out,
+    const float* inp1,
+    const float* inp2,
+    const float* weight,
+    const float* bias,
+    int N,
+    int C
+) {
+    extern __shared__ float shared_mem[];
+    float* shared_mean = shared_mem;
+    float* shared_var = shared_mem + blockDim.x;
+
+    int row = blockIdx.x;  // One block per row
+    if (row >= N) return;
+
+    const float* row_inp1 = inp1 + row * C;
+    const float* row_inp2 = inp2 + row * C;
+    float* row_residual = residual_out + row * C;
+    float* row_normed = normed_out + row * C;
+
+    const float eps = 1e-5f;
+
+    // Thread-local accumulation
+    float local_sum = 0.0f;
+    float local_sum_sq = 0.0f;
+
+    // Grid-stride loop over elements
+    for (int c = threadIdx.x; c < C; c += blockDim.x) {
+        float val = row_inp1[c] + row_inp2[c];
+        row_residual[c] = val;
+        local_sum += val;
+        local_sum_sq += val * val;
+    }
+
+    // Block-wide reduction for mean
+    // Store thread-local sums in shared memory
+    shared_mean[threadIdx.x] = local_sum;
+    __syncthreads();
+
+    // Parallel reduction in shared memory
+    for (int stride = blockDim.x / 2; stride >= 1; stride /= 2) {
+        if (threadIdx.x < stride) {
+            shared_mean[threadIdx.x] += shared_mean[threadIdx.x + stride];
+        }
+        __syncthreads();
+    }
+
+    float mean = shared_mean[0] / C;
+    shared_mean[0] = mean;  // Store mean for second pass
+    __syncthreads();
+
+    // Second pass: compute variance using stored mean
+    local_sum_sq = 0.0f;
+    for (int c = threadIdx.x; c < C; c += blockDim.x) {
+        float diff = row_residual[c] - mean;
+        local_sum_sq += diff * diff;
+    }
+
+    // Block-wide reduction for variance
+    shared_var[threadIdx.x] = local_sum_sq;
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride >= 1; stride /= 2) {
+        if (threadIdx.x < stride) {
+            shared_var[threadIdx.x] += shared_var[threadIdx.x + stride];
+        }
+        __syncthreads();
+    }
+
+    float var = shared_var[0] / C;
+    float rstd = 1.0f / sqrtf(var + eps);
+
+    // Store statistics
+    if (threadIdx.x == 0) {
+        if (mean_out) mean_out[row] = mean;
+        if (rstd_out) rstd_out[row] = rstd;
+    }
+
+    // Third pass: normalize and apply weight/bias
+    for (int c = threadIdx.x; c < C; c += blockDim.x) {
+        float normalized = rstd * (row_residual[c] - mean);
+        row_normed[c] = normalized * weight[c] + bias[c];
+    }
+}
+```
+
+---harness---
+
+```cpp
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <cstdlib>
+#include <iomanip>
+
+// Forward declarations
+void solve(
+    float* residual_out,
+    float* normed_out,
+    float* mean_out,
+    float* rstd_out,
+    const float* inp1,
+    const float* inp2,
+    const float* weight,
+    const float* bias,
+    int N,
+    int C
+);
+
+void fused_layer_norm_forward_cpu(
+    float* residual_out,
+    float* normed_out,
+    float* mean_out,
+    float* rstd_out,
+    const float* inp1,
+    const float* inp2,
+    const float* weight,
+    const float* bias,
+    int N,
+    int C
+);
+
+// Read a matrix: either "fill:value" or space-separated values
+static void readMatrix(std::vector<float>& m, int size) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float v = atof(tok + 5);
+        for (int i = 0; i < size; i++) m[i] = v;
+    } else {
+        m[0] = atof(tok);
+        for (int i = 1; i < size; i++) scanf("%f", &m[i]);
+    }
+}
+
+// Compare two arrays with tolerance
+static bool compareArrays(const std::vector<float>& a, const std::vector<float>& b,
+                         const std::string& name, float tol = 1e-4f) {
+    float max_err = 0.0f;
+    for (size_t i = 0; i < a.size(); i++) {
+        float err = fabsf(a[i] - b[i]);
+        if (err > max_err) max_err = err;
+    }
+    if (max_err > tol) {
+        printf("%s mismatch: max error = %.6f (tolerance = %.6f)\n",
+               name.c_str(), max_err, tol);
+        return false;
+    }
+    printf("%s OK (max error = %.6f)\n", name.c_str(), max_err);
+    return true;
+}
+
+int main(int argc, char** argv) {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        // Verification mode: run correctness test
+        int N, C;
+        scanf("%d", &N);
+        if (scanf("%d", &C) != 1) {
+            // C might be on next line or missing
+            C = 4;  // Default for simple cases
+        }
+
+        int total = N * C;
+
+        std::vector<float> h_inp1(total), h_inp2(total);
+        std::vector<float> h_weight(C), h_bias(C);
+        std::vector<float> h_residual_gpu(total), h_normed_gpu(total);
+        std::vector<float> h_mean_gpu(N), h_rstd_gpu(N);
+        std::vector<float> h_residual_cpu(total), h_normed_cpu(total);
+        std::vector<float> h_mean_cpu(N), h_rstd_cpu(N);
+
+        readMatrix(h_inp1, total);
+        readMatrix(h_inp2, total);
+        readMatrix(h_weight, C);
+        readMatrix(h_bias, C);
+
+        // Run GPU implementation
+        solve(h_residual_gpu.data(), h_normed_gpu.data(),
+              h_mean_gpu.data(), h_rstd_gpu.data(),
+              h_inp1.data(), h_inp2.data(),
+              h_weight.data(), h_bias.data(),
+              N, C);
+
+        // Run CPU reference
+        fused_layer_norm_forward_cpu(
+            h_residual_cpu.data(), h_normed_cpu.data(),
+            h_mean_cpu.data(), h_rstd_cpu.data(),
+            h_inp1.data(), h_inp2.data(),
+            h_weight.data(), h_bias.data(),
+            N, C
+        );
+
+        // Compare results
+        bool ok = true;
+        ok &= compareArrays(h_residual_gpu, h_residual_cpu, "residual");
+        ok &= compareArrays(h_normed_gpu, h_normed_cpu, "normed");
+        ok &= compareArrays(h_mean_gpu, h_mean_cpu, "mean");
+        ok &= compareArrays(h_rstd_gpu, h_rstd_cpu, "rstd");
+
+        printf("%d\n", ok ? 1 : 0);
+
+    } else {
+        // Explicit input mode: read N, matrices, compute, print result
+        int N = atoi(first);
+        int N2;
+        if (scanf("%d", &N2) == 1) {
+            // Two dimensions provided (N and C)
+            int C = N2;
+            int total = N * C;
+
+            std::vector<float> h_inp1(total), h_inp2(total);
+            std::vector<float> h_weight(C), h_bias(C);
+            std::vector<float> h_residual(total), h_normed(total);
+
+            readMatrix(h_inp1, total);
+            readMatrix(h_inp2, total);
+            readMatrix(h_weight, C);
+            readMatrix(h_bias, C);
+
+            // Run GPU implementation
+            solve(h_residual.data(), h_normed.data(),
+                  nullptr, nullptr,  // Skip mean/rstd for explicit mode
+                  h_inp1.data(), h_inp2.data(),
+                  h_weight.data(), h_bias.data(),
+                  N, C);
+
+            // Print normalized output
+            std::cout << std::fixed << std::setprecision(6);
+            for (int n = 0; n < N; n++) {
+                for (int c = 0; c < C; c++) {
+                    if (c > 0) printf(" ");
+                    printf("%.6f", h_normed[n * C + c]);
+                }
+                printf("\n");
+            }
+        } else {
+            // Single dimension (N=C) for simple cases
+            int C = N;
+            int total = N * C;
+
+            std::vector<float> h_inp1(total), h_inp2(total);
+            std::vector<float> h_weight(C), h_bias(C);
+            std::vector<float> h_residual(total), h_normed(total);
+
+            readMatrix(h_inp1, total);
+            readMatrix(h_inp2, total);
+            readMatrix(h_weight, C);
+            readMatrix(h_bias, C);
+
+            solve(h_residual.data(), h_normed.data(),
+                  nullptr, nullptr,
+                  h_inp1.data(), h_inp2.data(),
+                  h_weight.data(), h_bias.data(),
+                  N, C);
+
+            std::cout << std::fixed << std::setprecision(6);
+            for (int n = 0; n < N; n++) {
+                for (int c = 0; c < C; c++) {
+                    if (c > 0) printf(" ");
+                    printf("%.6f", h_normed[n * C + c]);
+                }
+                printf("\n");
+            }
+        }
+    }
+
+    return 0;
+}
+```
+
+---editorial---
+
+## Approach Explanation
+
+The fused LayerNorm + residual kernel addresses a critical performance bottleneck in LLM inference: eliminating intermediate memory traffic by combining the residual addition with layer normalization in a single kernel launch.
+
+### Algorithm Structure
+
+The kernel operates in three logical passes:
+
+**Pass 1: Residual computation and mean accumulation**
+- Each thread processes a subset of elements using a grid-stride loop
+- Compute residual = inp1 + inp2 for each element
+- Accumulate local sum of residual values
+- Store residual values for second pass
+
+**Pass 2: Mean reduction and variance computation**
+- Use parallel reduction in shared memory to compute global mean
+- Each thread contributes its local sum to the reduction tree
+- After reduction, thread 0 holds the global mean
+- Second pass over data computes squared deviations from mean
+- Parallel reduction again to get global variance
+
+**Pass 3: Normalization and weight/bias application**
+- With mean and variance known, compute rstd = 1/√(var + ε)
+- Normalize each element: (residual - mean) × rstd
+- Apply learnable parameters: output = normalized × weight + bias
+
+### Key Implementation Details
+
+**Thread mapping**: One block per row (sequence position). This mapping is natural because each row's normalization is independent, and the hidden dimension is typically large enough (C ≥ 64) to provide sufficient parallelism within each block.
+
+**Shared memory usage**: The reduction uses two arrays in shared memory—one for mean accumulation, one for variance. With blockDim.x = 128, this requires 2 × 128 × 4 bytes = 1KB of shared memory per block, well within the typical 48-96KB limits.
+
+**Two-pass vs single-pass variance**: The implementation uses two passes (one for mean, one for variance) rather than the single-pass var = E[x²] - E[x]² formula. While the single-pass formula is mathematically equivalent, the two-pass approach is numerically more stable for extreme value ranges. The performance difference is negligible since both approaches require two complete reads of the data.
+
+### Complexity Analysis
+
+**Time complexity**: O(N × C) where N is the number of rows and C is the hidden dimension. The kernel performs three complete reads of the input data and one write of the output.
+
+**Space complexity**: O(blockDim.x) extra space per block for shared memory reduction buffers.
+
+**Memory bandwidth**: For a row of size C:
+- Reads: inp1 (C×4 bytes), inp2 (C×4 bytes) = 8C bytes
+- Writes: residual (C×4 bytes), normed (C×4 bytes) = 8C bytes
+- Total: 16C bytes per row
+
+Compared to separate kernels:
+- Addition: 2 reads + 1 write = 12C bytes
+- LayerNorm: 1 read + 1 write = 8C bytes
+- Total unfused: 20C bytes per row
+
+**Speedup**: 20C / 16C = 1.25× (25% reduction in memory traffic)
+
+### Key Insights
+
+1. **Fusion eliminates intermediate writes**: The residual output is written once and immediately consumed by the normalization step, avoiding a separate global memory write.
+
+2. **Shared memory reduction is essential**: Without shared memory, each thread would need to communicate via global memory, which is orders of magnitude slower.
+
+3. **Grid-stride loops handle arbitrary C**: By using `for (int c = threadIdx.x; c < C; c += blockDim.x)`, the kernel works correctly for any hidden dimension, even when C is not a multiple of blockDim.x.
+
+4. **Statistics for backward pass**: Storing mean and rstd is necessary for the backward pass during training, but optional during inference-only scenarios.
+
+### Common Mistakes
+
+1. **Forgetting synchronization**: Failing to call `__syncthreads()` after writing to shared memory causes race conditions where threads read uninitialized values.
+
+2. **Incorrect reduction indexing**: The reduction loop should use `stride = blockDim.x / 2; stride >= 1; stride /= 2` with the guard `if (threadIdx.x < stride)`. Using `threadIdx.x <= stride` or incorrect stride calculations leads to missed additions or out-of-bounds access.
+
+3. **Dividing by wrong value**: The mean and variance should be divided by C (the hidden dimension), not by blockDim.x or N.
+
+4. **Missing epsilon in sqrt**: The variance should be `var + eps` not just `var` to avoid division by zero when variance is zero.
+
+5. **Incorrect thread mapping**: Using a 1D grid mapping ( blockIdx.x * blockDim.x + threadIdx.x ) for all elements instead of one block per row will cause rows to be processed by multiple blocks, breaking the normalization semantics.
+
+6. **Not handling nullptr outputs**: The mean_out and rstd_out parameters may be nullptr; always check before writing.

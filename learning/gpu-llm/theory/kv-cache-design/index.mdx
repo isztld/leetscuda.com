@@ -1,0 +1,178 @@
+---
+slug: kv-cache-design
+title: KV Cache Design
+track: gpu-llm
+type: concept
+cluster: llm-kernels
+difficulty: advanced
+estimatedMinutes: 25
+interviewRelevance: high
+tags:
+  - attention
+  - memory-optimization
+  - autoregressive-decoding
+  - gqa
+  - paged-attention
+status: published
+author: team
+sources:
+  - "flash-attention/README.md (GQA/MQA sections)"
+  - "flash-attention/hopper/benchmark_mla_decode.py"
+  - "llm.c/dev/cuda/attention_forward.cu"
+  - "vLLM paged attention implementation"
+---
+
+# KV Cache Design for LLM Inference
+
+## Why this matters for interviews
+
+KV cache design is one of the most frequently asked topics in LLM infrastructure interviews. When you're designing an inference system, you need to answer: How much memory does a 70B model need for 32K context? Why does decoding slow down as the sequence grows? How do you serve multiple users with different context lengths?
+
+The KV cache determines your batch size, your maximum context, and your per-token latency. Understanding how it works—and how techniques like GQA and paged attention optimize it—is essential for principal-level roles in AI infrastructure.
+
+## The O(N²) problem without KV cache
+
+In autoregressive decoding, each new token attends to all previous tokens. For a sequence of length N, the naive approach recomputes K and V for all N tokens at each step:
+
+```
+Step 1: compute K,V for token 1
+Step 2: compute K,V for tokens 1,2; attention on tokens 1,2
+Step 3: compute K,V for tokens 1,2,3; attention on tokens 1,2,3
+...
+Step N: compute K,V for tokens 1..N; attention on tokens 1..N
+
+Total: O(N²) computation
+```
+
+This quadratic complexity makes autoregressive decoding infeasible for long sequences. The key insight behind KV cache is simple: **K and V for previous tokens never change**. We compute them once, store them, and reuse them.
+
+## KV cache structure and memory cost
+
+For each token position, we store K and V tensors for every layer and every attention head. The memory formula is:
+
+```
+KV cache size = batch × layers × seq_len × num_heads × d_k × 2 × dtype_size
+```
+
+The `× 2` accounts for both K and V. For LLaMA-3 70B at FP16 (2 bytes per value):
+- 80 layers
+- 64 query heads, 8 KV heads (GQA)
+- d_k = 128
+- seq_len = 8192
+
+```
+Per-batch-per-sequence: 80 × 8192 × 8 × 128 × 2 × 2B = 2 GB
+```
+
+Wait, I used 8 KV heads (GQA), not 64. For full attention (no GQA):
+```
+80 × 8192 × 64 × 128 × 2 × 2B = 16 GB
+```
+
+LLaMA-3 70B uses GQA with 8 KV heads, so the actual KV cache is ~2 GB per sequence at 8K context. At 128K context, that's 32 GB just for KV cache.
+
+## Prefill vs decode: two distinct phases
+
+**Prefill (prompt processing)**: When the user sends a prompt, we compute K and V for all tokens at once via batched GEMM. This is parallelizable and compute-bound.
+
+**Decode (token generation)**: For each new token:
+1. Compute K, V for just this new position (O(1) work)
+2. Append to KV cache
+3. Run attention over all N cached tokens (GEMV: matrix-vector multiply)
+
+The decode step is **always memory-bound**. Even though we're only computing K, V for one token, we must read the entire KV cache (O(N) memory) for attention. For a 70B model at 32K context, reading 8 GB of KV cache each step dominates the latency.
+
+## GQA and MQA: trading memory for quality
+
+Multi-Head Attention (MHA) uses one K and V head per query head. For LLaMA-3 70B with 64 query heads, that's 64 K heads and 64 V heads. This is memory-intensive and limits batch size.
+
+**Grouped-Query Attention (GQA)** groups query heads to share K and V heads. LLaMA-3 70B uses 64 query heads but only 8 KV heads. Each group of 8 query heads shares the same K and V:
+
+```
+GQA memory reduction = num_kv_heads / num_q_heads = 8 / 64 = 1/8
+```
+
+For LLaMA-3 70B at 8K context:
+- MHA KV cache: ~16 GB
+- GQA KV cache: ~2 GB (8× smaller)
+
+**Multi-Query Attention (MQA)** is extreme GQA: all query heads share a single K head and a single V head. This gives the maximum memory reduction (h× smaller, where h is the number of query heads), but often degrades quality. GQA finds a middle ground, maintaining most of MHA's quality while significantly reducing memory.
+
+### When to use GQA vs MHA
+
+| Factor | MHA | GQA |
+|--------|-----|-----|
+| Memory | h × d_k × 2 per token | (h/g) × d_k × 2 per token |
+| Quality | Best | Slightly lower (usually acceptable) |
+| Decode latency | Higher (larger cache to read) | Lower (smaller cache) |
+| Training stability | Stable | Stable (with proper tuning) |
+
+GQA is now standard in most modern LLMs. LLaMA-3 8B uses GQA (8 query, 8 KV — actually MHA). LLaMA-3 70B uses GQA (64 query, 8 KV).
+
+## Paged KV cache (vLLM)
+
+A subtle but critical problem: **internal fragmentation**. If you allocate KV cache as contiguous arrays, each sequence needs a fixed-size block. If the actual sequence length is shorter, you waste memory.
+
+**Paged attention** (vLLM) splits the KV cache into fixed-size blocks (e.g., 16 tokens each). Each sequence has a list of block pointers, like virtual memory pages. This allows:
+- Exact memory usage: no wasted space
+- Dynamic context allocation
+- Efficient sharing of common prefixes (e.g., system prompts)
+
+vLLM's paged attention can improve throughput by 2×–4× compared to contiguous allocation, especially for variable-length sequences.
+
+## Common misconceptions
+
+❌ **Wrong**: "KV cache eliminates the need to store model weights"
+
+✓ **Correct**: KV cache is **additional** memory on top of model weights. For LLaMA-3 70B at FP16, model weights are ~140 GB. KV cache at 8K context is ~2 GB. At 128K context, it's ~32 GB. Both must fit in GPU memory simultaneously.
+
+❌ **Wrong**: "Decode with KV cache is compute-bound"
+
+✓ **Correct**: Decode is a **GEMV (matrix-vector)** operation, which is always **memory-bound**. You're computing one row of output by reading the entire model (weights) and entire KV cache. The FLOPs are O(d_model × seq_len), but the memory reads are O(model_size + KV_cache_size), which dominates.
+
+❌ **Wrong**: "Longer context requires proportionally longer decode latency"
+
+✓ **Correct**: With KV cache, each decode step is O(1) in computation, but O(N) in memory reads. So latency grows **sublinearly** with context length, not proportionally. At 8K context, you read 8× more KV cache than at 1K, but the compute is the same. The latency increase is due to memory bandwidth limits, not computation.
+
+## Interview patterns
+
+**Question 1**: "A 70B LLM has 80 layers, 64 query heads, 8 KV heads, d_k=128. How much memory for KV cache at 32K context (FP16)?"
+
+**Answer**:
+```
+80 layers × 32K seq × 8 KV heads × 128 d_k × 2 (K+V) × 2 bytes = 8 GB per sequence
+```
+
+**Question 2**: "Why does inference slow down as the sequence gets longer?"
+
+**Answer**: Each decode step must read the entire KV cache for attention. At 128K context, you're reading 16× more memory than at 8K context. The compute is the same (GEMV for one token), but memory bandwidth is saturated.
+
+**Question 3**: "How would you serve 100 users with different context lengths on a single H100 (80 GB HBM)?"
+
+**Answer**: Use paged attention to avoid fragmentation. Allocate KV cache blocks dynamically. Batch users with similar context lengths. For very long contexts, consider MQA/GQA to reduce per-sequence memory. If total KV cache exceeds HBM, use CPU offloading (slower but feasible).
+
+**Question 4**: "Compare MHA, GQA, and MQA tradeoffs."
+
+**Answer**: MHA has best quality but highest memory (h×KV). MQA has lowest memory (1×KV) but quality degradation. GQA is a middle ground: g groups mean memory is (h/g)×KV, with minimal quality loss for g≥4.
+
+## Key numbers reference
+
+| Model | Layers | Q heads | KV heads | d_k | GQA ratio | KV/cache @ 8K (FP16) |
+|-------|--------|---------|----------|-----|-----------|---------------------|
+| LLaMA-3 70B | 80 | 64 | 8 | 128 | 8× | 2 GB |
+| LLaMA-3 8B | 32 | 32 | 8 | 128 | 4× | 0.5 GB |
+| Gemma 7B | 28 | 16 | 16 | 256 | 1× (MHA) | 2.2 GB |
+
+| Sequence Length | KV Cache (LLaMA-3 70B, GQA, FP16) |
+|-----------------|-----------------------------------|
+| 1K | 256 MB |
+| 8K | 2 GB |
+| 32K | 8 GB |
+| 128K | 32 GB |
+
+## Further reading
+
+- **FlashAttention README** — GQA and MQA sections for theoretical background
+- **vLLM paged attention** — Implementation of block-based KV cache management
+- **LLaMA-3 architecture papers** — Specific GQA configurations
+- **Hopper tuning guide** — Memory bandwidth optimization for attention

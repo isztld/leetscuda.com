@@ -15,18 +15,27 @@ type NodeDef = {
   slug: string
   title: string
   description: string
-  type: 'CONCEPT' | 'PROBLEM'
+  type: 'CONCEPT' | 'PROBLEM' | 'ARTICLE' | 'QUIZ'
+  cluster?: string
   order: number
+  difficulty?: string
+  estimatedMinutes?: number
   prerequisites: string[]
+  interviewRelevance?: string
 }
 
 type TrackDef = {
   slug: string
   title: string
+  shortTitle?: string
   description: string
   icon: string
   color: string
   order: number
+  difficulty?: string
+  estimatedHours?: number
+  prerequisites?: string[]
+  previewNodes?: number
   nodes: NodeDef[]
 }
 
@@ -48,16 +57,24 @@ function loadTracks(): TrackDef[] {
 }
 
 async function main() {
+  // Clean up old monolithic 'cuda' track replaced by cuda-core / cuda-hpc / gpu-llm
+  const oldCuda = await prisma.track.findUnique({ where: { slug: 'cuda' } })
+  if (oldCuda) {
+    await prisma.roadmapNode.deleteMany({ where: { trackId: oldCuda.id } })
+    console.log('Cleaned up old cuda track nodes')
+  }
+
   const tracks = loadTracks()
   console.log(`Found ${tracks.length} track(s) in learning/`)
 
   console.log('Seeding tracks...')
   for (const track of tracks) {
     const { nodes: _, ...trackData } = track
+    const data = { ...trackData, prerequisites: trackData.prerequisites ?? [] }
     await prisma.track.upsert({
-      where: { slug: trackData.slug },
-      update: trackData,
-      create: trackData,
+      where: { slug: data.slug },
+      update: data,
+      create: data,
     })
   }
 

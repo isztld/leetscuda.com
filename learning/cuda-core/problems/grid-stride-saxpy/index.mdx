@@ -1,0 +1,402 @@
+---
+slug: grid-stride-saxpy
+title: Grid-Stride Loop SAXPY
+difficulty: easy
+track: cuda-core
+tags:
+  - grid-stride-loop
+  - scalability
+  - memory-patterns
+  - saxpy
+status: published
+author: community
+xp: 120
+runtime: cuda
+cpp_standard: "17"
+cuda_version: "12.6"
+compute_cap: "sm_120"
+---
+
+## Background
+
+**SAXPY** is a fundamental operation from the BLAS (Basic Linear Algebra Subprograms) Level 1 specification. The name stands for **S**calar **A**nd **X**-**Y**, representing the computation:
+
+```
+y[i] = a * x[i] + y[i]   for every i in [0, n)
+```
+
+where `a` is a scalar multiplier, and `x` and `y` are arrays of equal length. This operation appears ubiquitously in scientific computing, from linear system solvers to neural network training (e.g., learning rate updates, gradient accumulation).
+
+While a naive CUDA implementation might assign one thread per array element (as in the `vector-add` problem), this approach has a critical limitation: it requires a grid size that scales directly with the problem size. On a typical GPU with 128 SMs and a maximum of 1024 threads per block, the maximum grid contains at most 256 blocks (1D launch limit) to 65535 blocks in other dimensions. If your array has 10 million elements, you cannot launch a grid with 10 million threads.
+
+The **grid-stride loop** pattern solves this scalability problem. Instead of each thread handling exactly one element, each thread processes multiple elements spaced by the total grid stride:
+
+```cpp
+int stride = gridDim.x * blockDim.x;
+for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
+    // Process element i
+}
+```
+
+This pattern ensures:
+1. **Scalability**: The same kernel works for any array size, regardless of grid capacity
+2. **Load balancing**: Threads in the first half of the grid handle more elements when `n` is not a multiple of the grid size
+3. **Coalesced memory access**: Adjacent threads still access adjacent memory addresses in each loop iteration
+4. **Flexibility**: You can choose any convenient block size (e.g., 256 or 512 threads) without worrying about exact grid sizing
+
+## What to Implement
+
+Implement a CUDA kernel `saxpy` that performs the SAXPY operation using the grid-stride loop pattern:
+
+```
+y[i] = a * x[i] + y[i]   for every i in [0, n)
+```
+
+Your kernel must:
+1. Use a grid-stride loop so each thread processes multiple elements when `n` exceeds the total thread count
+2. Compute the starting index: `i = blockIdx.x * blockDim.x + threadIdx.x`
+3. Compute the stride: `stride = gridDim.x * blockDim.x`
+4. Loop through elements with increment `i += stride`
+5. Guard against out-of-bounds access with `if (i < n)`
+
+The host code will launch your kernel with a grid size that may be much smaller than `n`. For example, with 256 blocks of 256 threads each (total 65,536 threads) and `n = 10,000,000`, each thread will process approximately 152 elements on average.
+
+## Constraints
+
+- `1 <= n <= 100,000,000` (up to 100 million elements)
+- Scalar `a` is a 32-bit float in the range `[-10^3, 10^3]`
+- Arrays `x` and `y` contain 32-bit floats in the range `[-10^6, 10^6]`
+- Use a block size of your choice (recommended: 256 threads)
+- Do not modify the host setup code in `solve()`
+- Your kernel must correctly handle cases where `n` is much larger than the total number of threads
+
+## Example
+
+**Input:** `n = 8`, `a = 2.0`, `x = [1, 2, 3, 4, 5, 6, 7, 8]`, `y = [10, 20, 30, 40, 50, 60, 70, 80]`
+
+**Output:** `y = [12, 24, 36, 48, 60, 72, 84, 96]`
+
+With `a = 2.0`, each element becomes `y[i] = 2 * x[i] + y[i]`. For example:
+- `y[0] = 2 * 1 + 10 = 12`
+- `y[5] = 2 * 6 + 60 = 72`
+
+## Grid-Stride Visualization
+
+Consider `n = 10`, `blockDim = 4`, `gridDim = 4` (16 total threads):
+
+```
+Stride = 4 * 4 = 16
+
+Thread 0: processes indices 0, 16, 32, ...  (only 0 is valid)
+Thread 1: processes indices 1, 17, 33, ...  (only 1 is valid)
+Thread 2: processes indices 2, 18, 34, ...  (only 2 is valid)
+...
+Thread 9: processes indices 9, 25, 41, ...  (only 9 is valid)
+Thread 10: processes indices 10, 26, ...     (none valid, 10 >= n)
+...
+Thread 15: processes indices 15, 31, ...     (none valid, 15 >= n)
+```
+
+Now consider `n = 100`, same grid configuration:
+
+```
+Thread 0: indices 0, 16, 32, 48, 64, 80, 96  (7 elements)
+Thread 1: indices 1, 17, 33, 49, 65, 81, 97  (7 elements)
+...
+Thread 3: indices 3, 19, 35, 51, 67, 83, 99  (7 elements)
+Thread 4: indices 4, 20, 36, 52, 68, 84      (6 elements)
+Thread 5: indices 5, 21, 37, 53, 69, 85      (6 elements)
+...
+```
+
+Notice how the first threads process one more element than later threads. This is the load balancing behavior of the grid-stride pattern.
+
+---starter-code---
+#include <cuda_runtime.h>
+
+// TODO: Implement the SAXPY kernel using a grid-stride loop.
+// Each thread processes multiple elements with stride = gridDim.x * blockDim.x
+__global__ void saxpy(float a, const float* x, float* y, int n) {
+    // Your code here
+}
+
+// Host wrapper — allocates device memory, copies data, launches kernel with grid-stride compatibility, copies result back.
+// Do NOT modify anything below this line.
+void solve(const float* h_x, const float* h_y, float* h_out, int n, float a) {
+    float *d_x, *d_y;
+    size_t bytes = n * sizeof(float);
+
+    cudaMalloc(&d_x, bytes);
+    cudaMalloc(&d_y, bytes);
+
+    cudaMemcpy(d_x, h_x, bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_y, h_y, bytes, cudaMemcpyHostToDevice);
+
+    // Choose a fixed grid size that may be smaller than n
+    // The kernel must handle this correctly using grid-stride loops
+    const int blockSize = 256;
+    const int gridSize = 256;  // Fixed at 256 blocks regardless of n
+    saxpy<<<gridSize, blockSize>>>(a, d_x, d_y, n);
+
+    cudaMemcpy(h_out, d_y, bytes, cudaMemcpyDeviceToHost);
+
+    cudaFree(d_x);
+    cudaFree(d_y);
+}
+
+---test-cases---
+- name: "Small array, single loop iteration per thread"
+  input: "8\n2.0\n1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0\n10.0 20.0 30.0 40.0 50.0 60.0 70.0 80.0"
+  expected: "12.0 24.0 36.0 48.0 60.0 72.0 84.0 96.0"
+- name: "Single element edge case"
+  input: "1\n3.0\n5.0\n2.0"
+  expected: "17.0"
+- name: "Array smaller than total threads"
+  input: "16\n0.5\n1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0\n1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0"
+  expected: "1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0 8.5 9.0"
+- name: "Large array requiring multiple iterations per thread"
+  input: "1000000\n1.0\nfill:1.0\nfill:1.0"
+  expected: "fill:2.0"
+- name: "Very large array (10M elements)"
+  input: "10000000\n2.0\nfill:1.0\nfill:0.0"
+  expected: "fill:2.0"
+- name: "Negative scalar"
+  input: "10\n-1.0\n1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0\n10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0"
+  expected: "9.0 8.0 7.0 6.0 5.0 4.0 3.0 2.0 1.0 0.0"
+
+---solution---
+__global__ void saxpy(float a, const float* x, float* y, int n) {
+    // Calculate the global thread index (starting position for this thread)
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Calculate the stride (total number of threads in the grid)
+    int stride = gridDim.x * blockDim.x;
+
+    // Grid-stride loop: each thread processes multiple elements
+    for (int idx = i; idx < n; idx += stride) {
+        y[idx] = a * x[idx] + y[idx];
+    }
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <limits>
+
+// Read a float (either a single value or "fill:value" for bulk values)
+static float readFloat(bool& isFill, float& fillValue) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        isFill = true;
+        fillValue = atof(tok + 5);
+        return fillValue;
+    } else {
+        isFill = false;
+        return atof(tok);
+    }
+}
+
+// Read an array of n floats
+static void readArray(std::vector<float>& arr, int n) {
+    arr.resize(n);
+    bool isFill;
+    float fillValue;
+    readFloat(isFill, fillValue);
+
+    if (isFill) {
+        for (int i = 0; i < n; i++) arr[i] = fillValue;
+    } else {
+        arr[0] = atof(tok);
+        for (int i = 1; i < n; i++) scanf("%f", &arr[i]);
+    }
+}
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        // Verify mode: run CPU reference and compare with GPU
+        int N;
+        scanf("%d", &N);
+
+        float a_val;
+        readFloat(isFill, fillValue);
+        a_val = fillValue;
+
+        std::vector<float> x(N), y(N), gpu_out(N);
+
+        // Read x array
+        bool isFillX;
+        float fillX;
+        char tok[64];
+        scanf("%s", tok);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            for (int i = 0; i < N; i++) x[i] = atof(tok + 5);
+        } else {
+            x[0] = atof(tok);
+            for (int i = 1; i < N; i++) scanf("%f", &x[i]);
+        }
+
+        // Read y array
+        bool isFillY;
+        float fillY;
+        scanf("%s", tok);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            for (int i = 0; i < N; i++) y[i] = atof(tok + 5);
+        } else {
+            y[0] = atof(tok);
+            for (int i = 1; i < N; i++) scanf("%f", &y[i]);
+        }
+
+        // CPU reference: y[i] = a * x[i] + y[i]
+        for (int i = 0; i < N; i++) {
+            gpu_out[i] = a_val * x[i] + y[i];
+        }
+
+        // Call the GPU solution
+        extern void solve(const float*, const float*, float*, int, float);
+        std::vector<float> h_y_copy = y;
+        solve(x.data(), h_y_copy.data(), gpu_out.data(), N, a_val);
+
+        // Compare results with relative tolerance
+        bool passed = true;
+        float max_rel_err = 0.0f;
+        for (int i = 0; i < N; i++) {
+            float expected = a_val * x[i] + y[i];
+            float actual = gpu_out[i];
+            float rel_err = (expected != 0) ? fabs(actual - expected) / fabs(expected) : fabs(actual - expected);
+            if (rel_err > max_rel_err) max_rel_err = rel_err;
+            if (rel_err > 1e-4f) {
+                passed = false;
+                break;
+            }
+        }
+
+        printf("%d\n", passed ? 1 : 0);
+    } else {
+        // Normal mode: read input, run GPU, print result
+        int N = atoi(first);
+
+        // Read scalar a
+        float a_val;
+        char tok[64];
+        scanf("%s", tok);
+        a_val = atof(tok);
+
+        // Read x array
+        std::vector<float> x(N);
+        scanf("%s", tok);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            float fill = atof(tok + 5);
+            for (int i = 0; i < N; i++) x[i] = fill;
+        } else {
+            x[0] = atof(tok);
+            for (int i = 1; i < N; i++) scanf("%f", &x[i]);
+        }
+
+        // Read y array
+        std::vector<float> y(N);
+        scanf("%s", tok);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            float fill = atof(tok + 5);
+            for (int i = 0; i < N; i++) y[i] = fill;
+        } else {
+            y[0] = atof(tok);
+            for (int i = 1; i < N; i++) scanf("%f", &y[i]);
+        }
+
+        // Run GPU solution
+        std::vector<float> out(N);
+        extern void solve(const float*, const float*, float*, int, float);
+        solve(x.data(), y.data(), out.data(), N, a_val);
+
+        // Print result (first 10 elements, then count if larger)
+        for (int i = 0; i < N && i < 10; i++) {
+            if (i > 0) printf(" ");
+            printf("%.1f", out[i]);
+        }
+        if (N > 10) printf(" ... (showing %d of %d)", 10, N);
+        printf("\n");
+    }
+
+    return 0;
+}
+
+---editorial---
+## Approach
+
+The grid-stride loop pattern is the canonical solution for processing arrays of arbitrary size with a fixed-size grid. The key insight is that instead of each thread handling exactly one element, each thread handles multiple elements spaced by the total grid stride.
+
+**Grid-stride loop structure:**
+```cpp
+int i = blockIdx.x * blockDim.x + threadIdx.x;  // Starting index
+int stride = gridDim.x * blockDim.x;            // Total threads in grid
+for (int idx = i; idx < n; idx += stride) {
+    // Process element idx
+}
+```
+
+**Why this works:**
+1. **Correctness**: Every index `0` to `n-1` is visited exactly once. Thread `t` in the grid processes indices `t, t + stride, t + 2*stride, ...`
+2. **Scalability**: The same kernel works for `n = 100` or `n = 100M` without changing the launch configuration
+3. **Coalesced access**: In each loop iteration, adjacent threads access adjacent memory locations, maximizing memory throughput
+
+**SAXPY computation:**
+The operation `y[i] = a * x[i] + y[i]` is a fused multiply-add (FMA). On modern NVIDIA GPUs, this executes as a single instruction with FP32 precision. The FMA is critical to numerical stability compared to separate multiply and add operations.
+
+## Complexity
+
+- **Time complexity**: O(n / (gridDim × blockDim)) — each thread processes approximately n/stride elements
+- **Space complexity**: O(1) extra space beyond the input/output arrays
+- **Memory throughput**: O(3n) — each element of x and y is read once, y is written once
+
+## Key Insights
+
+1. **Grid-stride decouples grid size from problem size**: You can choose any convenient block size (typically 128, 256, or 512) and grid size without worrying about exact divisibility or matching n.
+
+2. **Stride calculation is critical**: Using `gridDim.x * blockDim.x` gives the total number of threads in the grid. This is the step size for each thread's loop.
+
+3. **Load imbalance is bounded**: When n is not a multiple of stride, some threads process one more element than others. The difference is at most 1 element per thread.
+
+4. **This pattern scales to 3D**: For 2D/3D problems, use the same pattern with multiple indices:
+   ```cpp
+   int strideX = gridDim.x * blockDim.x;
+   int strideY = gridDim.y * blockDim.y;
+   for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < width; x += strideX) {
+       for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < height; y += strideY) {
+           // Process (x, y)
+       }
+   }
+   ```
+
+5. **Coalesced access is preserved**: Even with multiple iterations per thread, adjacent threads access adjacent memory in each iteration, maintaining optimal memory throughput.
+
+## Common Mistakes
+
+- **Using `blockDim.x` as stride**: The stride must be `gridDim.x * blockDim.x` (total threads), not just `blockDim.x` (threads per block). Using `blockDim.x` would cause threads in different blocks to process overlapping elements.
+
+- **Off-by-one in loop condition**: Use `idx < n`, not `idx <= n`. The last valid index is `n - 1`.
+
+- **Forgetting the bounds check**: The loop condition `idx < n` serves as the bounds check. Do not add an extra `if (idx < n)` inside the loop body — it's redundant and may confuse the compiler's vectorization.
+
+- **Using the wrong variable in the increment**: Use `idx += stride`, not `i += stride` (unless you've named your loop variable `i`). The loop increment must use the same variable as the loop condition.
+
+- **Launching with gridDim = 1**: While technically valid, this minimizes parallelism. A typical configuration uses 128-512 blocks for medium-sized arrays, scaling up for larger arrays.
+
+## When to Use Grid-Stride Loops
+
+| Scenario | Recommended |
+|----------|-------------|
+| Array size known at compile time and fits in grid | Optional (single-assignment is fine) |
+| Array size unknown until runtime | **Required** |
+| Processing multiple arrays of different sizes | **Required** |
+| Building reusable library kernels | **Required** |
+| Very small arrays (n < 1024) | Optional (may prefer 1:1 mapping) |
+
+For production code, prefer the grid-stride pattern even when a 1:1 mapping would work. It future-proofs your kernel against larger inputs and is the idiomatic CUDA pattern for most algorithms.
+
+---end---
