@@ -22,6 +22,53 @@ CUDA (Compute Unified Device Architecture) is NVIDIA's parallel computing platfo
 
 Threads in CUDA are organised into a hierarchy: threads are grouped into **blocks**, and blocks are grouped into a **grid**. Each thread has a unique identity given by `threadIdx` (position within its block) and `blockIdx` (the block's position in the grid). Using these two built-in variables, a thread can compute a global index into the data it is responsible for.
 
+### Vector Addition: A Fundamental Operation
+
+Vector addition is one of the most basic operations in scientific computing, representing an **element-wise** operation where each output element depends only on the corresponding input elements. This makes it an ideal starting point for learning CUDA because:
+
+1. **Embarrassingly parallel**: Each output element `c[i]` is computed independently from `a[i]` and `b[i]`, with no dependencies between threads
+2. **Memory-bound, not compute-bound**: The operation performs one floating-point addition per element read, making memory bandwidth the primary performance limiter rather than arithmetic throughput
+3. **Simple correctness verification**: The expected output is trivial to compute, making it easy to validate your kernel
+
+### Thread Indexing and the 1D Grid Pattern
+
+The canonical 1D thread indexing formula is:
+
+```cpp
+int i = blockIdx.x * blockDim.x + threadIdx.x;
+```
+
+This formula maps each thread to a unique global index:
+- `threadIdx.x` ranges from 0 to `blockDim.x - 1` (e.g., 0 to 255 for a 256-thread block)
+- `blockIdx.x` ranges from 0 to `gridSize - 1`
+- The result `i` ranges from 0 to `gridSize * blockDim.x - 1`
+
+With 256 threads per block and 1024 blocks, you can address up to 262,144 elements (256 × 1024). For larger arrays, you need either more blocks (up to the 2^31-1 limit) or the grid-stride loop pattern covered in the next problem.
+
+### Memory Coalescing: Why Thread Order Matters
+
+When multiple threads in a warp (a group of 32 threads) access global memory, the GPU can combine their memory requests into a single transaction if the addresses are contiguous or have a regular stride. This is called **coalesced memory access**.
+
+In vector addition, when threads 0-31 (the first warp) access `a[0]`, `a[1]`, ..., `a[31]`, the GPU issues a single 128-byte memory transaction that loads all 32 floats at once. This is the most efficient use of memory bandwidth.
+
+Conversely, **uncoalesced access** occurs when threads in a warp access scattered addresses. For example, if thread 0 accesses `a[0]`, thread 1 accesses `a[1024]`, thread 2 accesses `a[2048]`, and so on, the GPU must issue 32 separate memory transactions, reducing effective bandwidth by up to 32x.
+
+The standard indexing formula `i = blockIdx.x * blockDim.x + threadIdx.x` ensures coalesced access because adjacent threads (within a warp) access adjacent memory locations. This is why proper thread indexing is critical for GPU performance, not just correctness.
+
+### CUDA Memory Management Workflow
+
+GPU memory management follows a strict separation between host (CPU) and device (GPU) memory. The typical workflow is:
+
+1. **Allocate device memory**: `cudaMalloc(&d_ptr, nbytes)` allocates nbytes on the GPU and returns a device pointer
+2. **Copy data to device**: `cudaMemcpy(d_ptr, h_ptr, nbytes, cudaMemcpyHostToDevice)` transfers data from host to device
+3. **Launch kernel**: `kernel<<<gridSize, blockSize>>>(d_ptr, ...)` executes the kernel on the GPU
+4. **Copy results back**: `cudaMemcpy(h_ptr, d_ptr, nbytes, cudaMemcpyDeviceToHost)` transfers results to host
+5. **Free device memory**: `cudaFree(d_ptr)` releases GPU memory
+
+All of these operations are **blocking** by default (except kernel launches, which are asynchronous). This means `cudaMemcpy` with `HostToDevice` will not return until the data transfer is complete, and `cudaFree` will not return until all prior operations on that memory have finished.
+
+Error handling in CUDA typically involves checking the return value of each API call, as errors like `cudaErrorMemoryAllocation` or `cudaErrorInvalidDevicePointer` can occur if the GPU runs out of memory or receives invalid pointers.
+
 ## What to Implement
 
 Implement the `vecAdd` CUDA kernel that adds two floating-point arrays element-wise:
@@ -93,6 +140,15 @@ void solve(const float* h_a, const float* h_b, float* h_c, int n) {
 - name: "Not multiple of block size"
   input: "5\n1.0 1.0 1.0 1.0 1.0\n2.0 2.0 2.0 2.0 2.0"
   expected: "3.0 3.0 3.0 3.0 3.0"
+- name: "Single element edge case"
+  input: "1\n42.0\n58.0"
+  expected: "100.0"
+- name: "Negative values"
+  input: "4\n-1.0 2.0 -3.0 4.0\n10.0 -20.0 30.0 -40.0"
+  expected: "9.0 -18.0 27.0 -36.0"
+- name: "Large uniform array (1M elements)"
+  input: "1000000\nfill:1.0\nfill:2.0"
+  expected: "fill:3.0"
 
 ---solution---
 __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
@@ -104,23 +160,128 @@ __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
 
 ---harness---
 #include <cstdio>
+#include <cstring>
+#include <cmath>
 #include <vector>
 
-int main() {
-    int n;
-    if (scanf("%d", &n) != 1) return 1;
-
-    std::vector<float> a(n), b(n), c(n);
-    for (int i = 0; i < n; i++) scanf("%f", &a[i]);
-    for (int i = 0; i < n; i++) scanf("%f", &b[i]);
-
-    solve(a.data(), b.data(), c.data(), n);
-
-    for (int i = 0; i < n; i++) {
-        if (i) printf(" ");
-        printf("%.1f", c[i]);
+// Read a float (either a single value or "fill:value" for bulk values)
+static float readFloat(bool& isFill, float& fillValue) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        isFill = true;
+        fillValue = atof(tok + 5);
+        return fillValue;
+    } else {
+        isFill = false;
+        return atof(tok);
     }
-    printf("\n");
+}
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        // Verify mode: run CPU reference and compare with GPU
+        int N;
+        scanf("%d", &N);
+
+        std::vector<float> a(N), b(N), c(N);
+
+        // Read array a
+        bool isFillA;
+        float fillA;
+        char tok[64];
+        scanf("%s", tok);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            fillA = atof(tok + 5);
+            for (int i = 0; i < N; i++) a[i] = fillA;
+        } else {
+            a[0] = atof(tok);
+            for (int i = 1; i < N; i++) scanf("%f", &a[i]);
+        }
+
+        // Read array b
+        bool isFillB;
+        float fillB;
+        scanf("%s", tok);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            fillB = atof(tok + 5);
+            for (int i = 0; i < N; i++) b[i] = fillB;
+        } else {
+            b[0] = atof(tok);
+            for (int i = 1; i < N; i++) scanf("%f", &b[i]);
+        }
+
+        // CPU reference: c[i] = a[i] + b[i]
+        for (int i = 0; i < N; i++) {
+            c[i] = a[i] + b[i];
+        }
+
+        // Call the GPU solution
+        extern void solve(const float*, const float*, float*, int);
+        solve(a.data(), b.data(), c.data(), N);
+
+        // Compare results with relative tolerance
+        bool passed = true;
+        float max_rel_err = 0.0f;
+        for (int i = 0; i < N; i++) {
+            float expected = a[i] + b[i];
+            float actual = c[i];
+            float rel_err = (expected != 0) ? fabs(actual - expected) / fabs(expected) : fabs(actual - expected);
+            if (rel_err > max_rel_err) max_rel_err = rel_err;
+            if (rel_err > 1e-4f) {
+                passed = false;
+                break;
+            }
+        }
+
+        printf("%d\n", passed ? 1 : 0);
+    } else {
+        // Normal mode: read input, run GPU, print result
+        int N = atoi(first);
+
+        // Read array a
+        std::vector<float> a(N);
+        bool isFillA;
+        float fillA;
+        char tok[64];
+        scanf("%s", tok);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            fillA = atof(tok + 5);
+            for (int i = 0; i < N; i++) a[i] = fillA;
+        } else {
+            a[0] = atof(tok);
+            for (int i = 1; i < N; i++) scanf("%f", &a[i]);
+        }
+
+        // Read array b
+        std::vector<float> b(N);
+        bool isFillB;
+        float fillB;
+        scanf("%s", tok);
+        if (strncmp(tok, "fill:", 5) == 0) {
+            fillB = atof(tok + 5);
+            for (int i = 0; i < N; i++) b[i] = fillB;
+        } else {
+            b[0] = atof(tok);
+            for (int i = 1; i < N; i++) scanf("%f", &b[i]);
+        }
+
+        // Run GPU solution
+        std::vector<float> c(N);
+        solve(a.data(), b.data(), c.data(), N);
+
+        // Print result (first 10 elements, then count if larger)
+        for (int i = 0; i < N && i < 10; i++) {
+            if (i > 0) printf(" ");
+            printf("%.1f", c[i]);
+        }
+        if (N > 10) printf(" ... (showing %d of %d)", 10, N);
+        printf("\n");
+    }
+
     return 0;
 }
 
@@ -142,18 +303,144 @@ __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
 }
 ```
 
+### Kernel Launch Configuration
+
+The host code launches the kernel with:
+
+```cpp
+const int blockSize = 256;
+const int gridSize = (n + blockSize - 1) / blockSize;
+vecAdd<<<gridSize, blockSize>>>(d_a, d_b, d_c, n);
+```
+
+This configuration ensures:
+- **Full occupancy**: All threads are busy (except possibly the last warp of the last block)
+- **Correct coverage**: The grid covers exactly `gridSize * blockSize >= n` indices
+- **Efficient use**: No more than 511 "wasted" threads (when n is just over a multiple of 256)
+
+### CUDA Error Handling Patterns
+
+While the host code in this problem omits error checking for clarity, production CUDA code should handle errors at every step:
+
+```cpp
+// Pattern 1: Check cudaMalloc for null
+float *d_ptr;
+cudaError_t err = cudaMalloc(&d_ptr, nbytes);
+if (err != cudaSuccess) {
+    fprintf(stderr, "cudaMalloc failed: %s\n", cudaGetErrorString(err));
+    exit(EXIT_FAILURE);
+}
+
+// Pattern 2: Check kernel launch errors (requires a sync to flush)
+vecAdd<<<gridSize, blockSize>>>(d_a, d_b, d_c, n);
+err = cudaGetLastError();  // Catches launch errors (invalid config, etc.)
+if (err != cudaSuccess) {
+    fprintf(stderr, "Kernel launch failed: %s\n", cudaGetErrorString(err));
+}
+
+// Pattern 3: Check for runtime errors after cudaMemcpy
+err = cudaMemcpy(h_c, d_c, nbytes, cudaMemcpyDeviceToHost);
+if (err != cudaSuccess) {
+    fprintf(stderr, "cudaMemcpy failed: %s\n", cudaGetErrorString(err));
+}
+```
+
+Common error types:
+- `cudaErrorInvalidDeviceFunction`: Kernel not compiled for target architecture
+- `cudaErrorInvalidConfiguration`: Invalid gridSize or blockSize (e.g., blockSize > 1024)
+- `cudaErrorMemoryAllocation`: GPU out of memory
+- `cudaErrorIllegalAddress`: Kernel accessed invalid memory (bug in your code)
+
+### Memory Performance: Why 256 Threads Per Block?
+
+The choice of 256 threads per block is a practical compromise:
+
+- **Small blocks (32-64 threads)**: May not provide enough parallelism to hide memory latency
+- **Large blocks (512-1024 threads)**: May reduce occupancy (fewer blocks can reside on an SM simultaneously)
+- **256 threads**: Good balance — 8 warps per block, fits easily within SM register and shared memory limits
+
+On an H100 GPU with 132 SMs and 4 warps schedulers per SM:
+- With 256-thread blocks: Each SM can run multiple blocks concurrently
+- With proper register usage, you can achieve high occupancy (many warps resident per SM)
+- High occupancy enables zero-overhead context switching between warps when one stalls on memory
+
 ## Complexity
 
-- **Time**: O(n/P) where P is the number of GPU threads executing in parallel
-- **Memory**: O(n) — three arrays of size n on the GPU
+### Time Complexity
 
-## Key Insight
+- **Serial baseline**: O(n) — a CPU loop processes n elements sequentially
+- **Parallel GPU**: O(n/P + log P) where P is the number of parallel threads
+  - `n/P`: Each of P threads processes ~n/P elements
+  - `log P`: Synchronization and kernel launch overhead (negligible for large n)
 
-The 1D indexing formula `blockIdx.x * blockDim.x + threadIdx.x` is the CUDA equivalent of a loop index. With 256 threads per block and a grid of `ceil(n/256)` blocks, every element in `[0, n)` gets exactly one thread. The out-of-bounds guard is critical — without it, the last partial block would write garbage to memory beyond the array.
+For n = 10,000,000 and P ≈ 65,536 active threads (256 blocks × 256 threads):
+- Each thread processes ~152 elements
+- Theoretical speedup: ~152x (ignoring memory overhead)
+
+In practice, speedup is limited by:
+- **Memory bandwidth**: H100 achieves ~3.35 TB/s HBM3 bandwidth
+- **Kernel launch latency**: ~10-20 microseconds per launch
+- **PCIe transfer time**: Host↔device transfers add 100-500 microseconds for 40MB of data
+
+### Space Complexity
+
+- **Device memory**: O(n) — three float arrays of size n
+  - For n = 10,000,000: 3 × 10M × 4 bytes ≈ 120 MB
+  - This fits easily in typical GPU memory (H100: 80 GB, A100: 40-80 GB)
+- **Host memory**: O(n) — three float arrays for input/output
+- **Extra space**: O(1) — no auxiliary buffers needed
+
+### Memory Throughput Analysis
+
+For n = 10,000,000 floats (40 MB):
+- **Reads**: 2 × 40 MB = 80 MB (arrays a and b)
+- **Writes**: 1 × 40 MB = 40 MB (array c)
+- **Total**: 120 MB memory traffic
+
+On an H100 with 3.35 TB/s bandwidth:
+- Theoretical memory time: 120 MB / 3.35 TB/s ≈ 36 microseconds
+- Realistic time (with overhead): ~100-200 microseconds
+
+Compare to CPU (DDR5, ~50 GB/s):
+- Memory time: 120 MB / 50 GB/s ≈ 2.4 milliseconds
+- Speedup from bandwidth alone: ~12-24x
+
+## Key Insights
+
+1. **The 1D indexing formula is universal**: `blockIdx.x * blockDim.x + threadIdx.x` is the foundation for all 1D CUDA problems. Memorize this pattern.
+
+2. **Bounds checking is non-negotiable**: When n is not a multiple of the total thread count, the last block has "overflow" threads that must not access memory. The `if (i < n)` guard is essential.
+
+3. **Coalesced access is automatic with proper indexing**: The standard indexing formula ensures that thread 0, 1, 2, ..., 31 (the first warp) access consecutive memory addresses, enabling efficient 128-byte memory transactions.
+
+4. **Grid size calculation uses ceiling division**: `(n + blockSize - 1) / blockSize` computes `ceil(n / blockSize)` using integer arithmetic. This is a common idiom in CUDA code.
+
+5. **This problem is memory-bound, not compute-bound**: Adding two floats takes a fraction of a nanosecond. The dominant cost is loading a and b from global memory and writing c back. Optimizations that reduce memory traffic (e.g., reusing loaded values) have more impact than optimizing the arithmetic.
 
 ## Common Mistakes
 
-- **Forgetting the bounds check**: If n=5 and blockDim.x=256, block 0 has 256 threads but only indices 0–4 are valid. Threads 5–255 must not write to `c`.
-- **Wrong grid size**: Use `(n + blockSize - 1) / blockSize`, not `n / blockSize`, to handle non-multiples. The host code already does this for you here.
-- **Missing `cudaMemcpy` back**: Results on the device are not visible to the host until copied back with `cudaMemcpyDeviceToHost`.
+### Critical Errors
+
+- **Forgetting the bounds check**: If n=5 and blockDim.x=256, block 0 has 256 threads but only indices 0–4 are valid. Threads 5–255 write to c[5], c[6], ..., c[255] — undefined behavior that may corrupt memory or cause a crash.
+
+- **Off-by-one in grid size**: Using `n / blockSize` instead of `(n + blockSize - 1) / blockSize` causes the last elements to be skipped. For n=513 and blockSize=256, `513/256 = 1` (integer division), but you need 2 blocks to cover all elements.
+
+- **Swapping a and b in the formula**: Writing `c[i] = a[i] + b` (missing index) or `c[i] = a + b[i]` (missing index) compiles but produces garbage or crashes.
+
+### Performance Pitfalls
+
+- **Using too few blocks**: Launching with gridSize=1 limits parallelism to 256 threads, making the GPU act like a 256-core CPU. For large n, use more blocks to saturate the GPU.
+
+- **Unnecessary synchronization**: Adding `__syncthreads()` inside the kernel is redundant and harmful. Each thread works independently, so no synchronization is needed.
+
+- **Ignoring kernel launch asynchrony**: Kernel launches are asynchronous — the host continues immediately after `<<<>>>`. If you need to ensure completion, call `cudaDeviceSynchronize()` or check for errors.
+
+### Debugging Tips
+
+- **Use cuda-memcheck**: Run `cuda-memcheck ./program` to detect out-of-bounds accesses, race conditions, and other runtime errors.
+
+- **Check the last warp**: The most common bug is in the last block's overflow threads. Test with n values just above powers of 2 (e.g., n=257, n=513, n=1025) to trigger edge cases.
+
+- **Print thread indices**: For debugging, have threads print their indices: `if (threadIdx.x == 0) printf("Block %d: threads 0-%d\n", blockIdx.x, blockDim.x-1);`
+
 ---end---

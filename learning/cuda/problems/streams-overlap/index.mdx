@@ -217,6 +217,9 @@ int main() {
 }
 
 ---test-cases---
+- name: "Single element edge case"
+  input: "1"
+  expected: "Results correct"
 - name: "Small array (correctness check)"
   input: "1000"
   expected: "Results correct"
@@ -228,6 +231,9 @@ int main() {
   expected: "Results correct"
 - name: "Very large array (50M elements)"
   input: "50000000"
+  expected: "Results correct"
+- name: "Boundary case: exactly one chunk per stream"
+  input: "1024"
   expected: "Results correct"
 
 ---solution---
@@ -347,16 +353,99 @@ Stream 3:                         [H2D_3][Kernel_3][D2H_3]
 
 You might wonder: why not use 100 streams instead of 4? There are limits:
 
-- **Hardware concurrency**: GPUs have a finite number of work queues (HyperQ allows ~32 concurrent operations)
+- **Hardware concurrency**: GPUs have a finite number of work queues (HyperQ allows ~32 concurrent operations on modern GPUs)
 - **PCIe bandwidth**: All H2D transfers share the same bus; more streams don't increase bandwidth
 - **Memory pressure**: Each chunk needs device memory; too many chunks may exceed GPU memory
+- **Diminishing returns**: Beyond 4-8 streams, additional streams add overhead without improving overlap
 
-In practice, 4-8 streams is often the sweet spot for PCIe-connected GPUs.
+### Overhead Sources
+
+Stream-based pipelining introduces several overhead sources:
+
+1. **Stream creation/destruction**: ~1-5 µs per stream
+2. **Async API calls**: ~0.1-1 µs per `cudaMemcpyAsync` or kernel launch
+3. **Synchronization**: ~5-10 µs for `cudaStreamSynchronize()`
+4. **Pinned memory allocation**: ~10-50 µs per `cudaMallocHost()`
+5. **Staging copies**: CPU copies to/from pinned buffers add ~N × 0.01 µs
+
+For small N, these overheads dominate:
+- N = 1K: Overhead ≈ 100 µs, actual work ≈ 5 µs (20x overhead)
+- N = 1M: Overhead ≈ 100 µs, actual work ≈ 500 µs (5x overhead reduced)
+- N = 10M: Overhead ≈ 100 µs, actual work ≈ 5000 µs (2% overhead)
+
+### When to Use Streams
+
+| Scenario | Recommended Streams | Expected Speedup |
+|------|--|--|
+| Small batch (N < 1M) | 1 (sequential) | N/A |
+| Medium batch (N = 1-10M) | 4 | 1.2-2x |
+| Large batch (N > 10M) | 4-8 | 2-4x |
+| Streaming (continuous) | 4-8 + CUDA Graphs | 2-3x steady state |
+| Multi-GPU | NUM_STREAMS × num_gpus | Near-linear scaling |
+
+For production code, consider:
+- **Dynamic stream count**: Adjust based on data size
+- **CUDA Graphs**: Reduce overhead for repeated workloads
+- **Unified Memory**: Simplifies staging at slight performance cost
 
 ## Complexity
 
 - **Time**: O(n/P) where P is the effective parallelism from stream overlap
-- **Memory**: O(n) — same as sequential, but with extra pinned host buffers
+  - Sequential: T_seq ≈ T_H2D + T_kernel + T_D2H
+  - Pipelined: T_pipe ≈ T_H2D + T_kernel + T_D2H + T_overhead
+    - With ideal overlap: T_pipe ≈ max(T_H2D, T_kernel, T_D2H) + T_overhead
+- **Memory**: O(n) — same as sequential, but with extra pinned host buffers (2× for input and output staging)
+- **Stream overhead**: O(NUM_STREAMS) — creating/destroying streams and synchronization
+
+### Overhead vs Benefit Analysis
+
+Stream pipelining introduces overhead that may not be worth it for small workloads:
+
+| Data Size | Sequential Time | Pipelined Time | Speedup | Verdict |
+|------|--|--|--|-|
+| N = 1K | ~0.1 ms | ~0.15 ms | 0.67x | **Negative** — overhead dominates |
+| N = 1M | ~5 ms | ~4 ms | 1.25x | **Marginal** — slight benefit |
+| N = 10M | ~50 ms | ~20 ms | 2.5x | **Good** — clear overlap |
+| N = 50M | ~250 ms | ~80 ms | 3.1x | **Excellent** — near-ideal overlap |
+
+**When streams help:**
+- Large data sizes (N > 5M for typical PCIe bandwidth)
+- Compute-bound kernels (T_kernel dominates)
+- Multiple independent workloads (batch processing)
+- Streaming workloads (continuous data feed)
+
+**When streams don't help:**
+- Small data sizes (N < 1M)
+- Latency-bound operations (quick kernels)
+- One-off computations (setup cost > benefit)
+- Memory-bound kernels with poor coalescing
+
+### Performance Metrics from cluster-execution.json
+
+The following metrics indicate successful stream overlap:
+
+1. **PCIe Utilization**: Should be high (>80%) during H2D and D2H phases
+2. **SM Occupancy**: Should remain high during kernel phases
+3. **Concurrent Activity**: Nsight Systems should show overlapping H2D, kernel, and D2H bars
+
+Expected speedup formula:
+```
+Speedup ≈ (T_H2D + T_kernel + T_D2H) / (max(T_H2D, T_kernel, T_D2H) + T_overhead)
+```
+
+For typical H100 + PCIe 4.0:
+- T_H2D ≈ N × 4 bytes / 16 GB/s ≈ N × 0.25 µs
+- T_D2H ≈ N × 4 bytes / 16 GB/s ≈ N × 0.25 µs
+- T_kernel ≈ N / 100,000 µs (depends on kernel complexity)
+- T_overhead ≈ 10-50 µs (stream setup, synchronization)
+
+For N = 10M:
+- T_H2D ≈ 2500 µs = 2.5 ms
+- T_D2H ≈ 2500 µs = 2.5 ms
+- T_kernel ≈ 10-20 ms (depends on computation)
+- T_seq ≈ 25-30 ms
+- T_pipe ≈ 10-15 ms + overhead ≈ 15-20 ms
+- Speedup ≈ 1.5-2x
 
 ## Key Insights
 
