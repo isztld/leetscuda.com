@@ -1,0 +1,544 @@
+---
+slug: quantization-exercise
+title: INT8 Quantize/Dequantize Kernel
+difficulty: medium
+track: cuda
+tags:
+  - quantization
+  - int8
+  - vectorized-access
+  - kernel-fusion
+status: published
+author: team
+xp: 200
+runtime: cuda
+cpp_standard: "17"
+cuda_version: "12.6"
+compute_cap: "sm_120"
+---
+
+## Background
+
+**Quantization** maps high-precision floating-point values (FP32 or FP16) to lower-precision representations, typically 8-bit integers (INT8) or 8-bit floats (FP8). The motivation is straightforward: reducing precision by half (FP16 to INT8) or quarter (FP32 to INT8) cuts memory bandwidth requirements proportionally. For memory-bound operations like weight loading in LLMs, this directly translates to higher throughput.
+
+**INT8 linear quantization** follows the formula:
+```
+x_q = round(clamp(x / scale, -128, 127))
+```
+
+where `scale = absmax / 127.0f` and `absmax = max(|x_i|)` across the tensor. Dequantization reverses this:
+```
+x_approx = x_q * scale
+```
+
+The quantized value `x_q` is stored as `int8_t` (signed 8-bit integer, range -128 to 127). During inference, dequantization is fused into subsequent operations to avoid materializing FP16 intermediates.
+
+There are two quantization granularities:
+
+**Per-tensor quantization**: One scale factor for the entire tensor. Simple to implement but sensitive to outliers—a single large value inflates `absmax`, compressing the scale for all other values and increasing quantization error.
+
+**Per-channel quantization**: One scale factor per output channel (typically per row of a weight matrix). More accurate because each channel's scale adapts to its own dynamic range. Required for weight-only quantization in transformers where each linear layer's output channels have different activation distributions.
+
+**Vectorized memory access** using `char4` (a struct of 4 `int8_t` values) loads/stores 4 bytes in a single instruction. This is critical for quantization kernels because the bottleneck is memory bandwidth, not arithmetic. Processing 4 elements per thread reduces global memory transactions by 4×.
+
+Modern LLM inference frameworks (vLLM, TGI, TensorRT-LLM) use INT8/FP8 quantization extensively. Understanding how to implement quantize/dequantize kernels—and fuse them with activation functions—is essential for AI infrastructure roles.
+
+## What to Implement
+
+Implement two CUDA kernels for INT8 quantization:
+
+**Kernel 1: `quantizeKernel`** — Convert FP32 inputs to INT8 with per-tensor scaling.
+
+Algorithm:
+1. Each thread loads one FP32 value `x`
+2. Compute `scale = globalAbsmax / 127.0f`
+3. Quantize: `x_q = (int8_t)round(clamp(x / scale, -128.0f, 127.0f))`
+4. Store `x_q` to output array
+
+**Kernel 2: `dequantizeKernel`** — Convert INT8 inputs back to FP32.
+
+Algorithm:
+1. Each thread loads one INT8 value `x_q`
+2. Compute `scale = globalAbsmax / 127.0f`
+3. Dequantize: `x_approx = (float)x_q * scale`
+4. Store `x_approx` to output array
+
+**Kernel 3: `quantizeReluKernel`** — Fused quantize + ReLU activation.
+
+Algorithm:
+1. Each thread loads one FP32 value `x`
+2. Apply ReLU: `x_relu = max(0.0f, x)`
+3. Compute `scale = globalAbsmax / 127.0f` (globalAbsmax computed over original inputs)
+4. Quantize: `x_q = (int8_t)round(clamp(x_relu / scale, -128.0f, 127.0f))`
+5. Store `x_q` to output array
+
+For per-channel quantization, implement `quantizePerChannelKernel`:
+
+**Kernel 4: `quantizePerChannelKernel`** — Quantize a weight matrix with one scale per output channel.
+
+Algorithm:
+1. Matrix shape: `rows × cols` where each row is one output channel
+2. First pass: compute `absmax[row] = max(|matrix[row][col]|)` for all columns
+3. Compute `scale[row] = absmax[row] / 127.0f`
+4. Second pass: `matrix_q[row][col] = (int8_t)round(clamp(matrix[row][col] / scale[row], -128, 127))`
+
+**Constraints**
+
+- Use `absmax` computed from the input tensor (per-tensor) or per row (per-channel)
+- The scale factor is a single FP32 value (per-tensor) or array of `rows` FP32 values (per-channel)
+- Saturating cast: values beyond [-127, 127] clamp to -128 or 127
+- Do not modify the host code in `solve()`
+- Use `fminf(fmaxf(val, -127.0f), 127.0f)` for clamping to avoid branch divergence
+
+## Example
+
+**Input (per-tensor):**
+```
+N = 4
+values = [1.0, 2.0, 3.0, 4.0]
+globalAbsmax = 4.0
+```
+
+**Quantization:**
+```
+scale = 4.0 / 127.0f ≈ 0.0315
+x_q[0] = round(clamp(1.0 / 0.0315, -128, 127)) = round(31.75) = 32
+x_q[1] = round(clamp(2.0 / 0.0315, -128, 127)) = round(63.5) = 64
+x_q[2] = round(clamp(3.0 / 0.0315, -128, 127)) = round(95.25) = 95
+x_q[3] = round(clamp(4.0 / 0.0315, -128, 127)) = round(127.0) = 127
+```
+
+**Output (INT8):** `[32, 64, 95, 127]`
+
+**Dequantization:**
+```
+x_approx[0] = 32 * 0.0315 ≈ 1.01
+x_approx[1] = 64 * 0.0315 ≈ 2.02
+x_approx[2] = 95 * 0.0315 ≈ 2.99
+x_approx[3] = 127 * 0.0315 ≈ 4.00
+```
+
+The round-trip error is at most `scale / 2 ≈ 0.016` (half a quantization step).
+
+---starter-code---
+#include <cuda_runtime.h>
+#include <cmath>
+
+// Per-tensor quantization: compute global absmax, then quantize
+// TODO: Implement the kernel that:
+// 1. Computes globalAbsmax (passed as parameter, pre-computed on CPU)
+// 2. For each element: scale = globalAbsmax / 127.0f
+// 3. x_q = (int8_t)round(clamp(x / scale, -128.0f, 127.0f))
+__global__ void quantizeKernel(const float* input, int8_t* output, float globalAbsmax, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    float scale = globalAbsmax / 127.0f;
+    // Your code here: quantize input[idx] and store to output[idx]
+}
+
+// Per-tensor dequantization
+// TODO: Implement the kernel that:
+// 1. scale = globalAbsmax / 127.0f
+// 2. x_approx = (float)input[idx] * scale
+__global__ void dequantizeKernel(const int8_t* input, float* output, float globalAbsmax, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    float scale = globalAbsmax / 127.0f;
+    // Your code here: dequantize input[idx] and store to output[idx]
+}
+
+// Fused quantize + ReLU
+// TODO: Implement the kernel that:
+// 1. x_relu = max(0.0f, input[idx])
+// 2. Quantize x_relu (use pre-computed globalAbsmax from original input)
+__global__ void quantizeReluKernel(const float* input, int8_t* output, float globalAbsmax, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    // Your code here
+}
+
+// Per-channel quantization for a rows×cols matrix
+// TODO: Implement a two-kernel solution:
+// Kernel A: Compute absmax for each row (store to absmaxArray of size rows)
+// Kernel B: Quantize using scale[row] = absmaxArray[row] / 127.0f
+__global__ void computeRowAbsmaxKernel(const float* matrix, float* absmaxArray, int rows, int cols) {
+    int row = blockIdx.x;
+    if (row >= rows) return;
+
+    // Your code here: find max(|matrix[row][col]|) for col in [0, cols)
+}
+
+__global__ void quantizePerChannelKernel(const float* matrix, int8_t* matrix_q, float* absmaxArray, int rows, int cols) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = rows * cols;
+    if (idx >= total) return;
+
+    int row = idx / cols;
+    // Your code here: quantize matrix[idx] using scale[row]
+}
+
+// Do NOT modify below this line.
+void solve(const float* h_input, int8_t* h_output, int n, float globalAbsmax, bool doRelu) {
+    float *d_input;
+    int8_t *d_output;
+    cudaMalloc(&d_input, n * sizeof(float));
+    cudaMalloc(&d_output, n * sizeof(int8_t));
+
+    cudaMemcpy(d_input, h_input, n * sizeof(float), cudaMemcpyHostToDevice);
+
+    const int blockSize = 256;
+    const int gridSize = (n + blockSize - 1) / blockSize;
+
+    if (doRelu) {
+        quantizeReluKernel<<<gridSize, blockSize>>>(d_input, d_output, globalAbsmax, n);
+    } else {
+        quantizeKernel<<<gridSize, blockSize>>>(d_input, d_output, globalAbsmax, n);
+    }
+
+    cudaMemcpy(h_output, d_output, n * sizeof(int8_t), cudaMemcpyDeviceToHost);
+    cudaFree(d_input);
+    cudaFree(d_output);
+}
+
+void solveDequantize(const int8_t* h_input, float* h_output, int n, float globalAbsmax) {
+    int8_t *d_input;
+    float *d_output;
+    cudaMalloc(&d_input, n * sizeof(int8_t));
+    cudaMalloc(&d_output, n * sizeof(float));
+
+    cudaMemcpy(d_input, h_input, n * sizeof(int8_t), cudaMemcpyHostToDevice);
+
+    const int blockSize = 256;
+    const int gridSize = (n + blockSize - 1) / blockSize;
+
+    dequantizeKernel<<<gridSize, blockSize>>>(d_input, d_output, globalAbsmax, n);
+
+    cudaMemcpy(h_output, d_output, n * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(d_input);
+    cudaFree(d_output);
+}
+
+void solvePerChannel(const float* h_matrix, int8_t* h_matrix_q, int rows, int cols) {
+    float *d_matrix, *d_absmaxArray;
+    int8_t *d_matrix_q;
+
+    cudaMalloc(&d_matrix, rows * cols * sizeof(float));
+    cudaMalloc(&d_absmaxArray, rows * sizeof(float));
+    cudaMalloc(&d_matrix_q, rows * cols * sizeof(int8_t));
+
+    cudaMemcpy(d_matrix, h_matrix, rows * cols * sizeof(float), cudaMemcpyHostToDevice);
+
+    // Compute per-channel absmax
+    computeRowAbsmaxKernel<<<rows, 256>>>(d_matrix, d_absmaxArray, rows, cols);
+
+    // Quantize using per-channel scales
+    const int total = rows * cols;
+    const int blockSize = 256;
+    const int gridSize = (total + blockSize - 1) / blockSize;
+    quantizePerChannelKernel<<<gridSize, blockSize>>>(d_matrix, d_matrix_q, d_absmaxArray, rows, cols);
+
+    cudaMemcpy(h_matrix_q, d_matrix_q, rows * cols * sizeof(int8_t), cudaMemcpyDeviceToHost);
+    cudaFree(d_matrix);
+    cudaFree(d_absmaxArray);
+    cudaFree(d_matrix_q);
+}
+
+---test-cases---
+- name: "Small quantize"
+  input: "4\n1.0 2.0 3.0 4.0\n4.0\n0"
+  expected: "32 64 95 127"
+- name: "Negative values"
+  input: "4\n-4.0 -2.0 2.0 4.0\n4.0\n0"
+  expected: "-127 -64 64 127"
+- name: "Zero input"
+  input: "4\n0.0 0.0 0.0 0.0\n0.001\n0"
+  expected: "0 0 0 0"
+- name: "Quantize and dequantize"
+  input: "verify 256"
+  expected: "1"
+- name: "Quantize with ReLU"
+  input: "4\n-2.0 1.0 3.0 -1.0\n3.0\n1"
+  expected: "0 42 127 0"
+- name: "Per-channel quantize 2x4"
+  input: "perchannel 2 4\n-1.0 -2.0 2.0 3.0\n-3.0 -1.0 1.0 4.0"
+  expected: "-42 -85 85 127\n-127 -42 42 127"
+
+---solution---
+#include <cuda_runtime.h>
+#include <cmath>
+
+// Per-tensor quantization
+__global__ void quantizeKernel(const float* input, int8_t* output, float globalAbsmax, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    float scale = globalAbsmax / 127.0f;
+    if (scale < 1e-9f) {
+        output[idx] = 0;
+        return;
+    }
+    float val = input[idx] / scale;
+    // Clamp to [-127, 127] then round and cast
+    val = fminf(fmaxf(val, -127.0f), 127.0f);
+    output[idx] = (int8_t)roundf(val);
+}
+
+// Per-tensor dequantization
+__global__ void dequantizeKernel(const int8_t* input, float* output, float globalAbsmax, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    float scale = globalAbsmax / 127.0f;
+    output[idx] = (float)input[idx] * scale;
+}
+
+// Fused quantize + ReLU
+__global__ void quantizeReluKernel(const float* input, int8_t* output, float globalAbsmax, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    float scale = globalAbsmax / 127.0f;
+    if (scale < 1e-9f) {
+        output[idx] = 0;
+        return;
+    }
+    float val = fmaxf(input[idx], 0.0f) / scale;  // ReLU then scale
+    val = fminf(fmaxf(val, -127.0f), 127.0f);
+    output[idx] = (int8_t)roundf(val);
+}
+
+// Compute per-channel absmax (one thread block per row)
+__global__ void computeRowAbsmaxKernel(const float* matrix, float* absmaxArray, int rows, int cols) {
+    int row = blockIdx.x;
+    if (row >= rows) return;
+
+    int tid = threadIdx.x;
+    __shared__ float smax[256];
+
+    float rowMax = 0.0f;
+    for (int col = tid; col < cols; col += blockDim.x) {
+        float val = fabsf(matrix[row * cols + col]);
+        if (val > rowMax) rowMax = val;
+    }
+    smax[tid] = rowMax;
+    __syncthreads();
+
+    // Parallel reduce within block
+    for (int stride = 128; stride > 0; stride >>= 1) {
+        if (tid < stride) smax[tid] = fmaxf(smax[tid], smax[tid + stride]);
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        absmaxArray[row] = smax[0];
+    }
+}
+
+// Per-channel quantization
+__global__ void quantizePerChannelKernel(const float* matrix, int8_t* matrix_q, float* absmaxArray, int rows, int cols) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = rows * cols;
+    if (idx >= total) return;
+
+    int row = idx / cols;
+    float absmax = absmaxArray[row];
+    float scale = absmax / 127.0f;
+
+    if (scale < 1e-9f) {
+        matrix_q[idx] = 0;
+        return;
+    }
+
+    float val = matrix[idx] / scale;
+    val = fminf(fmaxf(val, -127.0f), 127.0f);
+    matrix_q[idx] = (int8_t)roundf(val);
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <algorithm>
+#include <iomanip>
+
+static float computeAbsmax(const std::vector<float>& v) {
+    float maxVal = 0.0f;
+    for (float x : v) {
+        float ax = fabsf(x);
+        if (ax > maxVal) maxVal = ax;
+    }
+    return maxVal;
+}
+
+static void readMatrix(std::vector<float>& m, int N) {
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float v = atof(tok + 5);
+        for (int i = 0; i < N; i++) m[i] = v;
+    } else {
+        m[0] = atof(tok);
+        for (int i = 1; i < N; i++) scanf("%f", &m[i]);
+    }
+}
+
+static void printInt8Array(const std::vector<int8_t>& v) {
+    for (size_t i = 0; i < v.size(); i++) {
+        if (i) printf(" ");
+        printf("%d", (int)v[i]);
+    }
+    printf("\n");
+}
+
+static void printFloatArray(const std::vector<float>& v) {
+    for (size_t i = 0; i < v.size(); i++) {
+        if (i) printf(" ");
+        printf("%.1f", v[i]);
+    }
+    printf("\n");
+}
+
+int main() {
+    char first[64];
+    scanf("%s", first);
+
+    if (strcmp(first, "verify") == 0) {
+        int N;
+        scanf("%d", &N);
+
+        std::vector<float> h_input(N);
+        for (int i = 0; i < N; i++) {
+            h_input[i] = (float)((i % 17 - 8) * 1.5f);  // Range roughly [-12, 12]
+        }
+
+        float globalAbsmax = computeAbsmax(h_input);
+        std::vector<int8_t> h_quant(N);
+        std::vector<float> h_dequant(N);
+
+        extern void solve(const float*, int8_t*, int, float, bool);
+        extern void solveDequantize(const int8_t*, float*, int, float);
+
+        solve(h_input.data(), h_quant.data(), N, globalAbsmax, false);
+        solveDequantize(h_quant.data(), h_dequant.data(), N, globalAbsmax);
+
+        // Check round-trip error: should be at most scale/2
+        float scale = globalAbsmax / 127.0f;
+        float maxErr = 0.0f;
+        bool ok = true;
+        for (int i = 0; i < N && ok; i++) {
+            float err = fabsf(h_dequant[i] - h_input[i]);
+            if (err > maxErr) maxErr = err;
+            if (err > scale * 0.51f) ok = false;  // Allow small tolerance
+        }
+
+        printf("%d\n", ok ? 1 : 0);
+    } else if (strcmp(first, "perchannel") == 0) {
+        int rows, cols;
+        scanf("%d %d", &rows, &cols);
+        int total = rows * cols;
+
+        std::vector<float> h_matrix(total);
+        for (int i = 0; i < total; i++) {
+            scanf("%f", &h_matrix[i]);
+        }
+
+        std::vector<int8_t> h_matrix_q(total);
+        extern void solvePerChannel(const float*, int8_t*, int, int);
+        solvePerChannel(h_matrix.data(), h_matrix_q.data(), rows, cols);
+
+        // Print as rows
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (c) printf(" ");
+                printf("%d", (int)h_matrix_q[r * cols + c]);
+            }
+            printf("\n");
+        }
+    } else {
+        // Normal quantize: N, values, globalAbsmax, doRelu
+        int N = atoi(first);
+        std::vector<float> h_input(N);
+        readMatrix(h_input, N);
+
+        float globalAbsmax;
+        scanf("%f", &globalAbsmax);
+
+        int doRelu;
+        scanf("%d", &doRelu);
+
+        std::vector<int8_t> h_output(N);
+        extern void solve(const float*, int8_t*, int, float, bool);
+        solve(h_input.data(), h_output.data(), N, globalAbsmax, doRelu != 0);
+
+        printInt8Array(h_output);
+    }
+
+    return 0;
+}
+
+---editorial---
+## Approach
+
+INT8 quantization is a two-step process: **scale computation** and **saturating cast**. The scale factor maps the dynamic range of the input tensor to the INT8 range [-127, 127] (we use 127 instead of 128 to avoid overflow when dequantizing -128).
+
+**Per-tensor quantization:**
+```cpp
+float scale = globalAbsmax / 127.0f;
+float val = input[idx] / scale;
+val = fminf(fmaxf(val, -127.0f), 127.0f);  // Saturate
+output[idx] = (int8_t)roundf(val);
+```
+
+The `roundf()` call is critical—truncating instead of rounding doubles the average quantization error. The saturating cast via `fminf/fmaxf` is branch-free and avoids warp divergence.
+
+**Per-channel quantization** requires a two-pass algorithm because each row has its own scale:
+
+**Pass 1:** Compute `absmax[row]` for each row using a parallel reduction within the thread block. Each block handles one row, with threads striding across columns. A shared-memory reduction finds the maximum absolute value.
+
+**Pass 2:** Quantize each element using `scale[row] = absmax[row] / 127.0f`. This is a simple element-wise operation.
+
+**Fused quantize + ReLU** demonstrates kernel fusion: instead of running a separate ReLU kernel followed by a quantize kernel, we combine them. This eliminates the global memory read/write of the ReLU output, reducing bandwidth by 25%.
+
+**Vectorized access** with `char4` is an optimization not shown in the base solution. Instead of loading one float per thread, load four floats using `float4` and store four INT8 values using `char4`. This reduces global memory transactions by 4×:
+```cpp
+// Vectorized version (advanced)
+if ((idx & 3) == 0) {  // Only threads divisible by 4
+    float4 v = reinterpret_cast<float4*>(&input[idx])->x;  // Load 4 floats
+    // Quantize x, y, z, w separately
+    // Store as char4
+}
+```
+
+## Complexity
+
+- **Time**: O(N) for per-tensor, O(N + rows × cols/threads) for per-channel (two passes)
+- **Memory**: O(1) extra per-tensor, O(rows) for per-channel absmax array
+- **Arithmetic intensity**: 2 FLOPs per byte loaded (scale + clamp + round), making this strongly memory-bound
+
+## Key Insights
+
+1. **Scale calibration is the hard part**. The kernel itself is trivial—dividing by scale and casting. But choosing the right scale (per-tensor vs per-channel, using activation statistics vs weight statistics) determines whether quantization preserves accuracy.
+
+2. **127 vs 128**. We use `globalAbsmax / 127.0f` not `globalAbsmax / 128.0f` because INT8 range is [-128, 127]. If we used 128, a value equal to `globalAbsmax` would quantize to 128, which overflows int8_t and wraps to -128.
+
+3. **Outliers break per-tensor quantization**. If one activation is 100× larger than the median, `globalAbsmax` is inflated, and the scale compresses all other values into a narrow range. Per-channel quantization fixes this by computing independent scales.
+
+4. **Quantization error is bounded by scale/2**. After dequantization, the error `|x_approx - x|` is at most half a quantization step, i.e., `scale/2`. This is why calibration datasets matter: they determine `globalAbsmax` and hence the error budget.
+
+## Common Mistakes
+
+- **Using 128 instead of 127**: `scale = globalAbsmax / 128.0f` causes overflow for the max value. A value of `globalAbsmax` would quantize to 128, which overflows int8_t.
+
+- **Truncating instead of rounding**: `(int8_t)(val)` instead of `(int8_t)roundf(val)` increases average error by 2×.
+
+- **Wrong absmax computation**: For per-channel quantization, forgetting that `absmax` is per-row (not per-column) leads to incorrect scales. In transformers, weight matrices are typically `hidden_dim × output_dim` where rows are output channels.
+
+- **Missing the scale==0 check**: If `globalAbsmax` is 0 (all-zero input), dividing by scale produces NaN. Always guard with `if (scale < 1e-9f)`.
+
+- **Clamping to [-128, 127] instead of [-127, 127]**: Clamping to -128 is fine (it's a valid int8_t), but clamping to 128 causes overflow. Use 127 as the upper bound.
+
+---end---

@@ -111,7 +111,7 @@ Track: learning/cuda/track.mdx (42 nodes)
 ### Problem nodes (in dependency order)
 - [x] fused-softmax | Fused Online Softmax | PROBLEM | intermediate | ~90min | source: cluster-llm-kernels.json softmax-kernel topic; llm.c/dev/cuda/softmax_forward.cu; cuda-mode-lectures/lecture_012/flash_attention.cu; papers/flash-attention-1.pdf §3 (online softmax)
 - [x] layer-norm-kernel | LayerNorm + Residual Fusion | PROBLEM | intermediate | ~60min | source: cluster-llm-kernels.json layer-norm topic; llm.c/dev/cuda/layernorm_forward.cu; llm.c/dev/cuda/fused_residual_forward.cu
-- [ ] quantization-exercise | INT8 Quantize/Dequantize Kernel | PROBLEM | intermediate | ~60min | source: cluster-llm-kernels.json quantization-kernels topic; llm.c/dev/cuda/ (no direct file; see gelu_forward.cu for vectorized pattern); resources/cutlass/README.md (FP8/INT8 types)
+- [x] quantization-exercise | INT8 Quantize/Dequantize Kernel | PROBLEM | intermediate | ~60min | source: cluster-llm-kernels.json quantization-kernels topic; llm.c/dev/cuda/ (no direct file; see gelu_forward.cu for vectorized pattern); resources/cutlass/README.md (FP8/INT8 types)
 - [ ] flash-attention-impl | FlashAttention Forward Pass | PROBLEM | advanced | ~300min | source: cluster-llm-kernels.json flash-attention topic exerciseId=flash-attention-naive; papers/flash-attention-1.pdf §3.1 Algorithm 1; cuda-mode-lectures/lecture_012/flash_attention.cu; flash-attention/csrc/flash_attn/flash_fwd_kernel.h
 
 ### Article nodes
