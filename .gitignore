@@ -38,6 +38,4 @@ Thumbs.db
 .turbo/
 
 # ─── Other ───────────────────────────────────────────────────────────────────
-resources.tar.gz
-resources
-learning/cuda-archive
+.do_no_track/
