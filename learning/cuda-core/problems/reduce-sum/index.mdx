@@ -111,7 +111,7 @@ void solve(const float* h_in, float* h_out, int n) {
     reduceBlock<<<gridSize, BLOCK_SIZE>>>(d_in, d_partials, n);
     reducePartials<<<1, BLOCK_SIZE>>>(d_partials, d_out, gridSize);
 
-    cudaMemcpy(h_out, d_out, sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
     cudaFree(d_in);
     cudaFree(d_partials);
     cudaFree(d_out);

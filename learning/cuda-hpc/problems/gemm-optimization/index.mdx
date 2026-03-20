@@ -195,7 +195,7 @@ void solve(const float* hA, const float* hB, float* hC, int N) {
   expected: "4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0"
 - name: "Small random"
   input: "4\n1.0 2.0 3.0 4.0 2.0 1.0 4.0 3.0 3.0 4.0 1.0 2.0 4.0 3.0 2.0 1.0\n1.0 1.0 1.0 1.0 1.0 2.0 3.0 4.0 1.0 3.0 6.0 10.0 1.0 4.0 10.0 20.0"
-  expected: "6.0 14.0 30.0 58.0 10.0 18.0 38.0 74.0 14.0 22.0 46.0 90.0 18.0 26.0 54.0 106.0"
+  expected: "10.0 30.0 65.0 119.0 10.0 28.0 59.0 106.0 10.0 22.0 41.0 69.0 10.0 20.0 35.0 56.0"
 - name: "8x8 correctness"
   input: "verify 8"
   expected: "1"
@@ -389,10 +389,12 @@ int main() {
         extern void solve(const float* hA, const float* hB, float* hC, int N);
         solve(hA.data(), hB.data(), hC.data(), N);
 
-        // Print first row of C
-        for (int j = 0; j < N; j++) {
-            if (j > 0) printf(" ");
-            printf("%.1f", hC[j]);
+        // Print all rows of C
+        for (int i = 0; i < N; i++) {
+            for (int j = 0; j < N; j++) {
+                if (i > 0 || j > 0) printf(" ");
+                printf("%.1f", hC[i * N + j]);
+            }
         }
         printf("\n");
     }
@@ -561,16 +563,5 @@ To achieve this:
 2. Add double buffering to hide memory latency (next optimization)
 3. Tune BM, BN, BK for optimal occupancy
 4. Consider warp-level primitives for shared memory reduction
-
-## Benchmarking Against cuBLAS
-
-For N=4096, target performance is >70% of cuBLAS:
-- cuBLAS SGEMM on H100: ~300-400 GFLOPS for large matrices
-- Your kernel: target >210-280 GFLOPS
-
-To achieve this:
-1. Use float4 loads (4× reduction in load instructions)
-2. Add double buffering to hide memory latency
-3. Tune BM, BN, BK for optimal occupancy
 
 ---end---

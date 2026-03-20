@@ -155,22 +155,23 @@ void solve(const half* h_A, const half* h_B, float* h_C, int M, int N, int K) {
     size_t bytesB = (size_t)K * N * sizeof(half);
     size_t bytesC = (size_t)M * N * sizeof(float);
 
-    cudaMallocAsync(&d_A, bytesA);
-    cudaMallocAsync(&d_B, bytesB);
-    cudaMallocAsync(&d_C, bytesC);
+    cudaMallocAsync(&d_A, bytesA, 0);
+    cudaMallocAsync(&d_B, bytesB, 0);
+    cudaMallocAsync(&d_C, bytesC, 0);
 
-    cudaMemcpyAsync(d_A, h_A, bytesA, cudaMemcpyHostToDevice);
-    cudaMemcpyAsync(d_B, h_B, bytesB, cudaMemcpyHostToDevice);
-    cudaMemcpyAsync(d_C, h_C, bytesC, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_A, h_A, bytesA, cudaMemcpyHostToDevice, 0);
+    cudaMemcpyAsync(d_B, h_B, bytesB, cudaMemcpyHostToDevice, 0);
+    cudaMemcpyAsync(d_C, h_C, bytesC, cudaMemcpyHostToDevice, 0);
 
     dim3 grid(N / BLOCK_N, M / BLOCK_M);
     dim3 block(THREADS_PER_BLOCK);
     hgemm<<<grid, block>>>(d_A, d_B, d_C, d_C, 1.0f, 0.0f, M, N, K);
 
-    cudaMemcpyAsync(h_C, d_C, bytesC, cudaMemcpyDeviceToHost);
-    cudaFreeAsync(d_A);
-    cudaFreeAsync(d_B);
-    cudaFreeAsync(d_C);
+    cudaMemcpyAsync(h_C, d_C, bytesC, cudaMemcpyDeviceToHost, 0);
+    cudaDeviceSynchronize();
+    cudaFreeAsync(d_A, 0);
+    cudaFreeAsync(d_B, 0);
+    cudaFreeAsync(d_C, 0);
 }
 
 ---test-cases---
@@ -329,13 +330,13 @@ void solve(const half* h_A, const half* h_B, float* h_C, int M, int N, int K) {
     size_t bytesB = (size_t)K * N * sizeof(half);
     size_t bytesC = (size_t)M * N * sizeof(float);
 
-    cudaMallocAsync(&d_A, bytesA);
-    cudaMallocAsync(&d_B, bytesB);
-    cudaMallocAsync(&d_C, bytesC);
+    cudaMallocAsync(&d_A, bytesA, 0);
+    cudaMallocAsync(&d_B, bytesB, 0);
+    cudaMallocAsync(&d_C, bytesC, 0);
 
-    cudaMemcpyAsync(d_A, h_A, bytesA, cudaMemcpyHostToDevice);
-    cudaMemcpyAsync(d_B, h_B, bytesB, cudaMemcpyHostToDevice);
-    cudaMemcpyAsync(d_C, h_C, bytesC, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_A, h_A, bytesA, cudaMemcpyHostToDevice, 0);
+    cudaMemcpyAsync(d_B, h_B, bytesB, cudaMemcpyHostToDevice, 0);
+    cudaMemcpyAsync(d_C, h_C, bytesC, cudaMemcpyHostToDevice, 0);
 
     // Shared memory: sA (128 x 176 x 2) + sB (128 x 176 x 2) + sC (128 x 128 x 4)
     // = 45056 + 45056 + 65536 = 155648 bytes
@@ -349,10 +350,11 @@ void solve(const half* h_A, const half* h_B, float* h_C, int M, int N, int K) {
     dim3 block(THREADS_PER_BLOCK);
     hgemm<<<grid, block, shmemSize>>>(d_A, d_B, d_C, d_C, 1.0f, 0.0f, M, N, K);
 
-    cudaMemcpyAsync(h_C, d_C, bytesC, cudaMemcpyDeviceToHost);
-    cudaFreeAsync(d_A);
-    cudaFreeAsync(d_B);
-    cudaFreeAsync(d_C);
+    cudaMemcpyAsync(h_C, d_C, bytesC, cudaMemcpyDeviceToHost, 0);
+    cudaDeviceSynchronize();
+    cudaFreeAsync(d_A, 0);
+    cudaFreeAsync(d_B, 0);
+    cudaFreeAsync(d_C, 0);
 }
 
 ---harness---
@@ -427,7 +429,7 @@ int main() {
             hB.data(), CUDA_R_16F, N,
             hA.data(), CUDA_R_16F, N,
             &beta,
-            hC_ref.data(), CUDA_R_16F, N,
+            hC_ref.data(), CUDA_R_32F, N,
             CUBLAS_COMPUTE_32F,
             CUBLAS_GEMM_DEFAULT_TENSOR_OP);
         cublasDestroy(handle);
