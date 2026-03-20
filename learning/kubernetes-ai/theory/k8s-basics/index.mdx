@@ -3,6 +3,10 @@ slug: k8s-basics
 title: Kubernetes Fundamentals
 track: kubernetes-ai
 type: concept
+cluster: gpu-infrastructure
+difficulty: beginner
+estimatedMinutes: 30
+interviewRelevance: medium
 tags:
   - kubernetes
   - pods
@@ -11,9 +15,17 @@ tags:
   - namespaces
 status: published
 author: team
+sources:
+  - "kubernetes.io/docs/concepts — Official Kubernetes documentation"
+  - "kubernetes.io/docs/concepts/workloads/controllers/deployment"
+  - "kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes"
 ---
 
 # Kubernetes Fundamentals
+
+## Why this matters for interviews
+
+Kubernetes is the default infrastructure platform for production ML systems. Infrastructure and MLOps interviews ask: "How would you deploy a vLLM inference server with auto-scaling?" or "How do you handle rolling updates for GPU-intensive pods?" Understanding Pods, Deployments, Services, and health probes is the minimum baseline for any role touching production ML infrastructure.
 
 Kubernetes (K8s) is the standard orchestration platform for containerised workloads. It automates deployment, scaling, and management of containers across a cluster of nodes. For AI infrastructure engineers, Kubernetes is the operating system for running GPU workloads at scale — understanding its primitives is a prerequisite for deploying inference servers, training jobs, and ML pipelines in production.
 
@@ -186,6 +198,34 @@ resources:
 ```
 
 For GPUs, requests must equal limits — Kubernetes does not support fractional GPU allocation natively (see MIG and time-slicing for alternatives).
+
+## Common misconceptions
+
+❌ **Wrong**: "Pods are automatically restarted if they crash"
+
+✓ **Correct**: Bare pods are **not** restarted by Kubernetes. Pods are ephemeral. Use a **Deployment** (for stateless workloads) or **StatefulSet** (for stateful workloads) to get automatic restart and rescheduling behavior. The controller's reconciliation loop ensures the desired number of replicas is always running.
+
+❌ **Wrong**: "GPU resources work like CPU — you can set `requests < limits`"
+
+✓ **Correct**: For `nvidia.com/gpu`, **requests must equal limits**. Kubernetes does not support fractional or overcommitted GPU allocation with the standard device plugin. If you set `requests: 0` and `limits: 1`, the scheduler won't reserve the GPU and you'll get runtime failures. Always set both to the same integer value.
+
+❌ **Wrong**: "Services directly route traffic to pods by IP"
+
+✓ **Correct**: Services use **label selectors** to find matching pods and route to any pod with that label, regardless of IP. Pod IPs change when pods restart, but the Service IP (ClusterIP) is stable. `kube-proxy` maintains iptables/IPVS rules to implement this routing. This decoupling is fundamental to Kubernetes networking.
+
+## Interview patterns
+
+**Question 1**: "How do you deploy a vLLM inference server with 2 replicas on K8s?"
+
+**Answer**: Create a Deployment with `replicas: 2`, container image `vllm/vllm-openai:latest`, resource limits `nvidia.com/gpu: 1`, and a `readinessProbe` with `initialDelaySeconds: 60` (model loading time). Create a Service with `type: ClusterIP` selecting the Deployment's pods. The Service load-balances requests across both replicas.
+
+**Question 2**: "How does Kubernetes know when a GPU inference server is ready to serve traffic?"
+
+**Answer**: Via a `readinessProbe`. The probe repeatedly calls an HTTP endpoint (e.g., `/health` on port 8000). Until the probe succeeds, the pod is removed from the Service's endpoints — no traffic is sent. Use `initialDelaySeconds: 60–120` for large models (weight loading takes time). If the probe fails during operation, the pod is removed from load balancing until it recovers.
+
+**Question 3**: "Why might a GPU pod be stuck in `Pending` state?"
+
+**Answer**: Most commonly, insufficient GPU resources. Check `kubectl describe pod <name>` — if it shows `Insufficient nvidia.com/gpu`, either: no GPU nodes have free GPUs, the `nodeSelector` or `nodeAffinity` doesn't match any GPU node, or all GPU nodes are cordoned. Also check if the nvidia-device-plugin is running on the target node (requires GPU Operator).
 
 ## Key Concepts
 

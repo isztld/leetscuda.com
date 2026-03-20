@@ -35,11 +35,11 @@ The entire CUDA programming model reduces to three data movement patterns: **map
 **Map** applies a function `f` to every element of an input independently. Each thread reads input[i], computes `f(input[i])`, and writes to output[i]. The defining characteristic: there are no data dependencies between elements. Thread 5 does not need to know what thread 4 computed. This *embarrassing parallelism* makes map the simplest and most common GPU pattern.
 
 ```cpp
-// Map kernel: y[i] = a * x[i] + b (SAXPY)
+// Map kernel: y[i] = a * x[i] + y[i] (SAXPY)
 __global__ void saxpy(float a, const float* x, float* y, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        y[i] = a * x[i] + b;  // Each thread processes exactly one element
+        y[i] = a * x[i] + y[i];  // Each thread processes exactly one element
     }
 }
 ```

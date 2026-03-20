@@ -3,6 +3,10 @@ slug: memory-model
 title: CPU Memory Hierarchy
 track: foundations
 type: concept
+cluster: systems-fundamentals
+difficulty: beginner
+estimatedMinutes: 20
+interviewRelevance: medium
 tags:
   - memory
   - cache
@@ -11,9 +15,17 @@ tags:
   - latency
 status: published
 author: team
+sources:
+  - "papers/What Every Programmer Should Know About Memory (Drepper, 2007)"
+  - "Intel 64 and IA-32 Architectures Optimization Reference Manual"
+  - "Agner Fog CPU Optimization Guides — agner.org/optimize"
 ---
 
 # CPU Memory Hierarchy
+
+## Why this matters for interviews
+
+CPU memory hierarchy questions appear in systems and performance engineering interviews. Interviewers ask: "Why is false sharing a performance problem in multi-threaded code?" or "How do cache lines affect memory layout decisions?" Understanding caches, NUMA, and the bandwidth/latency distinction is also essential for reasoning about GPU memory hierarchies — the same concepts (latency hiding, spatial locality, bandwidth bounds) apply to shared memory, L2, and HBM.
 
 Before reasoning about GPU performance, you must understand how CPUs handle memory — because GPU programs constantly interact with the host system's memory hierarchy through PCIe transfers, and many systems concepts (caches, latency hiding, bandwidth bounds) have direct GPU analogues.
 
@@ -114,6 +126,34 @@ for (int i = 0; i < N; i++) {
     process(data[i]);
 }
 ```
+
+## Common misconceptions
+
+❌ **Wrong**: "Accessing a single byte from DRAM costs the same as accessing 64 bytes"
+
+✓ **Correct**: DRAM is accessed in **cache lines** of 64 bytes. A single byte read loads the entire 64-byte aligned block into cache. Whether you read 1 byte or 64 consecutive bytes, the DRAM transaction is identical. This is why struct layout matters — if you only need one field of an AoS struct, you still pay for the full cache line containing all fields.
+
+❌ **Wrong**: "Multi-threaded programs automatically benefit from large shared L3 caches"
+
+✓ **Correct**: False sharing can make L3 a liability. If two threads write to different variables on the **same cache line**, every write invalidates the other thread's cached copy, causing constant cache coherence traffic. The threads appear to share data (same cache line) but logically they don't. Fix by padding structs to 64-byte boundaries or using `alignas(64)`.
+
+❌ **Wrong**: "NUMA only matters on servers with multiple CPU sockets"
+
+✓ **Correct**: NUMA effects are also significant for **GPU workloads**. A GPU connected to PCIe on Socket 0 has lower transfer latency when the CPU on Socket 0 initiates the transfer. CPU threads on Socket 1 initiating the same transfer pay 1.5–3× higher latency crossing the QPI/UPI interconnect. Always bind ML preprocessing threads to the NUMA node closest to the GPU.
+
+## Interview patterns
+
+**Question 1**: "What is false sharing and how do you fix it?"
+
+**Answer**: False sharing occurs when two CPU cores write to different variables that occupy the same 64-byte cache line. Each write invalidates the other core's cached copy, forcing a cache coherence round-trip even though the cores are not logically sharing data. Fix by padding structs so each frequently-written field occupies its own cache line: `alignas(64) std::atomic<int> counter;` or adding padding bytes to separate hot fields.
+
+**Question 2**: "Why is sequential memory access faster than random access?"
+
+**Answer**: Sequential access triggers hardware **prefetching** — the CPU detects the stride pattern and prefetches cache lines before they're needed, hiding DRAM latency. Random access breaks prefetching: each access is a cache miss with full ~60–100 ns DRAM latency, serialized because each miss must complete before the next address is known. Sequential access saturates memory bandwidth; random access is latency-bound.
+
+**Question 3**: "How do you detect NUMA performance problems in a running system?"
+
+**Answer**: Use `numastat -p <pid>` to see which NUMA node's memory is being used. If a process shows high remote NUMA access ratios, bind it with `numactl --cpunodebind=0 --membind=0 ./app`. For GPU workloads, check which PCIe root complex the GPU is attached to (via `nvidia-smi topo -m`) and ensure the serving process runs on the matching NUMA node.
 
 ## Key Concepts
 

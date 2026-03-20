@@ -332,9 +332,9 @@ For LLM kernels, WGMMA is preferable because:
 | WGMMA tile (FP8) | 64×N×32, where N ∈ {8,16,...,256} |
 | WGMMA threads | Exactly 128 (4 warps) |
 | Shared memory per SM | 228 KB |
-| Max warps per SM | 2048 |
+| Max warps per SM | 64 |
 | HBM3 bandwidth | 3.35 TB/s |
-| FP16 BFLOPS (Tensor Core) | 989 TFLOPS |
+| FP16 TFLOPS (Tensor Core) | 989 TFLOPS |
 
 **FlashAttention 3 (H100) performance:**
 - FA3 vs FA2: 1.7× forward throughput improvement

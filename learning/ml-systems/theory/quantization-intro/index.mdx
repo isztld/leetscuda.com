@@ -3,6 +3,10 @@ slug: quantization-intro
 title: Model Quantization
 track: ml-systems
 type: concept
+cluster: inference-systems
+difficulty: intermediate
+estimatedMinutes: 25
+interviewRelevance: high
 tags:
   - quantization
   - int8
@@ -12,9 +16,18 @@ tags:
   - throughput
 status: published
 author: team
+sources:
+  - "papers/GPTQ (Frantar et al., 2023) — 4-bit PTQ via second-order Hessian"
+  - "papers/LLM.int8() (Dettmers et al., 2022) — mixed-precision INT8 decomposition"
+  - "papers/SmoothQuant (Xiao et al., 2023) — W8A8 quantization"
+  - "papers/FP8 Formats for Deep Learning (Micikevicius et al., 2022)"
 ---
 
 # Model Quantization
+
+## Why this matters for interviews
+
+Quantization is one of the most asked topics in LLM inference interviews. Interviewers ask: "How would you serve a 70B model on a single A100?" or "What's the difference between W8A8 and W4A16?" Understanding the tradeoff between memory savings, throughput gains, and accuracy loss — and knowing which algorithm (GPTQ, SmoothQuant) to reach for — is essential for principal AI infrastructure roles.
 
 Quantization reduces the numerical precision of model weights (and optionally activations) from high-precision floats (FP32, FP16) to lower-precision integers (INT8, INT4, NF4). This shrinks model size, increases throughput, and reduces memory bandwidth pressure — all critical for production LLM serving.
 
@@ -114,6 +127,34 @@ outputs = llm.generate(
     SamplingParams(max_tokens=200),
 )
 ```
+
+## Common misconceptions
+
+❌ **Wrong**: "INT8 quantization always cuts accuracy significantly"
+
+✓ **Correct**: Weight-only quantization (W8A16) typically causes < 0.1% accuracy loss on perplexity benchmarks. Even W4A16 with GPTQ loses only 0.5–2% on most tasks. The key is using Hessian-guided quantization (GPTQ) rather than naive rounding, which properly minimizes the per-layer quantization error.
+
+❌ **Wrong**: "W8A8 is always faster than W4A16"
+
+✓ **Correct**: W8A8 has higher compute throughput (INT8 Tensor Cores at 2× FP16 FLOP/s), but W4A16 has lower memory traffic (4-bit weights, half the reads of W8A16). For decode (memory-bandwidth-bound, batch=1), W4A16 often matches or exceeds W8A8 in real tokens-per-second because the bottleneck is weight reads, not compute.
+
+❌ **Wrong**: "Quantization only affects inference, not training"
+
+✓ **Correct**: FP8 training is now standard on H100 hardware. Transformer Engine (NVIDIA) handles FP8 forward/backward passes automatically. Training with FP8 requires dynamic scaling factors and careful gradient accumulation to avoid underflow (E4M3 max = 448, much lower than FP16 max = 65,504).
+
+## Interview patterns
+
+**Question 1**: "What's the difference between W8A16 and W8A8?"
+
+**Answer**: W8A16: weights are quantized to INT8, activations remain FP16. Weights are dequantized to FP16 before each GEMM, so computation happens in FP16. Benefit: halves weight memory traffic (decode bottleneck). W8A8: both weights and activations quantized to INT8; GEMM runs entirely in INT8 using INT8 Tensor Cores. Benefit: doubles compute throughput on top of memory savings, but requires careful outlier handling (LLM.int8() decomposition or SmoothQuant activation scaling).
+
+**Question 2**: "How does GPTQ achieve 4-bit quantization with minimal accuracy loss?"
+
+**Answer**: GPTQ uses the Hessian (second-order gradient information) to determine how much each weight contributes to model output. It quantizes weights row-by-row, compensating for quantization error by adjusting remaining (unquantized) weights using the Hessian. This greedy approach minimizes the layer-wise output error rather than just minimizing element-wise quantization error.
+
+**Question 3**: "A 70B model at FP16 is 140 GB. How do you serve it on a single 80 GB A100?"
+
+**Answer**: Use W4A16 quantization (GPTQ). At 4-bit, the model is 35 GB — fits on one A100 with room for KV cache. Alternatively, use two A100s with tensor parallelism (no quantization needed). If accuracy matters, W4A16 with GPTQ typically loses only 0.5–1.5% on benchmarks, which is acceptable for most production use cases.
 
 ## Key Concepts
 

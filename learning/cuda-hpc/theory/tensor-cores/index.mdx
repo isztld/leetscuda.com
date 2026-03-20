@@ -182,9 +182,9 @@ Tensor Cores enable mixed precision computation: lower-precision inputs with hig
 
 **BF16** (Bfloat16) was developed by Google for ML workloads. It uses 8 exponent bits (same as FP32) and 7 mantissa bits. This preserves the FP32 dynamic range while reducing memory bandwidth by 50%. BF16 is the default for modern LLM training (Llama 2, Llama 3, GPT-4).
 
-**TF32** (Tensor Float 32) was introduced with Ampere. It uses FP32 exponent range but only 10 mantissa bits. TF32 provides a "drop-in" speedup for FP32 workloads without code changes — just set `cublasSetMathMode(CUBLAS_TENSOR_OP_MATH)` or use `cudaSetDeviceFlags(cudaDeviceEnablePeerAccess)`.
+**TF32** (Tensor Float 32) was introduced with Ampere. It uses FP32 exponent range but only 10 mantissa bits. TF32 provides a "drop-in" speedup for FP32 workloads — enable via `cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH)` for cuBLAS, or `torch.backends.cuda.matmul.allow_tf32 = True` in PyTorch.
 
-**TF32 tradeoff**: ~15-20% accuracy loss on some tasks vs FP32, but 2x throughput on A100/H100.
+**TF32 tradeoff**: ~15-20% accuracy loss on some tasks vs FP32, but 2x throughput on A100/H100. Enable via `cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH)` for cuBLAS or via `torch.backends.cuda.matmul.allow_tf32 = True` in PyTorch.
 
 ### Hardware throughput by architecture
 
@@ -310,8 +310,8 @@ CUTLASS is the production path: it handles tiling, bank conflicts, and architect
 - FP16: 5-bit exp, 10-bit mantissa — overflow risk in training
 - BF16: 8-bit exp, 7-bit mantissa — preferred for training
 - TF32: 8-bit exp, 10-bit mantissa — 2x FP32 on A100/H100
-- FP8 E4M3: 4-bit mantissa, 4-bit exponent — max value 448
-- FP8 E5M2: 2-bit exponent, 5-bit mantissa — max value 57,344
+- FP8 E4M3: 4-bit exponent, 3-bit mantissa — max value 448
+- FP8 E5M2: 5-bit exponent, 2-bit mantissa — max value 57,344
 
 ## Further Reading
 
