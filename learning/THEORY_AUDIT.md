@@ -1,5 +1,6 @@
 # Theory & Article Audit Report
 Generated: 2026-03-20
+Last updated: 2026-03-20 (Phase 19 Part 2 — all fixes applied)
 Total files: 31 theory + 2 articles = 33
 
 ## Summary
@@ -7,8 +8,8 @@ Total files: 31 theory + 2 articles = 33
 | Verdict | Count | Files |
 |---------|-------|-------|
 | PASS | 8 | cooperative-groups, gpu-architecture, occupancy, register-pressure, roofline-model, gemm-fundamentals, kv-cache-design, zero-memory-opt |
-| NEEDS_MINOR_FIX | 13 | bottleneck-analysis, compute-capability, cuda-streams, global-memory, shared-memory, thread-hierarchy, unified-memory, warp-divergence, warp-execution, cutlass, attention, tensor-parallelism, radix-sort |
-| NEEDS_MAJOR_FIX | 12 | nsight-compute, tensor-cores, kernel-fusion, parallel-patterns, hopper-tma-wgmma, ml-inference-basics, quantization-intro, gpu-operator, k8s-basics, memory-model, profiling-basics, simd-basics |
+| FIXED (was NEEDS_MINOR_FIX) | 13 | bottleneck-analysis, compute-capability, cuda-streams, global-memory, shared-memory, thread-hierarchy, unified-memory, warp-divergence, warp-execution, cutlass, attention, tensor-parallelism, radix-sort |
+| FIXED (was NEEDS_MAJOR_FIX) | 12 | nsight-compute, tensor-cores, kernel-fusion, parallel-patterns, hopper-tma-wgmma, ml-inference-basics, quantization-intro, gpu-operator, k8s-basics, memory-model, profiling-basics, simd-basics |
 | BROKEN | 0 | — |
 
 ---
