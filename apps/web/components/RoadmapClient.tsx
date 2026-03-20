@@ -35,7 +35,9 @@ function groupByCluster(nodes: RoadmapNode[]): { cluster: string; nodes: Roadmap
 }
 
 function nodeHref(node: RoadmapNode): string {
-  return node.type === 'PROBLEM' ? `/problems/${node.slug}` : `/learn/${node.slug}`
+  if (node.type === 'PROBLEM') return `/problems/${node.slug}`
+  if (node.type === 'ARTICLE') return `/learn/${node.slug}`
+  return `/learn/${node.slug}`  // CONCEPT
 }
 
 function difficultyBorder(diff: string | null | undefined): string {

@@ -24,7 +24,7 @@ export type TheoryFrontmatter = {
   slug: string
   title: string
   track: string
-  type: 'concept'
+  type: 'concept' | 'article'
   tags?: string[]
   status: 'published' | 'draft'
   author?: string
@@ -38,8 +38,11 @@ export type TheoryContent = {
 export async function loadTheoryContent(
   track: string,
   slug: string,
+  nodeType: 'CONCEPT' | 'ARTICLE' = 'CONCEPT',
 ): Promise<TheoryContent | null> {
-  const filePath = path.join(LEARNING_DIR, track, 'theory', slug, 'index.mdx')
+  // ARTICLE types look for content in articles/ folder, CONCEPT in theory/
+  const folder = nodeType === 'ARTICLE' ? 'articles' : 'theory'
+  const filePath = path.join(LEARNING_DIR, track, folder, slug, 'index.mdx')
 
   let raw: string
   try {

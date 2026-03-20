@@ -1,7 +1,8 @@
 /**
  * sync-theory.ts
- * Scans /theory/**\/index.mdx, validates frontmatter, and verifies every
- * CONCEPT RoadmapNode in the database has a corresponding theory file.
+ * Scans /theory/**\/index.mdx and /articles/**\/index.mdx, validates frontmatter,
+ * and verifies every CONCEPT and ARTICLE RoadmapNode in the database has
+ * a corresponding content file.
  *
  * Usage: pnpm theory:sync  (run from apps/web; process.cwd() = apps/web)
  */
@@ -19,7 +20,7 @@ const TheoryFrontmatterSchema = z.object({
   slug: z.string().min(1),
   title: z.string().min(1),
   track: z.string().min(1),
-  type: z.literal('concept'),
+  type: z.enum(['concept', 'article']),
   status: z.enum(['published', 'draft']),
   tags: z.array(z.string()).optional(),
   author: z.string().optional(),
@@ -32,11 +33,18 @@ const LEARNING_DIR = path.join(process.cwd(), '../../learning')
 
 function getTheoryDirs(learningDir: string): string[] {
   if (!fs.existsSync(learningDir)) return []
-  return fs
-    .readdirSync(learningDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => path.join(learningDir, d.name, 'theory'))
-    .filter((d) => fs.existsSync(d))
+  const dirs: string[] = []
+  for (const d of fs.readdirSync(learningDir, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue
+    const trackPath = path.join(learningDir, d.name)
+    // Add theory folder for CONCEPT nodes
+    const theoryPath = path.join(trackPath, 'theory')
+    if (fs.existsSync(theoryPath)) dirs.push(theoryPath)
+    // Add articles folder for ARTICLE nodes
+    const articlesPath = path.join(trackPath, 'articles')
+    if (fs.existsSync(articlesPath)) dirs.push(articlesPath)
+  }
+  return dirs
 }
 
 function ok(msg: string) { console.log(`  ✅ ${msg}`) }
@@ -96,18 +104,18 @@ async function main() {
     validSlugs.add(parsed.data.slug)
   }
 
-  // 2. Query DB for CONCEPT nodes
+  // 2. Query DB for CONCEPT and ARTICLE nodes
   console.log('\n🗄️   Verifying database coverage...\n')
 
   const prisma = new PrismaClient({
     adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
   })
 
-  let conceptNodes: { slug: string; title: string; track: { slug: string } }[] = []
+  let nodes: { slug: string; title: string; type: string; track: { slug: string } }[] = []
   try {
-    conceptNodes = await prisma.roadmapNode.findMany({
-      where: { type: NodeType.CONCEPT },
-      select: { slug: true, title: true, track: { select: { slug: true } } },
+    nodes = await prisma.roadmapNode.findMany({
+      where: { type: { in: ['CONCEPT', 'ARTICLE'] } },
+      select: { slug: true, title: true, type: true, track: { select: { slug: true } } },
       orderBy: [{ track: { order: 'asc' } }, { order: 'asc' }],
     })
   } finally {
@@ -115,12 +123,13 @@ async function main() {
   }
 
   let missing = 0
-  for (const node of conceptNodes) {
+  for (const node of nodes) {
     if (validSlugs.has(node.slug)) {
-      ok(`${node.track.slug}/${node.slug}  →  "${node.title}"`)
+      ok(`${node.track.slug}/${node.slug}  →  "${node.title}" [${node.type}]`)
     } else {
+      const folder = node.type === 'ARTICLE' ? 'articles' : 'theory'
       warn(
-        `Missing theory file for CONCEPT "${node.title}" → create learning/${node.track.slug}/theory/${node.slug}/index.mdx`,
+        `Missing content file for ${node.type} "${node.title}" → create learning/${node.track.slug}/${folder}/${node.slug}/index.mdx`,
       )
       missing++
     }
@@ -128,18 +137,18 @@ async function main() {
 
   // 3. Summary
   console.log('\n─────────────────────────────────────────────')
-  console.log(`Theory files scanned : ${files.length}`)
+  console.log(`Content files scanned: ${files.length}`)
   console.log(`Valid files          : ${files.length - fileErrors}`)
   console.log(`File errors          : ${fileErrors}`)
-  console.log(`CONCEPT nodes in DB  : ${conceptNodes.length}`)
-  console.log(`Missing theory files : ${missing}`)
+  console.log(`CONCEPT/ARTICLE nodes: ${nodes.length}`)
+  console.log(`Missing content files: ${missing}`)
   console.log('─────────────────────────────────────────────\n')
 
   if (fileErrors > 0 || missing > 0) {
     process.exit(1)
   }
 
-  console.log('✅  All CONCEPT nodes have theory files. Done.\n')
+  console.log('✅  All CONCEPT and ARTICLE nodes have content files. Done.\n')
 }
 
 main().catch((e) => {

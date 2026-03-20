@@ -12,7 +12,7 @@ export default async function LearnIndexPage() {
     orderBy: { order: 'asc' },
     include: {
       roadmapNodes: {
-        where: { type: 'CONCEPT' },
+        where: { type: { in: ['CONCEPT', 'ARTICLE'] } },
         orderBy: { order: 'asc' },
       },
     },
@@ -30,9 +30,9 @@ export default async function LearnIndexPage() {
 
         <div className="flex flex-col gap-8">
           {tracks.map((track) => {
-            const concepts = track.roadmapNodes
-            if (concepts.length === 0) return null
-            const firstConcept = concepts[0]
+            const nodes = track.roadmapNodes
+            if (nodes.length === 0) return null
+            const firstNode = nodes[0]
 
             return (
               <div key={track.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -43,11 +43,11 @@ export default async function LearnIndexPage() {
                     <div>
                       <h2 className="text-lg font-semibold text-slate-900">{track.title}</h2>
                       <p className="text-sm text-slate-500 mt-0.5">
-                        {concepts.length} concept{concepts.length !== 1 ? 's' : ''}
+                        {nodes.length} node{nodes.length !== 1 ? 's' : ''}
                       </p>
                     </div>
                     <Link
-                      href={`/learn/${firstConcept.slug}`}
+                      href={`/learn/${firstNode.slug}`}
                       className="text-sm font-medium px-4 py-2 rounded-lg text-white transition-opacity hover:opacity-90"
                       style={{ backgroundColor: track.color }}
                     >
@@ -56,9 +56,9 @@ export default async function LearnIndexPage() {
                   </div>
                 </div>
 
-                {/* Concept list */}
+                {/* Node list */}
                 <ul className="divide-y divide-slate-100">
-                  {concepts.map((node) => (
+                  {nodes.map((node) => (
                     <li key={node.id}>
                       <Link
                         href={`/learn/${node.slug}`}
@@ -69,9 +69,14 @@ export default async function LearnIndexPage() {
                           style={{ backgroundColor: track.color }}
                         />
                         <div>
-                          <p className="text-sm font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
-                            {node.title}
-                          </p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
+                              {node.title}
+                            </p>
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 uppercase tracking-wide">
+                              {node.type}
+                            </span>
+                          </div>
                           <p className="text-xs text-slate-500 mt-0.5 leading-snug">
                             {node.description}
                           </p>

@@ -22,14 +22,14 @@ export default async function LearnPage({ params }: Props) {
     include: { track: true },
   })
 
-  if (!node || node.type !== 'CONCEPT') notFound()
+  if (!node || (node.type !== 'CONCEPT' && node.type !== 'ARTICLE')) notFound()
 
   const [trackNodes, content, existingRead] = await Promise.all([
     prisma.roadmapNode.findMany({
-      where: { trackId: node.trackId, type: 'CONCEPT' },
+      where: { trackId: node.trackId, type: { in: ['CONCEPT', 'ARTICLE'] } },
       orderBy: { order: 'asc' },
     }),
-    loadTheoryContent(node.track.slug, slug),
+    loadTheoryContent(node.track.slug, slug, node.type),
     session?.user?.id
       ? prisma.conceptRead.findUnique({
           where: { userId_nodeSlug: { userId: session.user.id, nodeSlug: slug } },
