@@ -1,41 +1,74 @@
 ---
 slug: kubernetes-ai
 title: "Kubernetes for AI"
+shortTitle: Kubernetes AI
 description: "Deploy, scale, and operate GPU workloads on Kubernetes."
 icon: "☸"
 color: "#059669"
 order: 5
+difficulty: intermediate
+estimatedHours: 10
+prerequisites: []
+previewNodes: 2
 nodes:
   - slug: k8s-basics
     title: "Kubernetes Fundamentals"
     description: "Learn pods, deployments, services, ConfigMaps, and namespaces through hands-on exercises."
     type: CONCEPT
+    cluster: gpu-infrastructure
     order: 1
+    difficulty: easy
+    estimatedMinutes: 30
     prerequisites: []
+    interviewRelevance: medium
+
   - slug: gpu-operator
     title: "NVIDIA GPU Operator"
     description: "Deploy the NVIDIA GPU Operator to expose GPU devices to Kubernetes workloads without manual driver management."
     type: CONCEPT
+    cluster: gpu-infrastructure
     order: 2
-    prerequisites: [k8s-basics]
+    difficulty: intermediate
+    estimatedMinutes: 25
+    prerequisites:
+      - k8s-basics
+    interviewRelevance: medium
+
   - slug: deploy-inference-server
     title: "Deploy an Inference Server"
     description: "Package a vLLM inference server as a Kubernetes Deployment with GPU resource limits and liveness probes."
     type: PROBLEM
+    cluster: gpu-infrastructure
     order: 3
-    prerequisites: [gpu-operator]
+    difficulty: intermediate
+    estimatedMinutes: 60
+    prerequisites:
+      - gpu-operator
+    interviewRelevance: medium
+
   - slug: hpa-gpu
     title: "Autoscaling GPU Workloads"
     description: "Configure a Horizontal Pod Autoscaler backed by custom GPU-utilisation metrics to right-size inference replicas."
     type: PROBLEM
+    cluster: gpu-infrastructure
     order: 4
-    prerequisites: [gpu-operator]
+    difficulty: intermediate
+    estimatedMinutes: 60
+    prerequisites:
+      - gpu-operator
+    interviewRelevance: medium
+
   - slug: multi-node-training
     title: "Multi-Node Distributed Training Job"
     description: "Launch a PyTorch DDP training job across multiple GPU nodes using a Kubernetes Job with MPI or torchrun."
     type: PROBLEM
+    cluster: gpu-infrastructure
     order: 5
-    prerequisites: [gpu-operator]
+    difficulty: advanced
+    estimatedMinutes: 120
+    prerequisites:
+      - gpu-operator
+    interviewRelevance: medium
 ---
 
 Kubernetes for AI problems and theory.

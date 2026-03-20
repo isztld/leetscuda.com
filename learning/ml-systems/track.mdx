@@ -1,41 +1,75 @@
 ---
 slug: ml-systems
 title: "ML Systems & Inference"
+shortTitle: ML Systems
 description: "Build and optimize inference pipelines for large-scale ML serving."
 icon: "🧠"
 color: "#0891B2"
 order: 4
+difficulty: intermediate
+estimatedHours: 15
+prerequisites:
+  - gpu-llm
+previewNodes: 2
 nodes:
   - slug: ml-inference-basics
     title: "Inference Fundamentals"
     description: "Understand the end-to-end inference pipeline from model loading to first-token latency."
     type: CONCEPT
+    cluster: inference-systems
     order: 1
+    difficulty: intermediate
+    estimatedMinutes: 25
     prerequisites: []
+    interviewRelevance: high
+
   - slug: quantization-intro
     title: "Model Quantization"
     description: "Learn INT8 and FP16 post-training quantisation for throughput and memory savings."
     type: CONCEPT
+    cluster: inference-systems
     order: 2
-    prerequisites: [ml-inference-basics]
+    difficulty: intermediate
+    estimatedMinutes: 25
+    prerequisites:
+      - ml-inference-basics
+    interviewRelevance: high
+
   - slug: kv-cache
     title: "KV Cache Implementation"
     description: "Implement a key-value cache for autoregressive transformer inference to eliminate redundant computation."
     type: PROBLEM
+    cluster: inference-systems
     order: 3
-    prerequisites: [ml-inference-basics]
+    difficulty: intermediate
+    estimatedMinutes: 90
+    prerequisites:
+      - ml-inference-basics
+    interviewRelevance: high
+
   - slug: batched-inference
     title: "Continuous Batching Scheduler"
     description: "Write a continuous-batching scheduler that maximises GPU utilisation for LLM serving."
     type: PROBLEM
+    cluster: inference-systems
     order: 4
-    prerequisites: [quantization-intro]
+    difficulty: advanced
+    estimatedMinutes: 120
+    prerequisites:
+      - quantization-intro
+    interviewRelevance: medium
+
   - slug: flash-attention
     title: "Flash Attention"
     description: "Implement the IO-aware Flash Attention algorithm that fuses attention into a single SRAM-resident kernel."
     type: PROBLEM
+    cluster: inference-systems
     order: 5
-    prerequisites: [quantization-intro]
+    difficulty: advanced
+    estimatedMinutes: 180
+    prerequisites:
+      - quantization-intro
+    interviewRelevance: high
 ---
 
 ML Systems & Inference problems and theory.

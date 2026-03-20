@@ -13,7 +13,8 @@
     "db:studio": "prisma studio",
     "db:sync": "tsx --env-file=.env scripts/sync-problems.ts",
     "judge:token": "tsx --env-file=.env scripts/create-judge-token.ts",
-    "theory:sync": "tsx --env-file=.env scripts/sync-theory.ts"
+    "theory:sync": "tsx --env-file=.env scripts/sync-theory.ts",
+    "validate:tracks": "tsx scripts/validate-tracks.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "latest",

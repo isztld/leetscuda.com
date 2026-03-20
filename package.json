@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "pnpm --filter @leetscuda/web dev",
     "build": "pnpm --filter @leetscuda/web build",
-    "lint": "pnpm --filter @leetscuda/web lint"
+    "lint": "pnpm --filter @leetscuda/web lint",
+    "validate:tracks": "pnpm --filter @leetscuda/web validate:tracks"
   },
   "engines": {
     "node": ">=18.17.0",
