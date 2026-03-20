@@ -191,7 +191,8 @@ myKernel<<<blocksPerGrid, threadsPerBlock>>>(image, width, height);
 | Max block dimensions | 1024 times 1024 times 64 | x, y, z individually |
 | Max grid dimensions (1D) | 2^31 - 1 | Signed 32-bit int max |
 | Max grid dimensions (2D/3D) | 65535 | Per dimension |
-| Max shared memory per block | 48 KB | Configurable (16-48 KB on most GPUs) |
+| Max shared memory per block (static) | 48 KB | Default; always available without opt-in |
+| Max shared memory per block (dynamic) | 228 KB (H100), 164 KB (A100) | Requires `cudaFuncSetAttribute` opt-in |
 | Max registers per block | 65536 | Per SM, shared among all blocks |
 
 ## Thread execution model
@@ -295,8 +296,8 @@ myKernel<<<blocksPerGrid, threadsPerBlock>>>(data, N);
 
 ## Further reading
 
-- **CUDA C Programming Guide Ch. 2** — Writing CUDA kernels
-- **PMPP Ch. 4** — Thread hierarchy and SIMT model
-- **gpu-glossary thread-block-grid** — Detailed reference
-- **gpu-glossary warp** — Warp execution details
-- **gpu-glossary SIMT model** — Single Instruction, Multiple Threads
+- [CUDA C++ Programming Guide — Thread Hierarchy](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#thread-hierarchy) — Official grid/block/warp reference
+- [CUDA C++ Programming Guide — Maximize Memory Throughput](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#maximize-memory-throughput) — Shared memory carveout and opt-in
+- [PMPP Ch. 4](https://www.elsevier.com/books/programming-massively-parallel-processors/kirk/978-0-323-91231-0) — Thread hierarchy and SIMT model
+- [Modal GPU Glossary: Warp](https://modal.com/gpu-glossary/device-hardware/warp) — Warp execution details
+- [Modal GPU Glossary: Streaming Multiprocessor](https://modal.com/gpu-glossary/device-hardware/streaming-multiprocessor) — SM resource limits

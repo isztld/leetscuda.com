@@ -174,125 +174,16 @@ Even with multiple streams, concurrent execution is constrained by hardware reso
 | `cudaStreamWaitEvent(s,e)` | GPU stream | Stream `s` waits for event `e` |
 | `__threadfence()` | GPU thread | Memory visibility within device |
 
-## Cooperative Groups: Explicit Thread Coordination
+## Cooperative Groups: Brief Overview
 
-CUDA 9+ introduced **cooperative groups**, a programming model extension that exposes explicit synchronization handles for subsets of threads at different granularities. This addresses a fundamental limitation of traditional CUDA: the only built-in synchronization primitives are `__syncthreads()` (within a thread block) and atomic operations (no barrier semantics).
+Streams and cooperative groups are often used together: streams control asynchronous execution ordering between independent tasks, while cooperative groups provide explicit synchronization within a kernel's thread hierarchy.
 
-Cooperative groups provide three levels of thread coordination:
+**Three levels of cooperative groups:**
+1. `cg::thread_block` — block-level sync (equivalent to `__syncthreads()`)
+2. `cg::tiled_partition<32>` — warp-level primitives (shuffle, reduction)
+3. `cg::grid_group` — grid-level barrier (requires cooperative launch)
 
-1. **Thread block (CTA)**: The entire cooperative thread array, equivalent to `__syncthreads()`
-2. **Tiled partition**: Sub-warp (<32) or warp-level (<16, <8, etc.) groups
-3. **Grid group**: The entire grid, requiring cooperative launch
-
-### Thread Block Synchronization
-
-```cpp
-#include <cooperative_groups.h>
-namespace cg = cooperative_groups;
-
-__global__ void myKernel(float* data, int n) {
-    cg::thread_block tb = cg::this_thread_block();
-
-    // Do some work
-    data[threadIdx.x] = compute(threadIdx.x);
-
-    // Synchronize all threads in the block
-    tb.sync();
-
-    // Now all threads see the updated data
-    float sum = 0.0f;
-    for (int i = 0; i < 4; i++) {
-        sum += data[threadIdx.x + i * blockDim.x];
-    }
-}
-```
-
-`tb.sync()` is functionally equivalent to `__syncthreads()` but provides a composable abstraction that can be nested with other cooperative group operations.
-
-### Warp-Level Operations with Tiled Partitions
-
-```cpp
-__global__ void warpReduce(float* input, float* output) {
-    cg::thread_block tb = cg::this_thread_block();
-    cg::tiled_partition<32> warp(tb); // Split block into warps
-
-    float local_val = input[threadIdx.x];
-    float sum = local_val;
-
-    // Warp-level reduction using shuffle-like operations
-    for (int offset = warp.size() / 2; offset > 0; offset >>= 1) {
-        sum += warp.shfl_down(local_val, offset);
-    }
-
-    // First thread in each warp writes result
-    if (threadIdx.x % 32 == 0) {
-        output[blockIdx.x] = sum;
-    }
-}
-```
-
-The `tiled_partition<32>` abstraction gives you warp-level primitives like `shfl_down()`, `shfl_up()`, and `shfl_xor()` that are much more efficient than shared memory for warp-local reductions.
-
-**Common misconception**: Cooperative groups require cooperative launch (`cudaLaunchCooperativeKernel`). In reality, only **grid-level** coordination requires cooperative launch. `thread_block` and `tiled_partition` work in normal kernel launches.
-
-### Coalesced Threads After Divergence
-
-After a divergent branch, you can get only the active threads:
-
-```cpp
-__global__ void selectiveWork(float* data, int* mask) {
-    cg::thread_block tb = cg::this_thread_block();
-
-    if (mask[threadIdx.x]) {
-        data[threadIdx.x] = expensive_compute(threadIdx.x);
-    }
-
-    // Get only the active threads (those that took the branch)
-    auto active = cg::coalesced_threads();
-
-    // Now operate only on active threads
-    active.sync(); // Syncs only active threads, not the full block
-}
-```
-
-This is more efficient than `tb.sync()` when the branch is highly skewed (only a few threads took the branch).
-
-### Grid-Level Coordination (Advanced)
-
-Grid-level synchronization requires a **cooperative launch**:
-
-```cpp
-// Host side
-dim3 grid(4), block(256);
-cudaLaunchConfig_t config = {
-    .gridDim = grid,
-    .blockDim = block,
-    .dynamicSmemBytes = 0,
-    .stream = 0,
-    .coop = true // Enable cooperative launch
-};
-
-// Must check if device supports it
-int maxThreads = 0;
-cudaDeviceGetLimit(&maxThreads, cudaLimitMaxL2FetchGranularity); // Check support
-
-cudaLaunchCooperativeKernel(&myKernel, config, args...);
-```
-
-Within the kernel:
-
-```cpp
-__global__ void gridCoopKernel(float* data) {
-    cg::grid_group g = cg::this_grid();
-
-    // All threads in the grid can now synchronize
-    g.sync();
-
-    // Proceed with grid-wide computation
-}
-```
-
-**Common misconception**: Grid-level sync is like a supercharged `__syncthreads()`. In reality, it has strict requirements: the device must support cooperative launch, the total thread count must be within limits, and **all** threads in the grid must reach the barrier (no early exits).
+For a full treatment of cooperative groups API, patterns, and interview questions, see the dedicated [Cooperative Groups](/learn/cooperative-groups) concept node.
 
 ## Common Misconceptions About Streams
 
@@ -304,17 +195,6 @@ __global__ void gridCoopKernel(float* data) {
 
 ❌ **Wrong**: `cudaMemcpy` only synchronizes the host thread.
 ✓ **Correct**: Synchronous `cudaMemcpy` blocks the host AND synchronizes with all GPU operations. Use `cudaMemcpyAsync` with explicit streams for overlap.
-
-## Common Misconceptions About Cooperative Groups
-
-❌ **Wrong**: Cooperative groups require cooperative launch.
-✓ **Correct**: Only `grid_group` coordination requires cooperative launch. `thread_block` and `tiled_partition` work in normal kernels.
-
-❌ **Wrong**: `__syncthreads()` and `thread_block::sync()` are different operations.
-✓ **Correct**: They are equivalent — `thread_block::sync()` is just the cooperative groups abstraction of `__syncthreads()`.
-
-❌ **Wrong**: `coalesced_threads()` works across blocks.
-✓ **Correct**: It only works within a block, returning the active threads after divergence.
 
 ## Interview Patterns
 

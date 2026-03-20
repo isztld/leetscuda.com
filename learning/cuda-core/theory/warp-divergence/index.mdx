@@ -121,7 +121,7 @@ Nsight Compute exposes the `Branch Efficiency` metric:
 
 **How to measure:**
 ```bash
-nsight compute --metrics smsp::warps_executed_divergent,yield_ratio ./your_kernel
+ncu --metrics smsp__warps_executed_divergent,smsp__branch_efficiency ./your_kernel
 ```
 
 Or in code, query the metric after kernel launch:
@@ -196,7 +196,7 @@ Your if-statement causes warp divergence. If threads in the same warp take diffe
 Pre-Volta (cc < 7.0) has a single program counter per warp, so divergence always serializes the paths (2× slowdown for 2-way). Volta+ (cc >= 7.0) gives each thread its own PC and independent scheduling, enabling more flexible handling. However, it does not eliminate the fundamental SIMT constraint: if threads in the same warp need different instructions, the hardware must still issue them separately. The penalty is reduced but not zero.
 
 **"How can I measure warp divergence in my kernel?"**
-Use Nsight Compute. The `Branch Efficiency` metric shows the fraction of non-divergent branches (100% = no divergence). Also check `smsp::warps_executed_divergent` to see how many warps had divergent execution. Run `nsight compute --metrics smsp::branch_efficiency,yield_ratio ./your_kernel`. If branch efficiency is below 80%, investigate the kernel for data-dependent branches.
+Use Nsight Compute. The `Branch Efficiency` metric shows the fraction of non-divergent branches (100% = no divergence). Also check `smsp::warps_executed_divergent` to see how many warps had divergent execution. Run `ncu --metrics smsp__branch_efficiency,smsp__warps_executed_divergent ./your_kernel`. If branch efficiency is below 80%, investigate the kernel for data-dependent branches.
 
 **"Can I eliminate divergence entirely?"**
 For most real kernels, no. But you can minimize it. Techniques: (1) sort data to converge branches, (2) replace branches with arithmetic when both paths are cheap, (3) split kernels to isolate divergent code paths, (4) use cooperative groups for explicit warp-level handling. The goal is not 100% efficiency but maximizing achieved throughput.
@@ -223,5 +223,5 @@ For most real kernels, no. But you can minimize it. Techniques: (1) sort data to
 - [NVIDIA CUDA Best Practices Guide — Performance Considerations](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html)
 - [Modal GPU Glossary: Warp Divergence](https://modal.com/gpu-glossary/perf/warp-divergence)
 - [Modal GPU Glossary: Branch Efficiency](https://modal.com/gpu-glossary/perf/branch-efficiency)
-- [CUDA Mode Lecture 8: Divergence Examples](https://www.youtube.com/watch?v=lecture_008)
+- [CUDA Mode Lecture 8: Divergence Examples](https://github.com/cuda-mode/lectures/tree/main/lecture_008)
 - [Godbolt SASS Explorer: Divergent vs Convergent Code](https://godbolt.org/z/d1PsYYPnW)

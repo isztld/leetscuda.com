@@ -163,7 +163,7 @@ cp.async.wait_group(0);  // Wait for all groups
 ## Feature matrix by architecture
 
 | Feature | Volta (7.0) | Turing (7.5) | Ampere (8.0) | Hopper (9.0) | Blackwell (10.0) |
-|-----------|----------|-----------|---------|--|
+|---------|-------------|--------------|--------------|--------------|-----------------|
 | Tensor Cores | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Async copies (`cp.async`) | | | ✓ | ✓ | ✓ |
 | BF16 support | | | ✓ | ✓ | ✓ |
@@ -279,8 +279,8 @@ nvcc -cubin -arch=sm_80 kernel.cu
 
 ## Further reading
 
-- **NVIDIA Hopper Tuning Guide** — Hopper-specific optimization
-- **NVIDIA Ampere Tuning Guide** — Ampere-specific optimization
-- **CUDA C++ Programming Guide Ch. 5** — Execution model and compute capability
-- **PMPP Ch. 2** — GPU architecture overview
-- **gpu-glossary compute-capability** — Compute capability reference
+- [NVIDIA Hopper Tuning Guide](https://docs.nvidia.com/cuda/hopper-tuning-guide/) — Hopper-specific optimization
+- [NVIDIA Ampere Tuning Guide](https://docs.nvidia.com/cuda/ampere-tuning-guide/) — Ampere-specific optimization
+- [CUDA C++ Programming Guide — Compute Capability](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capability) — Feature tables by architecture
+- [PMPP Ch. 2](https://www.elsevier.com/books/programming-massively-parallel-processors/kirk/978-0-323-91231-0) — GPU architecture overview
+- [Modal GPU Glossary: Compute Capability](https://modal.com/gpu-glossary/device-software/compute-capability) — Compute capability reference

@@ -176,7 +176,7 @@ Thrust automatically dispatches to CUB for large arrays and uses sorting network
 | 32-bit ints, 100M elements | ~5–7 GB/s | CPU std::sort ~100–300 MB/s |
 | 64-bit keys, 10M pairs | ~2–3 GB/s | CPU ~100–200 MB/s |
 
-On H100, NVIDIA's optimized radix sort achieves ~95% of HBM bandwidth for large arrays (~3.2 GB/s out of 3.35 TB/s theoretical). The limiting factor is **memory bandwidth**, not compute—the algorithm is memory-bound because each pass reads and writes the entire array.
+On H100, NVIDIA's optimized radix sort achieves ~95% of HBM bandwidth for large arrays (~3.2 TB/s out of 3.35 TB/s theoretical). The limiting factor is **memory bandwidth**, not compute—the algorithm is memory-bound because each pass reads and writes the entire array.
 
 ## Common Misconceptions
 

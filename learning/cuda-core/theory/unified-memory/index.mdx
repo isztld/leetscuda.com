@@ -118,7 +118,7 @@ cudaMemAdvise(data, N * sizeof(float), cudaMemAdviseUnsetPreferredLocation, -1);
 
 ## NVLink Systems and Zero-Copy
 
-On systems with NVLink (H100, A100, DGX), the behavior changes significantly. NVLink provides 160-25 GB/s bandwidth between CPU and GPU, compared to PCIe Gen4's ~16 GB/s.
+On systems with NVLink (H100, A100, DGX), the behavior changes significantly. NVLink (GPU-to-GPU, e.g., NVLink 4.0 on H100) provides up to 900 GB/s bidirectional bandwidth between GPUs. CPU-to-GPU NVLink (Grace Hopper Superchip) provides ~900 GB/s as well, compared to PCIe Gen5's ~128 GB/s or PCIe Gen4's ~64 GB/s.
 
 **Key difference:** On NVLink systems, when you call `cudaMemAdviseSetAccessedBy(device_id)`, the runtime may leave the page on the CPU and allow the GPU to access it directly over NVLink. This is **zero-copy** — no migration occurs, but you pay the NVLink latency per access.
 
