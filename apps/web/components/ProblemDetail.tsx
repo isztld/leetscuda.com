@@ -54,6 +54,7 @@ interface Props {
   editorialHtml: string | null
   initialIsSolved: boolean
   initialStats: ProblemStats
+  submissionsDisabled?: boolean
 }
 
 type Tab = 'description' | 'discuss' | 'editorial' | 'submissions'
@@ -459,6 +460,7 @@ export function ProblemDetail({
   editorialHtml,
   initialIsSolved,
   initialStats,
+  submissionsDisabled = false,
 }: Props) {
   const { data: session } = useSession()
   const router = useRouter()
@@ -673,6 +675,9 @@ export function ProblemDetail({
   const isK8sProblem = problem.executionRuntime === 'K8S'
 
   function handleSubmit() {
+    if (submissionsDisabled) {
+      return
+    }
     if (!session) {
       router.push(`/signin?callbackUrl=/problems/${problem.slug}`)
       return
@@ -728,6 +733,18 @@ export function ProblemDetail({
           >
             ×
           </button>
+        </div>
+      )}
+
+      {/* Judge maintenance banner */}
+      {submissionsDisabled && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-3 flex items-center gap-3 shrink-0">
+          <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span className="text-sm font-medium">
+            <strong>Judge under major revision:</strong> Submissions are temporarily disabled while we upgrade the judging infrastructure.
+          </span>
         </div>
       )}
 
@@ -956,8 +973,9 @@ export function ProblemDetail({
             <div className="flex flex-col items-end gap-0.5">
               <button
                 onClick={handleSubmit}
-                disabled={isSubmitting || isLimitReached}
+                disabled={isSubmitting || isLimitReached || submissionsDisabled}
                 className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={submissionsDisabled ? 'Submissions temporarily disabled for maintenance' : undefined}
               >
                 {isSubmitting && (
                   <svg className="animate-spin h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24">
@@ -976,7 +994,7 @@ export function ProblemDetail({
                     />
                   </svg>
                 )}
-                {isSubmitting ? 'Running…' : isSolved ? 'Resubmit' : 'Submit'}
+                {isSubmitting ? 'Running…' : isSolved ? 'Resubmit' : submissionsDisabled ? 'Maintenance' : 'Submit'}
               </button>
               {infoMsg && (
                 <p className="text-[10px] text-green-600">{infoMsg}</p>

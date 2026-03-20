@@ -42,6 +42,8 @@ export default async function ProblemPage({ params }: Props) {
         : 0,
   }
 
+  const submissionsDisabled = process.env.JUDGE_SUBMISSIONS_DISABLED === 'true'
+
   return (
     <ProblemDetail
       problem={{
@@ -63,6 +65,7 @@ export default async function ProblemPage({ params }: Props) {
       editorialHtml={content.editorial}
       initialIsSolved={!!progress}
       initialStats={initialStats}
+      submissionsDisabled={submissionsDisabled}
     />
   )
 }
