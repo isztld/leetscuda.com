@@ -200,7 +200,7 @@ void solve(const float* h_matrix, float* h_results, int rows, int cols) {
     // Launch one block per row
     rowMax<<<rows, BLOCK_SIZE>>>(d_matrix, d_results, rows, cols);
 
-    cudaMemcpy(h_results, d_results, rows * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_results, d_results, rows * sizeof(float), cudaMemcpyDeviceToHost);
 
     cudaFree(d_matrix);
     cudaFree(d_results);
@@ -303,7 +303,7 @@ static bool checkCoalescedAccess() {
     // instead of the buggy stride = 32 pattern
 
     // Read the source file (simplified: just check for the pattern)
-    FILE* f = fopen("learning/cuda/problems/profile-and-optimize/index.mdx", "r");
+    FILE* f = fopen("learning/cuda-core/problems/profile-and-optimize/index.mdx", "r");
     if (!f) return false;
 
     char line[512];

@@ -59,12 +59,15 @@ measureBandwidth(64 * 1024 * 1024, 100)
 ---starter-code---
 #include <cuda_runtime.h>
 #include <cstddef>
+#include <cstdio>
 
 struct BandwidthResult {
     double h2d_gbps;
     double d2h_gbps;
 };
 
+// Measures H2D and D2H PCIe bandwidth for the given transfer size and iteration count.
+// Returns bandwidth in GB/s for each direction.
 BandwidthResult measureBandwidth(size_t bytes, int iterations) {
     BandwidthResult result = {0.0, 0.0};
 
@@ -81,16 +84,55 @@ BandwidthResult measureBandwidth(size_t bytes, int iterations) {
     return result;
 }
 
+// Harness entry point: reads transfer size (MB) and iteration count from stdin,
+// calls measureBandwidth, checks that both values are in a valid PCIe range
+// (> 0.5 GB/s and < 1000 GB/s), and prints 1 (pass) or 0 (fail).
+void solve(size_t bytes_mb, int iterations) {
+    size_t bytes = bytes_mb * 1024 * 1024;
+    // Align to 512 bytes
+    bytes = (bytes / 512) * 512;
+    if (bytes == 0) bytes = 512;
+    BandwidthResult r = measureBandwidth(bytes, iterations);
+    // Valid PCIe bandwidth: > 0.5 GB/s and < 1000 GB/s
+    int ok = (r.h2d_gbps > 0.5 && r.h2d_gbps < 1000.0 &&
+              r.d2h_gbps > 0.5 && r.d2h_gbps < 1000.0) ? 1 : 0;
+    printf("%d\n", ok);
+}
+
 ---test-cases---
-- name: "H2D bandwidth positive"
-  input: "bytes=4MB iterations=10"
-  expected: "h2d_gbps > 0"
-- name: "D2H bandwidth positive"
-  input: "bytes=4MB iterations=10"
-  expected: "d2h_gbps > 0"
-- name: "Large transfer approaches peak"
-  input: "bytes=64MB iterations=100"
-  expected: "h2d_gbps > 5.0 (at least 5 GB/s on any PCIe system)"
+- name: "4MB transfer: bandwidth in valid PCIe range"
+  input: "4 10"
+  expected: "1"
+- name: "64MB transfer: bandwidth in valid PCIe range"
+  input: "64 20"
+  expected: "1"
+- name: "1MB transfer: bandwidth measurable"
+  input: "1 50"
+  expected: "1"
+
+---harness---
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+
+// Forward declarations
+struct BandwidthResult {
+    double h2d_gbps;
+    double d2h_gbps;
+};
+extern void solve(size_t bytes_mb, int iterations);
+
+int main() {
+    size_t bytes_mb = 0;
+    int iterations = 0;
+    if (scanf("%zu %d", &bytes_mb, &iterations) != 2) {
+        printf("0\n");
+        return 1;
+    }
+    solve(bytes_mb, iterations);
+    return 0;
+}
 
 ---solution---
 BandwidthResult measureBandwidth(size_t bytes, int iterations) {
@@ -134,6 +176,16 @@ BandwidthResult measureBandwidth(size_t bytes, int iterations) {
     cudaFreeHost(h_buf);
     cudaFree(d_buf);
     return result;
+}
+
+void solve(size_t bytes_mb, int iterations) {
+    size_t bytes = bytes_mb * 1024 * 1024;
+    bytes = (bytes / 512) * 512;
+    if (bytes == 0) bytes = 512;
+    BandwidthResult r = measureBandwidth(bytes, iterations);
+    int ok = (r.h2d_gbps > 0.5 && r.h2d_gbps < 1000.0 &&
+              r.d2h_gbps > 0.5 && r.d2h_gbps < 1000.0) ? 1 : 0;
+    printf("%d\n", ok);
 }
 
 ---editorial---

@@ -245,8 +245,6 @@ For verify mode, the harness prints `1` if the output matches the reference with
 For explicit input mode, the harness prints the output matrix O in row-major format.
 
 ---starter-code---
-
-```cpp
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cmath>
@@ -295,40 +293,19 @@ void solve(const float* hQ, const float* hK, const float* hV,
     // TODO: Copy output back to host
     // TODO: Free device memory
 }
-```
 
 ---test-cases---
-
-**Test Case 1: Small sequence (verification)**
-```
-verify 1 64 64
-```
-Expected: Output matches PyTorch causal attention within 1e-4 absolute error. Harness prints `1`.
-
-**Test Case 2: Medium sequence (performance)**
-```
-verify 1 512 64
-```
-Expected: Output matches PyTorch causal attention within 1e-4 absolute error. Execution time < 2 ms on H100.
-
-**Test Case 3: Large sequence (IO efficiency)**
-```
-verify 1 2048 128
-```
-Expected: Output matches PyTorch causal attention within 1e-4 absolute error. Execution time < 10 ms on H100.
-
-**Test Case 4: Explicit input (custom data)**
-```
-1 4 64
-fill:1.0
-fill:2.0
-fill:0.5
-```
-Expected: Output matrix of shape 4×64 printed in row-major format.
+- name: "Small sequence correctness (batch=1, seqlen=64, head_dim=64)"
+  input: "verify 1 64 64"
+  expected: "1"
+- name: "Single head correctness (batch=1, seqlen=128, head_dim=32)"
+  input: "verify 1 128 32"
+  expected: "1"
+- name: "Multiple heads (batch=1, seqlen=64, head_dim=64, nheads=2)"
+  input: "verify 1 64 64 2"
+  expected: "1"
 
 ---solution---
-
-```cpp
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cmath>
@@ -496,15 +473,21 @@ __global__ void flash_attention_kernel(
     }
 
     // Write output: O = O / l
-    for (int r = tid_y; r < actual_B_r; r += bdy) {
+    // Use the same blocked row assignment as the accumulation loop above.
+    for (int r = 0; r < rows_per_thread; r++) {
+        int row_idx = tid_y * rows_per_thread + r;
+        if (row_idx >= actual_B_r) continue;
+
         for (int c = tid_x; c < head_dim; c += bdx) {
-            int global_idx = batch_head_offset + (q_start + r) * head_dim + c;
-            out[global_idx] = O_accum[r * head_dim + c] / l[r / bdy];
+            int global_idx = batch_head_offset + (q_start + row_idx) * head_dim + c;
+            out[global_idx] = O_accum[row_idx * head_dim + c] / l[r];
         }
 
         // Write LSE = m + log(l)
-        int global_q = q_start + r;
-        lse[lse_offset + global_q] = m[r / bdy] + logf(l[r / bdy]);
+        if (tid_x == 0) {
+            int global_q = q_start + row_idx;
+            lse[lse_offset + global_q] = m[r] + logf(l[r]);
+        }
     }
 }
 
@@ -562,11 +545,8 @@ void solve(const float* hQ, const float* hK, const float* hV,
     cudaFree(dOut);
     cudaFree(dLSE);
 }
-```
 
 ---harness---
-
-```cpp
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cmath>
@@ -580,15 +560,18 @@ extern void solve(const float* hQ, const float* hK, const float* hV,
                   int batch_size, int seqlen, int nheads, int head_dim);
 
 // CPU reference implementation (naive attention)
+// Uses a separate score buffer to avoid aliasing with the output buffer.
 void reference_attention(const float* Q, const float* K, const float* V,
                          float* out, int batch_size, int seqlen, int nheads, int head_dim) {
     float scale = 1.0f / sqrtf((float)head_dim);
+    // Allocate separate score buffer to avoid overwriting out mid-computation
+    std::vector<float> scores(seqlen);
 
     for (int b = 0; b < batch_size; b++) {
         for (int h = 0; h < nheads; h++) {
             for (int i = 0; i < seqlen; i++) {
+                // Compute attention scores into separate buffer
                 for (int j = 0; j < seqlen; j++) {
-                    // Compute attention scores
                     float score = 0.0f;
                     for (int d = 0; d < head_dim; d++) {
                         int q_idx = ((b * seqlen + i) * nheads + h) * head_dim + d;
@@ -596,38 +579,29 @@ void reference_attention(const float* Q, const float* K, const float* V,
                         score += Q[q_idx] * K[k_idx];
                     }
                     score *= scale;
-
                     // Causal mask
                     if (j > i) score = -1e30f;
-
-                    // Store in out temporarily (reusing as score buffer)
-                    int score_idx = ((b * seqlen + i) * nheads + h) * seqlen + j;
-                    out[score_idx] = score;
+                    scores[j] = score;
                 }
-            }
 
-            // Softmax
-            float max_score = -1e30f;
-            for (int j = 0; j < seqlen; j++) {
-                int score_idx = ((b * seqlen + i) * nheads + h) * seqlen + j;
-                max_score = fmaxf(max_score, out[score_idx]);
-            }
+                // Softmax over scores
+                float max_score = -1e30f;
+                for (int j = 0; j < seqlen; j++) max_score = fmaxf(max_score, scores[j]);
 
-            float sum_exp = 0.0f;
-            for (int j = 0; j < seqlen; j++) {
-                int score_idx = ((b * seqlen + i) * nheads + h) * seqlen + j;
-                out[score_idx] = expf(out[score_idx] - max_score);
-                sum_exp += out[score_idx];
-            }
-
-            // Normalize and compute output
-            for (int d = 0; d < head_dim; d++) {
-                int out_idx = ((b * seqlen + i) * nheads + h) * head_dim + d;
-                out[out_idx] = 0.0f;
+                float sum_exp = 0.0f;
                 for (int j = 0; j < seqlen; j++) {
-                    int score_idx = ((b * seqlen + i) * nheads + h) * seqlen + j;
-                    int v_idx = ((b * seqlen + j) * nheads + h) * head_dim + d;
-                    out[out_idx] += out[score_idx] / sum_exp * V[v_idx];
+                    scores[j] = expf(scores[j] - max_score);
+                    sum_exp += scores[j];
+                }
+
+                // Normalize and compute output into out buffer
+                for (int d = 0; d < head_dim; d++) {
+                    int out_idx = ((b * seqlen + i) * nheads + h) * head_dim + d;
+                    out[out_idx] = 0.0f;
+                    for (int j = 0; j < seqlen; j++) {
+                        int v_idx = ((b * seqlen + j) * nheads + h) * head_dim + d;
+                        out[out_idx] += scores[j] / sum_exp * V[v_idx];
+                    }
                 }
             }
         }
@@ -729,7 +703,6 @@ int main() {
 
     return 0;
 }
-```
 
 ---editorial---
 

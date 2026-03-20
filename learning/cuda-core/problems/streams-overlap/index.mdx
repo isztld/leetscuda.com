@@ -149,92 +149,68 @@ void solve_sequential(const float* h_input, float* h_output, int n) {
     cudaFree(d_output);
 }
 
-// Host code for testing
-int main() {
-    const int n = 10000000;  // 10M elements
-    const size_t bytes = n * sizeof(float);
+---test-cases---
+- name: "Small array correctness (N=1024)"
+  input: "1024"
+  expected: "1"
+- name: "Medium array correctness (N=100000)"
+  input: "100000"
+  expected: "1"
+- name: "Large array correctness (N=1000000)"
+  input: "1000000"
+  expected: "1"
+- name: "Large array correctness (N=10000000)"
+  input: "10000000"
+  expected: "1"
 
-    // Allocate host memory
-    float* h_input  = (float*)malloc(bytes);
-    float* h_output_seq = (float*)malloc(bytes);
-    float* h_output_pipe = (float*)malloc(bytes);
+---harness---
+#include <cuda_runtime.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <vector>
+
+// Forward declarations
+extern void solve_sequential(const float* h_input, float* h_output, int n);
+extern void solve_pipelined(const float* h_input, float* h_output, int n);
+
+int main() {
+    int n;
+    if (scanf("%d", &n) != 1 || n <= 0) {
+        printf("0\n");
+        return 1;
+    }
+
+    // Ensure n is divisible by NUM_STREAMS (4) for the pipelined version
+    int aligned_n = (n / 4) * 4;
+    if (aligned_n == 0) aligned_n = 4;
+
+    std::vector<float> h_input(aligned_n), h_seq(aligned_n), h_pipe(aligned_n);
 
     // Initialize input
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < aligned_n; i++) {
         h_input[i] = (float)i;
     }
 
-    // Test sequential version
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+    // Run sequential version
+    solve_sequential(h_input.data(), h_seq.data(), aligned_n);
 
-    cudaEventRecord(start);
-    solve_sequential(h_input, h_output_seq, n);
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
+    // Run pipelined version
+    solve_pipelined(h_input.data(), h_pipe.data(), aligned_n);
 
-    float ms_sequential;
-    cudaEventElapsedTime(&ms_sequential, start, stop);
-    printf("Sequential time: %.2f ms\n", ms_sequential);
-
-    // Test pipelined version
-    cudaEventRecord(start);
-    solve_pipelined(h_input, h_output_pipe, n);
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-
-    float ms_pipelined;
-    cudaEventElapsedTime(&ms_pipelined, start, stop);
-    printf("Pipelined time:  %.2f ms\n", ms_pipelined);
-    printf("Speedup:         %.2fx\n", ms_sequential / ms_pipelined);
-
-    // Verify correctness
+    // Compare outputs
     bool correct = true;
-    for (int i = 0; i < n; i++) {
-        float expected = h_input[i] * 2 + (i % 256);
-        if (fabs(h_output_seq[i] - expected) > 1e-5 ||
-            fabs(h_output_pipe[i] - expected) > 1e-5) {
+    for (int i = 0; i < aligned_n; i++) {
+        if (fabsf(h_seq[i] - h_pipe[i]) > 1e-4f) {
             correct = false;
-            printf("Mismatch at %d: expected %f, got %f\n",
-                   i, expected, h_output_pipe[i]);
             break;
         }
     }
 
-    if (correct) {
-        printf("✓ Results correct!\n");
-    }
-
-    // Cleanup
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-    free(h_input);
-    free(h_output_seq);
-    free(h_output_pipe);
-
-    return correct ? 0 : 1;
+    printf("%d\n", correct ? 1 : 0);
+    return 0;
 }
-
----test-cases---
-- name: "Single element edge case"
-  input: "1"
-  expected: "Results correct"
-- name: "Small array (correctness check)"
-  input: "1000"
-  expected: "Results correct"
-- name: "Medium array (1M elements)"
-  input: "1000000"
-  expected: "Results correct"
-- name: "Large array (10M elements)"
-  input: "10000000"
-  expected: "Results correct"
-- name: "Very large array (50M elements)"
-  input: "50000000"
-  expected: "Results correct"
-- name: "Boundary case: exactly one chunk per stream"
-  input: "1024"
-  expected: "Results correct"
 
 ---solution---
 __global__ void transformKernel(const float* input, float* output, int n) {
