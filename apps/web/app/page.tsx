@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { Navbar } from '@/components/Navbar'
 import { Footer } from '@/components/Footer'
+import stats from '@/public/stats.json'
 
 const tracks = [
   {
@@ -97,13 +98,18 @@ export default function HomePage() {
               </div>
               <div className="mt-12 flex flex-wrap gap-8">
                 <div className="flex flex-col">
-                  <span className="text-3xl font-bold text-slate-900 tabular-nums">12</span>
+                  <span className="text-3xl font-bold text-slate-900 tabular-nums">{stats.totalProblems}</span>
                   <span className="text-sm text-slate-500 mt-0.5">problems</span>
                 </div>
                 <div className="w-px bg-slate-200 hidden sm:block" />
                 <div className="flex flex-col">
-                  <span className="text-3xl font-bold text-slate-900 tabular-nums">4</span>
+                  <span className="text-3xl font-bold text-slate-900 tabular-nums">{stats.totalTracks}</span>
                   <span className="text-sm text-slate-500 mt-0.5">tracks</span>
+                </div>
+                <div className="w-px bg-slate-200 hidden sm:block" />
+                <div className="flex flex-col">
+                  <span className="text-3xl font-bold text-slate-900 tabular-nums">{stats.totalTheory + stats.totalArticles}</span>
+                  <span className="text-sm text-slate-500 mt-0.5">articles</span>
                 </div>
                 <div className="w-px bg-slate-200 hidden sm:block" />
                 <div className="flex flex-col">

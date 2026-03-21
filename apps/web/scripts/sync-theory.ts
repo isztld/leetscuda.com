@@ -8,6 +8,7 @@
  */
 
 import fs from 'fs'
+import fsPromises from 'fs/promises'
 import path from 'path'
 import matter from 'gray-matter'
 import { z } from 'zod'
@@ -149,6 +150,25 @@ async function main() {
   }
 
   console.log('✅  All CONCEPT and ARTICLE nodes have content files. Done.\n')
+
+  // Write stats.json for landing page
+  const prismaForStats = new PrismaClient({
+    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
+  })
+  try {
+    const stats = {
+      totalProblems: await prismaForStats.problem.count({ where: { status: 'PUBLISHED' } }),
+      totalTracks:   await prismaForStats.track.count(),
+      totalTheory:   await prismaForStats.roadmapNode.count({ where: { type: 'CONCEPT' } }),
+      totalArticles: await prismaForStats.roadmapNode.count({ where: { type: 'ARTICLE' } }),
+      generatedAt:   new Date().toISOString(),
+    }
+    const statsPath = path.join(process.cwd(), 'public', 'stats.json')
+    await fsPromises.writeFile(statsPath, JSON.stringify(stats, null, 2))
+    console.log(`Stats written to public/stats.json\n`)
+  } finally {
+    await prismaForStats.$disconnect()
+  }
 }
 
 main().catch((e) => {

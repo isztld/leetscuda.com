@@ -168,15 +168,7 @@ export default async function LearnPage({ params }: Props) {
             {/* Content */}
             {contentHtml ? (
               <div
-                className="prose prose-slate max-w-none
-                  prose-headings:font-semibold prose-headings:text-slate-900
-                  prose-p:text-slate-700 prose-p:leading-relaxed
-                  prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline
-                  prose-strong:text-slate-900
-                  prose-code:text-slate-800 prose-code:bg-slate-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:before:content-none prose-code:after:content-none
-                  prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:overflow-x-auto
-                  prose-table:text-sm prose-th:text-slate-700 prose-td:text-slate-600
-                  prose-blockquote:border-slate-300 prose-blockquote:text-slate-500"
+                className="theory-content"
                 dangerouslySetInnerHTML={{ __html: contentHtml }}
               />
             ) : (

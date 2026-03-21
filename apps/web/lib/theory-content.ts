@@ -14,7 +14,59 @@ async function renderMarkdown(source: string): Promise<string> {
   }
   marked.use({ renderer })
 
-  return marked(source) as string
+  let html = marked(source) as string
+  html = postProcess(html)
+  return html
+}
+
+/**
+ * Post-process rendered HTML to add rich visual treatments:
+ * - Wrap <table> in scroll container
+ * - Wrap <pre> blocks with copy button
+ * - Transform ❌ Wrong / ✓ Correct paragraphs into colored cards
+ * - Transform **Q: ...** paragraphs into interview question blocks
+ * - Wrap "Why this matters" section first paragraph in callout
+ */
+function postProcess(html: string): string {
+  // 1. Wrap tables in scroll container
+  html = html
+    .replace(/<table/g, '<div class="table-wrapper"><table')
+    .replace(/<\/table>/g, '</table></div>')
+
+  // 2. Wrap pre blocks with copy button
+  // The renderer outputs: <pre><code class="hljs ...">...</code></pre>
+  html = html.replace(
+    /<pre><code([\s\S]*?)>([\s\S]*?)<\/code><\/pre>/g,
+    (_match, attrs, code) => `<div class="code-block-wrapper"><button class="copy-code-btn" onclick="(function(btn){var code=btn.closest('.code-block-wrapper').querySelector('code');navigator.clipboard.writeText(code.innerText).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy'},1500)})})(this)">Copy</button><pre><code${attrs}>${code}</code></pre></div>`,
+  )
+
+  // 3. Transform ❌ Wrong / ✓ Correct patterns
+  // marked renders: <p>❌ <strong>Wrong</strong>: ...</p>
+  html = html
+    .replace(
+      /<p>❌\s*<strong>Wrong<\/strong>:([\s\S]*?)<\/p>/g,
+      '<div class="misconception-wrong"><span class="misconception-icon">✕</span><div class="misconception-body"><strong>Common mistake</strong>$1</div></div>',
+    )
+    .replace(
+      /<p>✓\s*<strong>Correct<\/strong>:([\s\S]*?)<\/p>/g,
+      '<div class="misconception-correct"><span class="misconception-icon">✓</span><div class="misconception-body"><strong>Correct understanding</strong>$1</div></div>',
+    )
+
+  // 4. Transform **Q: ...** paragraphs into interview question blocks
+  // marked renders: <p><strong>Q: question text</strong></p>
+  // or: <p><strong>Q: question text</strong> answer text</p>
+  html = html.replace(
+    /<p><strong>Q:\s*(.*?)<\/strong>([\s\S]*?)<\/p>/g,
+    '<div class="interview-question"><div class="interview-q-label">Interview Q</div><div class="interview-q-text"><strong>$1</strong>$2</div></div>',
+  )
+
+  // 5. Wrap first paragraph after "Why this matters" h2 in callout
+  html = html.replace(
+    /(<h2[^>]*>[^<]*[Ww]hy this matters[^<]*<\/h2>\s*)(<p>[\s\S]*?<\/p>)/,
+    '$1<div class="why-matters-callout">$2</div>',
+  )
+
+  return html
 }
 
 // process.cwd() is apps/web when running `next dev`

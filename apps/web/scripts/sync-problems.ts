@@ -7,6 +7,7 @@
  */
 
 import fs from 'fs'
+import fsPromises from 'fs/promises'
 import path from 'path'
 import { PrismaClient, Difficulty, ProblemStatus, ExecutionRuntime, CppStandard, CudaVersion, ComputeCap } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
@@ -162,6 +163,25 @@ async function main() {
   console.log(`  upserted: ${upserted} problems`)
   console.log(`  skipped:  ${skipped} problems (warnings above)`)
   console.log('\nSync complete.\n')
+
+  // Write stats.json for landing page
+  const prismaForStats = new PrismaClient({
+    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
+  })
+  try {
+    const stats = {
+      totalProblems: await prismaForStats.problem.count({ where: { status: 'PUBLISHED' } }),
+      totalTracks:   await prismaForStats.track.count(),
+      totalTheory:   await prismaForStats.roadmapNode.count({ where: { type: 'CONCEPT' } }),
+      totalArticles: await prismaForStats.roadmapNode.count({ where: { type: 'ARTICLE' } }),
+      generatedAt:   new Date().toISOString(),
+    }
+    const statsPath = path.join(process.cwd(), 'public', 'stats.json')
+    await fsPromises.writeFile(statsPath, JSON.stringify(stats, null, 2))
+    console.log(`Stats written to public/stats.json\n`)
+  } finally {
+    await prismaForStats.$disconnect()
+  }
 
   if (allWarnings.length > 0) {
     process.exit(1)
