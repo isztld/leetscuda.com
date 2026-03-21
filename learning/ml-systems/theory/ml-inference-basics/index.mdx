@@ -104,15 +104,15 @@ Cold-start latency (time to load weights before serving the first request) is ty
 
 ## Interview patterns
 
-**Question 1**: "Why is LLM decode memory-bandwidth-bound?"
+**Question**: "Why is LLM decode memory-bandwidth-bound?"
 
 **Answer**: During decode, only one new token is processed per step (batch size = 1 per sequence). This reduces the matrix multiplies in linear layers to GEMV (matrix-vector multiply). GEMV arithmetic intensity is O(1 FLOP/byte) — for each weight byte read, we do ~1 FLOP. Modern GPUs can compute far faster than memory can deliver, so the bottleneck is HBM bandwidth.
 
-**Question 2**: "How does KV cache work, and why is it necessary?"
+**Question**: "How does KV cache work, and why is it necessary?"
 
 **Answer**: The KV cache stores K and V projections for all previously generated tokens. Without it, computing attention at decode step t would require recomputing K and V for all t-1 previous tokens — O(t²) total work. With the cache, step t adds only one new K/V entry (O(1) compute), then reads all N cached entries for attention (O(N) memory). The cache enables O(N) decode instead of O(N²).
 
-**Question 3**: "Design an inference system to serve Llama-3 70B to 100 concurrent users."
+**Question**: "Design an inference system to serve Llama-3 70B to 100 concurrent users."
 
 **Answer**: Use vLLM with paged attention (avoids KV cache fragmentation). With GQA (8 KV heads), KV cache is ~2 GB/sequence at 8K context, so 100 users fit in ~200 GB — requires 3 A100-80GB or 2 H100-80GB with tensor parallelism. Set continuous batching to maximize GPU utilization. Monitor TTFT (< 200 ms) and ITL (< 50 ms) as SLOs.
 

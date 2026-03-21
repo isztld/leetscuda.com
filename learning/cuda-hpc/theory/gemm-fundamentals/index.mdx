@@ -244,79 +244,63 @@ Key observations:
 
 ## Common misconceptions
 
-### GEMM is always compute-bound
+❌ **Wrong**: "GEMM is inherently compute-bound because it does O(N³) work."
 
-**Wrong**: GEMM is inherently compute-bound because it does O(N³) work.
+✓ **Correct**: Only large GEMM is compute-bound. Small GEMM (N<256 on H100) has arithmetic intensity below the ridge point and remains memory-bound. This is why inference with small batch sizes is memory-bound despite GEMM being "compute-heavy" in the asymptotic sense.
 
-**Correct**: Only large GEMM is compute-bound. Small GEMM (N<256 on H100) has arithmetic intensity below the ridge point and remains memory-bound. This is why inference with small batch sizes is memory-bound despite GEMM being "compute-heavy" in the asymptotic sense.
+❌ **Wrong**: "If GEMM is memory-bound, there's nothing to optimize."
 
-### Memory-bound GEMM cannot be improved
-
-**Wrong**: If GEMM is memory-bound, there's nothing to optimize.
-
-**Correct**: You can increase effective arithmetic intensity by:
+✓ **Correct**: You can increase effective arithmetic intensity by:
 - **Fusing operations**: Combine GEMM with bias add + ReLU into a single kernel
 - **Batching**: Run multiple small GEMMs together to amortize memory overhead
 - **Quantization**: Reduce memory traffic by using FP16/BF16/FP8 (also enables Tensor Cores)
 
-### cuBLAS automatically uses Tensor Cores
+❌ **Wrong**: "cuBLAS always maximizes performance by using Tensor Cores."
 
-**Wrong**: cuBLAS always maximizes performance by using Tensor Cores.
-
-**Correct**: cuBLAS uses Tensor Cores only when:
+✓ **Correct**: cuBLAS uses Tensor Cores only when:
 - Data type is FP16, BF16, or TF32 (not FP32 native)
 - Matrix dimensions align with Tensor Core requirements (multiples of 16)
 - `CUBLAS_COMPUTE_16F` or `CUBLAS_TENSOR_OP_MATH` mode is set
 
 For FP32 workloads on A100/H100, cuBLAS may still use CUDA Cores unless explicitly configured for TF32.
 
-### Larger tiles always perform better
+❌ **Wrong**: "Bigger BM, BN, BK values always give more overlap and better performance."
 
-**Wrong**: Bigger BM, BN, BK values always give more overlap and better performance.
-
-**Correct**: Tile sizes are constrained by:
+✓ **Correct**: Tile sizes are constrained by:
 - **Shared memory capacity**: 128×128×BK=32 requires 64KB per matrix, exceeding some SMs
 - **Occupancy**: Larger tiles reduce register pressure but may reduce active warps
 - **Memory alignment**: Vectorized loads require 16-byte alignment
 
 The optimal tile size varies by GPU architecture: H100 benefits from larger tiles than A100 due to improved TMA throughput.
 
-### One should implement GEMM from scratch
+❌ **Wrong**: "Custom GEMM is always faster than library calls."
 
-**Wrong**: Custom GEMM is always faster than library calls.
-
-**Correct**: cuBLAS achieves ~95% of Tensor Core peak for large square GEMM. Custom kernels only win when:
+✓ **Correct**: cuBLAS achieves ~95% of Tensor Core peak for large square GEMM. Custom kernels only win when:
 - You need custom epilogues (activation fusion, quantization)
 - Matrix dimensions are unusual (very narrow or very tall)
 - You're building a library like CUTLASS that targets new architectures
 
 ## Interview patterns
 
-### Whiteboard: Derive arithmetic intensity
-
 **Question**: "What's the arithmetic intensity of SGEMM for square matrices? At what size does it become compute-bound on H100?"
 
-**Expected answer**:
+**Answer**:
 - FLOPs = 2N³, bytes = 12N²
 - Arithmetic intensity = N/6 FLOPs/byte
 - H100 ridge point = 989 TFLOPS / 3.35 TB/s = 295 FLOPs/byte
 - Compute-bound when N/6 ≥ 295, so N ≥ 1,770
 
-### Whiteboard: Design a tiling strategy
-
 **Question**: "Design a tiling strategy for GEMM on H100. What tile sizes would you choose and why?"
 
-**Expected answer**:
+**Answer**:
 - **Block tile (BM×BN×BK)**: 128×128×32 fits in 64KB+64KB shared memory, provides good coalescing
 - **Warp tile (WM×WN)**: 64×64 divides evenly into block tile, maps to warp scheduling
 - **Thread tile (TM×TN)**: 8×8 gives 64 accumulators per thread, fits in register file
 - Double buffering with async copies to hide global memory latency
 
-### Coding: Implement naive GEMM, then optimize
-
 **Question**: "Write a naive GEMM kernel, then optimize it with shared memory tiling."
 
-**Progression**:
+**Answer**:
 1. Naive: Each thread computes one output element, loads A and B from global memory
 2. Tiled: Block loads BM×BK and BK×BN tiles into shared memory, computes BM×BN output tile
 3. Optimized: Add vectorized loads, register blocking, double buffering

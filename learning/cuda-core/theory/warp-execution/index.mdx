@@ -238,23 +238,23 @@ Any situation where threads in a warp follow different paths causes divergence.
 
 ## Interview patterns
 
-**Question 1**: "What is SIMT and how does it differ from SIMD?"
+**Question**: "What is SIMT and how does it differ from SIMD?"
 
 **Answer**: SIMT (Single Instruction, Multiple Threads) is like SIMD but with independent program counters per thread. In SIMD, all vector elements execute together; in SIMT, threads can diverge and re-converge. SIMT gives a more natural programming model while retaining parallel efficiency.
 
-**Question 2**: "What happens when threads in a warp take different branches?"
+**Question**: "What happens when threads in a warp take different branches?"
 
 **Answer**: The warp serializes execution. It first executes the "if" path with the "else" threads masked out, then executes the "else" path with the "if" threads masked out. This is called divergence, and it reduces performance proportionally to the number of distinct paths.
 
-**Question 3**: "Where do divergent threads re-converge?"
+**Question**: "Where do divergent threads re-converge?"
 
 **Answer**: At the **immediate post-dominator** in the control flow graph. This is typically the point after the if/else block where both paths merge.
 
-**Question 4**: "How does Nsight Compute measure branch efficiency?"
+**Question**: "How does Nsight Compute measure branch efficiency?"
 
 **Answer**: Branch efficiency = non_divergent_branches / total_branches. 100% means no divergence; lower values indicate divergent code paths.
 
-**Question 5**: "What is warp specialization in Hopper?"
+**Question**: "What is warp specialization in Hopper?"
 
 **Answer**: Warp specialization allows different warps to execute different roles permanently without re-convergence. For example, one warp group can load data while others compute. This enables more efficient pipelines than traditional divergence/re-convergence.
 

@@ -200,39 +200,49 @@ CUDA reserves 1 KB per thread block from the shared memory pool, leaving 227 KB 
 
 Larger shared memory carveouts reduce the L1 cache available for global memory accesses. For kernels where both matter, profile with different carveout settings to find the optimum.
 
-## Common Misconceptions
+## Common misconceptions
 
-**❌ Wrong:** Shared memory is automatically part of the L1 cache — data loaded to global memory is transparently available in shared memory.
-**✓ Correct:** Shared memory and L1 cache share the same physical SRAM array but are accessed through distinct address spaces. The L1 caches global memory loads automatically (hardware-managed). Shared memory requires explicit programmer loads (`smem[i] = global[i]`). Data you write into shared memory is never automatically present in L1 or vice versa.
+❌ **Wrong**: Shared memory is automatically part of the L1 cache — data loaded to global memory is transparently available in shared memory.
 
-**❌ Wrong:** A bank conflict occurs when two threads read the *same address* in the same bank.
-**✓ Correct:** Two threads reading the *same address* in the same bank is a **broadcast** — the hardware multicasts the value to all requesting threads in a single transaction. No conflict. A conflict requires *different addresses* that happen to map to the same bank. The hardware cannot serve them simultaneously because a bank has only one read port; it must serialize.
+✓ **Correct**: Shared memory and L1 cache share the same physical SRAM array but are accessed through distinct address spaces. The L1 caches global memory loads automatically (hardware-managed). Shared memory requires explicit programmer loads (`smem[i] = global[i]`). Data you write into shared memory is never automatically present in L1 or vice versa.
 
-**❌ Wrong:** Shared memory is global to all blocks — any block can read data another block wrote.
-**✓ Correct:** Each block has its own independent shared memory allocation. Two blocks cannot communicate through shared memory, even if they reside on the same SM. For inter-block communication, use global memory (with atomics or careful staging) or, on Hopper, Distributed Shared Memory across a thread block cluster.
+❌ **Wrong**: A bank conflict occurs when two threads read the *same address* in the same bank.
 
-**❌ Wrong:** Bank conflicts only occur when accessing columns — row access is always conflict-free.
-**✓ Correct:** Conflicts arise from any access pattern where stride (in 32-bit words) is a multiple of 32. Column access in a 32-wide float array has stride 32 — a 32-way conflict. Stride-16 causes a 16-way conflict. Stride-2 causes a 2-way conflict. Only odd strides and stride-1 (sequential) are always conflict-free. A diagonal access pattern on a square array can also cause conflicts.
+✓ **Correct**: Two threads reading the *same address* in the same bank is a **broadcast** — the hardware multicasts the value to all requesting threads in a single transaction. No conflict. A conflict requires *different addresses* that happen to map to the same bank. The hardware cannot serve them simultaneously because a bank has only one read port; it must serialize.
 
-**❌ Wrong:** Padding shared memory arrays wastes significant memory and reduces occupancy.
-**✓ Correct:** Padding a 32×32 float tile by one element per row adds 32 × 4 = 128 bytes, increasing the allocation from 4096 to 4224 bytes — a 3.1% increase. For a kernel where shared memory limits occupancy, this change is almost never the binding constraint. The throughput improvement from eliminating a 32-way conflict (32× serialization) always outweighs a 3% occupancy reduction.
+❌ **Wrong**: Shared memory is global to all blocks — any block can read data another block wrote.
 
-**❌ Wrong:** You only need one `__syncthreads()` per tile in a tiled GEMM — after the loads.
-**✓ Correct:** Two barriers are required: one after loading to ensure all threads see complete tiles before computation starts, and one after computation to ensure all threads finish reading the current tile before any thread begins loading the next. Omitting the second barrier introduces a race between the fast threads of the next iteration and the slow threads of the current one.
+✓ **Correct**: Each block has its own independent shared memory allocation. Two blocks cannot communicate through shared memory, even if they reside on the same SM. For inter-block communication, use global memory (with atomics or careful staging) or, on Hopper, Distributed Shared Memory across a thread block cluster.
 
-## Interview Patterns
+❌ **Wrong**: Bank conflicts only occur when accessing columns — row access is always conflict-free.
 
-**"Why is tiled GEMM faster than naïve GEMM?"**
-In naïve GEMM, each thread independently reads its entire row of A and column of B from global memory. If M=N=K=1024, each thread reads 2×1024 floats = 8 KB from HBM. Total global reads: 1024² × 8 KB = 8 GB, when the data is only 12 MB. Tiled GEMM loads each element of A and B into shared memory *once per tile phase* and reuses it across all 32 (or 16, or 64) threads sharing that tile. CGMA goes from 1 to TILE, reducing HBM traffic by TILE×. The practical limit is that for H100 you need TILE ≥ 295 to reach the compute-bound regime; production CUTLASS kernels use multi-stage pipelining with tiles of 128-256 to approach this.
+✓ **Correct**: Conflicts arise from any access pattern where stride (in 32-bit words) is a multiple of 32. Column access in a 32-wide float array has stride 32 — a 32-way conflict. Stride-16 causes a 16-way conflict. Stride-2 causes a 2-way conflict. Only odd strides and stride-1 (sequential) are always conflict-free. A diagonal access pattern on a square array can also cause conflicts.
 
-**"Given `__shared__ float tile[32][32]`, what is the bank conflict pattern when thread `t` reads `tile[t][0]`?"**
-Row `t`, column 0 is at byte offset `t * 32 * 4 = t * 128`. Bank = `(t * 128 / 4) % 32 = (t * 32) % 32 = 0` for all `t`. All 32 threads hit bank 0, different addresses. Result: 32-way bank conflict, 32× throughput penalty. Fix: `__shared__ float tile[32][33]`. Now `tile[t][0]` is at byte `t * 33 * 4 = t * 132`. Bank = `(t * 132 / 4) % 32 = (t * 33) % 32`. Since 33 % 32 = 1, bank = `t % 32`. Thread `t` hits bank `t` — 32 distinct banks, zero conflict.
+❌ **Wrong**: Padding shared memory arrays wastes significant memory and reduces occupancy.
 
-**"How much shared memory can a single thread block use on an H100?"**
-227 KB. The H100 has a 256 KB combined L1/shared pool per SM with a maximum shared carveout of 228 KB. CUDA reserves 1 KB per thread block, leaving 227 KB usable. This requires dynamic shared memory with `cudaFuncSetAttribute` setting `cudaFuncAttributeMaxDynamicSharedMemorySize` to the desired value; static declarations cannot exceed 48 KB without explicit opt-in.
+✓ **Correct**: Padding a 32×32 float tile by one element per row adds 32 × 4 = 128 bytes, increasing the allocation from 4096 to 4224 bytes — a 3.1% increase. For a kernel where shared memory limits occupancy, this change is almost never the binding constraint. The throughput improvement from eliminating a 32-way conflict (32× serialization) always outweighs a 3% occupancy reduction.
 
-**"What does `__syncthreads()` actually do and what happens if you forget it?"**
-`__syncthreads()` inserts a block-level barrier: no thread in the block proceeds past it until all threads have reached it. Under the hood, it flushes the shared memory write pipeline and ensures visibility. If you omit it after loading tiles, threads running ahead in the warp scheduler may begin computing with partially-written shared memory (data from a previous tile or garbage). The resulting error is a data race: non-deterministic wrong answers with no crash or CUDA error code. These bugs are silent and hard to find without `cuda-memcheck --check-shared-mem-race`.
+❌ **Wrong**: You only need one `__syncthreads()` per tile in a tiled GEMM — after the loads.
+
+✓ **Correct**: Two barriers are required: one after loading to ensure all threads see complete tiles before computation starts, and one after computation to ensure all threads finish reading the current tile before any thread begins loading the next. Omitting the second barrier introduces a race between the fast threads of the next iteration and the slow threads of the current one.
+
+## Interview patterns
+
+**Question**: "Why is tiled GEMM faster than naïve GEMM?"
+
+**Answer**: In naïve GEMM, each thread independently reads its entire row of A and column of B from global memory. If M=N=K=1024, each thread reads 2×1024 floats = 8 KB from HBM. Total global reads: 1024² × 8 KB = 8 GB, when the data is only 12 MB. Tiled GEMM loads each element of A and B into shared memory *once per tile phase* and reuses it across all 32 (or 16, or 64) threads sharing that tile. CGMA goes from 1 to TILE, reducing HBM traffic by TILE×. The practical limit is that for H100 you need TILE ≥ 295 to reach the compute-bound regime; production CUTLASS kernels use multi-stage pipelining with tiles of 128-256 to approach this.
+
+**Question**: "Given `__shared__ float tile[32][32]`, what is the bank conflict pattern when thread `t` reads `tile[t][0]`?"
+
+**Answer**: Row `t`, column 0 is at byte offset `t * 32 * 4 = t * 128`. Bank = `(t * 128 / 4) % 32 = (t * 32) % 32 = 0` for all `t`. All 32 threads hit bank 0, different addresses. Result: 32-way bank conflict, 32× throughput penalty. Fix: `__shared__ float tile[32][33]`. Now `tile[t][0]` is at byte `t * 33 * 4 = t * 132`. Bank = `(t * 132 / 4) % 32 = (t * 33) % 32`. Since 33 % 32 = 1, bank = `t % 32`. Thread `t` hits bank `t` — 32 distinct banks, zero conflict.
+
+**Question**: "How much shared memory can a single thread block use on an H100?"
+
+**Answer**: 227 KB. The H100 has a 256 KB combined L1/shared pool per SM with a maximum shared carveout of 228 KB. CUDA reserves 1 KB per thread block, leaving 227 KB usable. This requires dynamic shared memory with `cudaFuncSetAttribute` setting `cudaFuncAttributeMaxDynamicSharedMemorySize` to the desired value; static declarations cannot exceed 48 KB without explicit opt-in.
+
+**Question**: "What does `__syncthreads()` actually do and what happens if you forget it?"
+
+**Answer**: `__syncthreads()` inserts a block-level barrier: no thread in the block proceeds past it until all threads have reached it. Under the hood, it flushes the shared memory write pipeline and ensures visibility. If you omit it after loading tiles, threads running ahead in the warp scheduler may begin computing with partially-written shared memory (data from a previous tile or garbage). The resulting error is a data race: non-deterministic wrong answers with no crash or CUDA error code. These bugs are silent and hard to find without `cuda-memcheck --check-shared-mem-race`.
 
 ## Key Numbers
 

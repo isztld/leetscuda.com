@@ -144,15 +144,15 @@ outputs = llm.generate(
 
 ## Interview patterns
 
-**Question 1**: "What's the difference between W8A16 and W8A8?"
+**Question**: "What's the difference between W8A16 and W8A8?"
 
 **Answer**: W8A16: weights are quantized to INT8, activations remain FP16. Weights are dequantized to FP16 before each GEMM, so computation happens in FP16. Benefit: halves weight memory traffic (decode bottleneck). W8A8: both weights and activations quantized to INT8; GEMM runs entirely in INT8 using INT8 Tensor Cores. Benefit: doubles compute throughput on top of memory savings, but requires careful outlier handling (LLM.int8() decomposition or SmoothQuant activation scaling).
 
-**Question 2**: "How does GPTQ achieve 4-bit quantization with minimal accuracy loss?"
+**Question**: "How does GPTQ achieve 4-bit quantization with minimal accuracy loss?"
 
 **Answer**: GPTQ uses the Hessian (second-order gradient information) to determine how much each weight contributes to model output. It quantizes weights row-by-row, compensating for quantization error by adjusting remaining (unquantized) weights using the Hessian. This greedy approach minimizes the layer-wise output error rather than just minimizing element-wise quantization error.
 
-**Question 3**: "A 70B model at FP16 is 140 GB. How do you serve it on a single 80 GB A100?"
+**Question**: "A 70B model at FP16 is 140 GB. How do you serve it on a single 80 GB A100?"
 
 **Answer**: Use W4A16 quantization (GPTQ). At 4-bit, the model is 35 GB — fits on one A100 with room for KV cache. Alternatively, use two A100s with tensor parallelism (no quantization needed). If accuracy matters, W4A16 with GPTQ typically loses only 0.5–1.5% on benchmarks, which is acceptable for most production use cases.
 

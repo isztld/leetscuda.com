@@ -148,47 +148,53 @@ Nsight Compute reports **Global Load Efficiency** (also called **Global Memory L
 
 To find: open Nsight Compute → Sections → Memory Workload Analysis → L1 Cache Transactions per Request. A ratio above 1.0 for 32-bit loads indicates non-coalesced access.
 
-## Common Misconceptions
+## Common misconceptions
 
-❌ **Wrong:** Any sequential memory access is coalesced.
-✓ **Correct:** Coalescing requires all threads in a *warp* to access addresses within the same 128-byte cache line. A loop where each thread increments its own pointer is sequential per thread, but if the threads are accessing different cache lines, the warp's access is not coalesced.
+❌ **Wrong**: Any sequential memory access is coalesced.
 
----
+✓ **Correct**: Coalescing requires all threads in a *warp* to access addresses within the same 128-byte cache line. A loop where each thread increments its own pointer is sequential per thread, but if the threads are accessing different cache lines, the warp's access is not coalesced.
 
-❌ **Wrong:** Coalescing only matters for reads.
-✓ **Correct:** Write coalescing is equally critical. A kernel that accumulates results into a non-sequential output array pays the same 32× penalty on writes as on reads. Profile stores as carefully as loads.
+❌ **Wrong**: Coalescing only matters for reads.
 
----
+✓ **Correct**: Write coalescing is equally critical. A kernel that accumulates results into a non-sequential output array pays the same 32× penalty on writes as on reads. Profile stores as carefully as loads.
 
-❌ **Wrong:** Padding arrays never helps coalescing.
-✓ **Correct:** Padding each row to a multiple of 128 bytes (32 floats) aligns row starts to cache-line boundaries. For column access after a transpose, this makes previously non-coalesced accesses perfectly coalesced. The overhead is at most 128 bytes per row — negligible for large matrices.
+❌ **Wrong**: Padding arrays never helps coalescing.
 
----
+✓ **Correct**: Padding each row to a multiple of 128 bytes (32 floats) aligns row starts to cache-line boundaries. For column access after a transpose, this makes previously non-coalesced accesses perfectly coalesced. The overhead is at most 128 bytes per row — negligible for large matrices.
 
-❌ **Wrong:** Global memory is shared with the CPU.
-✓ **Correct:** CPU and GPU have separate DRAM. Data moves between them only via explicit `cudaMemcpy`, DMA (direct memory access via pinned memory), or Unified Memory page migration. A pointer valid on the CPU will segfault if dereferenced by a kernel without migration.
+❌ **Wrong**: Global memory is shared with the CPU.
 
----
+✓ **Correct**: CPU and GPU have separate DRAM. Data moves between them only via explicit `cudaMemcpy`, DMA (direct memory access via pinned memory), or Unified Memory page migration. A pointer valid on the CPU will segfault if dereferenced by a kernel without migration.
 
-❌ **Wrong:** All global memory accesses go all the way to HBM.
-✓ **Correct:** Global accesses go through L1 (per-SM, ~30-cycle hit) and L2 (shared, ~200-cycle hit) before reaching HBM (~400 cycles). For working sets smaller than L2 (50 MB on H100), repeated accesses will hit L2 and the effective bandwidth is limited by L2 throughput, not HBM bandwidth. L2 bandwidth is significantly higher than HBM bandwidth.
+❌ **Wrong**: All global memory accesses go all the way to HBM.
 
----
+✓ **Correct**: Global accesses go through L1 (per-SM, ~30-cycle hit) and L2 (shared, ~200-cycle hit) before reaching HBM (~400 cycles). For working sets smaller than L2 (50 MB on H100), repeated accesses will hit L2 and the effective bandwidth is limited by L2 throughput, not HBM bandwidth. L2 bandwidth is significantly higher than HBM bandwidth.
 
-❌ **Wrong:** `cudaMalloc` is equivalent to `malloc` in performance.
-✓ **Correct:** `cudaMalloc` involves a CUDA driver call that may touch the GPU's page table and interact with the OS. On first use, device memory pages must be mapped. In latency-sensitive paths, pre-allocate all buffers at initialization and use a pool allocator.
+❌ **Wrong**: `cudaMalloc` is equivalent to `malloc` in performance.
 
-## Interview Patterns
+✓ **Correct**: `cudaMalloc` involves a CUDA driver call that may touch the GPU's page table and interact with the OS. On first use, device memory pages must be mapped. In latency-sensitive paths, pre-allocate all buffers at initialization and use a pool allocator.
 
-**Pattern 1 — Coalescing diagnosis.** Interviewer shows a kernel and asks you to identify the access pattern. Protocol: (1) identify the outermost dimension of the data structure; (2) identify which thread index (threadIdx.x, y, z) maps to that dimension; (3) check if consecutive `threadIdx.x` values produce consecutive memory addresses. If threadIdx.x drives the innermost/fastest dimension, accesses are coalesced. If threadIdx.y or threadIdx.z drives it, they are not.
+## Interview patterns
 
-**Pattern 2 — Transaction count.** "How many memory transactions does this warp issue for a load with stride S?" Answer: `min(32, ceil(32 * S * sizeof(float) / 128))`. For S=1: 1. For S=2: 2. For S=32: 32.
+**Question**: "Here is a kernel. Identify whether the global memory access pattern is coalesced."
 
-**Pattern 3 — Fix non-coalesced access.** The answer is nearly always: load into shared memory with coalesced threads, `__syncthreads()`, then operate on shared memory in the required layout.
+**Answer**: Protocol: (1) identify the outermost dimension of the data structure; (2) identify which thread index (threadIdx.x, y, z) maps to that dimension; (3) check if consecutive `threadIdx.x` values produce consecutive memory addresses. If threadIdx.x drives the innermost/fastest dimension, accesses are coalesced. If threadIdx.y or threadIdx.z drives it, they are not.
 
-**Pattern 4 — Bandwidth calculation.** "What is the effective bandwidth of this kernel?" Formula: `(bytes_read + bytes_written) / kernel_time_seconds`. Compare to peak HBM bandwidth (3.35 TB/s on H100). Efficiency = achieved / peak. A copy kernel should achieve >90% of peak with coalesced access.
+**Question**: "How many memory transactions does this warp issue for a load with stride S?"
 
-**Pattern 5 — Roofline placement.** "Is this kernel memory-bound or compute-bound?" Compute arithmetic intensity (FLOPs / bytes). If below the H100 BF16 ridge point of 295 FLOPs/byte, it is memory-bound and coalescing dominates performance. If above, compute units are the bottleneck and coalescing matters less.
+**Answer**: `min(32, ceil(32 * S * sizeof(float) / 128))`. For S=1: 1. For S=2: 2. For S=32: 32.
+
+**Question**: "How do you fix a kernel with non-coalesced memory access?"
+
+**Answer**: Load into shared memory with coalesced threads, `__syncthreads()`, then operate on shared memory in the required layout.
+
+**Question**: "What is the effective bandwidth of this kernel?"
+
+**Answer**: Formula: `(bytes_read + bytes_written) / kernel_time_seconds`. Compare to peak HBM bandwidth (3.35 TB/s on H100). Efficiency = achieved / peak. A copy kernel should achieve >90% of peak with coalesced access.
+
+**Question**: "Is this kernel memory-bound or compute-bound?"
+
+**Answer**: Compute arithmetic intensity (FLOPs / bytes). If below the H100 BF16 ridge point of 295 FLOPs/byte, it is memory-bound and coalescing dominates performance. If above, compute units are the bottleneck and coalescing matters less.
 
 ## Key Numbers / Reference Table
 

@@ -193,37 +193,35 @@ Key sections to examine:
 
 ## Common misconceptions
 
-❌ **A kernel can be both memory-bound and compute-bound simultaneously**
+❌ **Wrong**: "A kernel can be both memory-bound and compute-bound simultaneously"
 
-✓ **Reality**: A kernel hits only one roof at a time. It is either limited by memory bandwidth (left of ridge) or arithmetic bandwidth (right of ridge). The two roofs intersect at exactly one point—the ridge point. There is no "both" regime.
+✓ **Correct**: A kernel hits only one roof at a time. It is either limited by memory bandwidth (left of ridge) or arithmetic bandwidth (right of ridge). The two roofs intersect at exactly one point—the ridge point. There is no "both" regime.
 
-❌ **Kernel fusion always helps**
+❌ **Wrong**: "Kernel fusion always helps"
 
-✓ **Reality**: Fusion can increase register pressure and reduce occupancy if not done carefully. Fusing too many operations may push a kernel over the register limit, reducing the number of concurrent warps and eliminating latency hiding. Always profile before and after fusion.
+✓ **Correct**: Fusion can increase register pressure and reduce occupancy if not done carefully. Fusing too many operations may push a kernel over the register limit, reducing the number of concurrent warps and eliminating latency hiding. Always profile before and after fusion.
 
-❌ **Fixing memory access patterns always speeds up a compute-bound kernel**
+❌ **Wrong**: "Fixing memory access patterns always speeds up a compute-bound kernel"
 
-✓ **Reality**: Memory optimizations have no impact when compute is the bottleneck. If your kernel is already to the right of the ridge point, making memory access coalesced won't help—you need to increase arithmetic bandwidth (Tensor Cores) or reduce FLOPs (algorithmic improvement).
+✓ **Correct**: Memory optimizations have no impact when compute is the bottleneck. If your kernel is already to the right of the ridge point, making memory access coalesced won't help—you need to increase arithmetic bandwidth (Tensor Cores) or reduce FLOPs (algorithmic improvement).
 
 ## Interview patterns
 
-Expect these question types:
+**Question**: "Here's a kernel. Is it memory-bound or compute-bound? How do you know?"
 
-1. **"Here's a kernel. Is it memory-bound or compute-bound? How do you know?"**
+**Answer**: Calculate arithmetic intensity. Compare to ridge point. Cite specific formulas.
 
-   Calculate arithmetic intensity. Compare to ridge point. Cite specific formulas.
+**Question**: "This kernel is slow. How would you profile it and what would you look for?"
 
-2. **"This kernel is slow. How would you profile it and what would you look for?"**
+**Answer**: Mention Nsight Compute, roofline position, memory throughput, stall reasons. Distinguish between Systems (concurrency) and Compute (per-kernel) profiling.
 
-   Mention Nsight Compute, roofline position, memory throughput, stall reasons. Distinguish between Systems (concurrency) and Compute (per-kernel) profiling.
+**Question**: "We need to speed up this LLM inference pipeline. Where do we start?"
 
-3. **"We need to speed up this LLM inference pipeline. Where do we start?"**
+**Answer**: Identify the bottleneck stage (decode is memory-bound, prefill is often compute-bound). Propose fusion for memory-bound stages, Tensor Cores for compute-bound stages.
 
-   Identify the bottleneck stage (decode is memory-bound, prefill is often compute-bound). Propose fusion for memory-bound stages, Tensor Cores for compute-bound stages.
+**Question**: "Why is FlashAttention faster than standard attention?"
 
-4. **"Why is FlashAttention faster than standard attention?"**
-
-   Standard attention writes O(N²) intermediates to HBM. FlashAttention tiles attention computation to fit in SRAM, eliminating the HBM write. This increases arithmetic intensity, moving the kernel closer to the compute roof.
+**Answer**: Standard attention writes O(N²) intermediates to HBM. FlashAttention tiles attention computation to fit in SRAM, eliminating the HBM write. This increases arithmetic intensity, moving the kernel closer to the compute roof.
 
 ## Key numbers to remember
 

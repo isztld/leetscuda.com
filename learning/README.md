@@ -17,17 +17,22 @@ learning/
         index.mdx          # Problem description, starter code, test cases
     theory/
       {slug}/
-        index.mdx          # Theory article content
+        index.mdx          # Theory concept article
+    articles/
+      {slug}/
+        index.mdx          # Long-form article (type: article in frontmatter)
 ```
 
 ## Tracks
 
 | Track | Slug | Description |
 |-------|------|-------------|
-| CUDA & GPU Programming | `cuda` | Memory model, kernels, optimization |
-| ML Systems & Inference | `ml-systems` | KV cache, attention, quantization |
-| Kubernetes for AI | `kubernetes-ai` | GPU scheduling, inference serving |
-| Foundations | `foundations` | C++, DSA, systems fundamentals |
+| CUDA Core | `cuda-core` | Thread hierarchy, memory, warps, profiling |
+| CUDA HPC | `cuda-hpc` | Tensor Cores, GEMM, CUTLASS, linear algebra |
+| GPU LLM | `gpu-llm` | Attention, KV cache, kernel fusion, Hopper |
+| ML Systems | `ml-systems` | Inference, quantization, serving |
+| Kubernetes for AI | `kubernetes-ai` | GPU scheduling, operators, inference serving |
+| Foundations | `foundations` | Memory model, SIMD, profiling basics |
 
 ## Contributing a problem
 
@@ -44,7 +49,7 @@ learning/
 ---
 slug: your-problem-slug        # must match directory name
 title: Your Problem Title
-track: cuda                    # cuda | ml-systems | kubernetes-ai | foundations
+track: cuda-core               # cuda-core | cuda-hpc | gpu-llm | ml-systems | kubernetes-ai | foundations
 difficulty: easy               # easy | medium | hard
 xp: 100
 runtime: cpp                   # cpp | cuda | k8s
@@ -105,8 +110,8 @@ Explain the optimal approach here.
 
 ## Contributing a theory article
 
-1. Create `learning/{track}/theory/{slug}/index.mdx`
-2. The slug must match a CONCEPT node defined in `learning/{track}/track.mdx`
+1. Create `learning/{track}/theory/{slug}/index.mdx` (or `articles/{slug}/index.mdx` for long-form pieces)
+2. The slug must match a CONCEPT (or ARTICLE) node defined in `learning/{track}/track.mdx`
 3. Use standard MDX — headings, paragraphs, code blocks, math
 4. Open a pull request
 
@@ -116,19 +121,79 @@ Explain the optimal approach here.
 ---
 slug: your-theory-slug
 title: Your Article Title
-track: cuda
-type: concept
+track: cuda-core               # must match one of the track slugs above
+type: concept                  # concept | article
 tags:
   - tag1
-status: published
+status: published              # draft | published
 author: your-github-username
 ---
 ```
 
-## Contributing a track node
+### Theory article content format
 
-To add a new node to the roadmap, edit `learning/{track}/track.mdx` and add
-your node to the nodes list. Then create the corresponding content file.
+The site's post-processor transforms two special sections into rich visual
+components. These sections must use the exact formats below or they render
+as plain prose.
+
+#### `## Common misconceptions`
+
+Each misconception is a ❌ / ✓ pair separated by a blank line. Pairs are also
+separated by a blank line. No H3 headings or horizontal rules inside this section.
+
+```markdown
+## Common misconceptions
+
+❌ **Wrong**: "The wrong belief stated here, ideally in quotes"
+
+✓ **Correct**: The correct explanation. Can span multiple sentences.
+Can also include a list:
+- item one
+- item two
+
+❌ **Wrong**: "Second wrong belief"
+
+✓ **Correct**: Second correction.
+```
+
+Rules:
+- `❌` and `✓` are outside the bold markers: `❌ **Wrong**:` not `**❌ Wrong:**`
+- Label words are exactly `Wrong` and `Correct` (capital first letter)
+- Colon is outside the bold: `**Wrong**:` not `**Wrong:**`
+- One blank line between the `❌` line and the `✓` line
+- One blank line between each pair
+- No `###` headings or `---` rules inside this section
+
+#### `## Interview patterns`
+
+Each entry is a `**Question**:` / `**Answer**:` pair separated by a blank line.
+No H3 headings or numbered lists.
+
+```markdown
+## Interview patterns
+
+**Question**: "Question text in quotes"
+
+**Answer**: Answer text on the same line as the label. Multiple sentences are fine.
+
+**Question**: "Question whose answer needs a list or code block"
+
+**Answer**:
+1. First step
+2. Second step
+3. Third step
+
+**Question**: "Another question"
+
+**Answer**: Short inline answer.
+```
+
+Rules:
+- Label is exactly `**Question**:` — no number (`**Question 1**:` → `**Question**:`)
+- Label is exactly `**Answer**:` — not `**Expected answer**:` or `**Answer framework**:`
+- If the answer is a single sentence, put it on the same line as `**Answer**:` (renders as a collapsible block)
+- If the answer is a list or code block, put `**Answer**:` on its own line and the content below (renders as a visible answer label)
+- No `###` headings per question; no numbered markdown lists (`1. **"Question"**`)
 
 ## Content standards
 
@@ -142,8 +207,9 @@ your node to the nodes list. Then create the corresponding content file.
 
 ## Attribution
 
-Theory content in the `cuda/` track is partially adapted from the
-[Modal GPU Glossary](https://github.com/modal-labs/gpu-glossary) under MIT license.
+Theory content in the `cuda-core` and `cuda-hpc` tracks is partially adapted
+from the [Modal GPU Glossary](https://github.com/modal-labs/gpu-glossary) under
+MIT license.
 
 ## License
 

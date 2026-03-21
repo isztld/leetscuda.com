@@ -215,17 +215,17 @@ Tensor Cores enable mixed precision computation: lower-precision inputs with hig
 - Dynamic scaling factors per tensor (per-tensor or per-token quantization)
 - Careful gradient accumulation to avoid overflow
 
-## Common Misconceptions
+## Common misconceptions
 
-### ❌ Wrong: WMMA fragments can be freely read/written per thread
+❌ **Wrong**: "WMMA fragments can be freely read/written per thread"
 
-**✓ Correct**: WMMA fragment layout is opaque and compiler-defined. You must use `load_matrix_sync` and `store_matrix_sync` — direct indexing or manual construction of fragments is undefined behavior.
+✓ **Correct**: WMMA fragment layout is opaque and compiler-defined. You must use `load_matrix_sync` and `store_matrix_sync` — direct indexing or manual construction of fragments is undefined behavior.
 
 The compiler decides how to distribute the 16×16 matrix across 32 threads. Each thread holds 8 elements (for m16n16k16 with half inputs). The exact mapping depends on the compiler version and target architecture.
 
-### ❌ Wrong: WMMA is the only way to use Tensor Cores
+❌ **Wrong**: "WMMA is the only way to use Tensor Cores"
 
-**✓ Correct**: WMMA is deprecated in favor of CUTLASS and inline PTX. cuBLAS also uses Tensor Cores automatically when configured correctly.
+✓ **Correct**: WMMA is deprecated in favor of CUTLASS and inline PTX. cuBLAS also uses Tensor Cores automatically when configured correctly.
 
 **Alternative paths**:
 - **cuBLAS**: `cublasGemmEx(handle, ..., CUBLAS_COMPUTE_16F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)`
@@ -234,39 +234,37 @@ The compiler decides how to distribute the 16×16 matrix across 32 threads. Each
 
 CUTLASS is the production path: it handles tiling, bank conflicts, and architecture-specific tuning that WMMA requires you to manage manually.
 
-### ❌ Wrong: TF32 is the same as FP32
+❌ **Wrong**: "TF32 is the same as FP32"
 
-**✓ Correct**: TF32 has FP32 exponent range but only 10 mantissa bits (vs 23 for FP32). This means TF32 has ~3 decimal digits of precision vs FP32's ~7 digits.
+✓ **Correct**: TF32 has FP32 exponent range but only 10 mantissa bits (vs 23 for FP32). This means TF32 has ~3 decimal digits of precision vs FP32's ~7 digits.
 
 **Consequence**: TF32 can lose accuracy in numerically sensitive operations (deep reductions, small gradient magnitudes). For training large models, BF16 is preferred over TF32 because BF16 preserves better gradient precision.
 
-### ❌ Wrong: FP16 and BF16 are interchangeable
+❌ **Wrong**: "FP16 and BF16 are interchangeable"
 
-**✓ Correct**: FP16 has 5-bit exponents (range ±65,504); BF16 has 8-bit exponents (range ±3.4×10^38). BF16 matches FP32's dynamic range, making it much more stable for training.
+✓ **Correct**: FP16 has 5-bit exponents (range ±65,504); BF16 has 8-bit exponents (range ±3.4×10^38). BF16 matches FP32's dynamic range, making it much more stable for training.
 
 **When to use FP16**: Inference where you can calibrate the model's activation range (e.g., through quantization-aware training).
 
 **When to use BF16**: Training from scratch, fine-tuning, or any scenario where gradient magnitudes are unpredictable.
 
-### ❌ Wrong: Mixed precision always doubles throughput
+❌ **Wrong**: "Mixed precision always doubles throughput"
 
-**✓ Correct**: Mixed precision only helps when the bottleneck is Tensor Core arithmetic. For memory-bound kernels (small batch inference, sequence-heavy attention), reducing precision may not improve throughput.
+✓ **Correct**: Mixed precision only helps when the bottleneck is Tensor Core arithmetic. For memory-bound kernels (small batch inference, sequence-heavy attention), reducing precision may not improve throughput.
 
 **Example**: A batch-size-1 Llama-7B inference on H100 is memory-bound. Using FP8 instead of BF16 reduces memory traffic but the Tensor Cores are already idle waiting on HBM. You see minimal speedup.
 
-### ❌ Wrong: FP8 training requires no changes to the training loop
+❌ **Wrong**: "FP8 training requires no changes to the training loop"
 
-**✓ Correct**: FP8 requires careful scaling to avoid underflow (E4M3 max = 448) and overflow (E5M2 max = 57,344). You need loss scaling, gradient scaling, and often per-tensor or per-token quantization.
+✓ **Correct**: FP8 requires careful scaling to avoid underflow (E4M3 max = 448) and overflow (E5M2 max = 57,344). You need loss scaling, gradient scaling, and often per-tensor or per-token quantization.
 
 **PyTorch 2.0+ approach**: `torch.amp.autocast('cuda', dtype=torch.float8_e4m3fn)` with automatic scaling.
 
-## Interview Patterns
-
-### Whiteboard: Describe the WMMA workflow
+## Interview patterns
 
 **Question**: "Walk me through how you'd implement a matrix multiplication using Tensor Cores."
 
-**Expected answer**:
+**Answer**:
 1. Declare WMMA fragments for A, B, and C with appropriate types and layout
 2. Initialize the accumulator fragment with `fill_fragment`
 3. Loop over K in 16-element steps (K-tiling)
@@ -275,22 +273,18 @@ CUTLASS is the production path: it handles tiling, bank conflicts, and architect
 6. After the loop, store the result with `store_matrix_sync`
 7. Add shared memory double buffering to overlap loads with compute
 
-### Coding: Fix Tensor Core performance issues
-
 **Question**: "My WMMA kernel is only 200 GFLOPS, but cuBLAS achieves 900 GFLOPS on the same GEMM. What's wrong?"
 
-**Expected diagnostic**:
+**Answer**:
 - **Occupancy**: Are you using enough warps? H100 needs ~64 warps/SM for peak utilization
 - **Memory coalescing**: Are warp threads loading contiguous memory?
 - **Bank conflicts**: Is shared memory padded correctly?
 - **K-tiling**: Are you streaming over K efficiently with double buffering?
 - **Sync overhead**: Are you doing unnecessary `__syncthreads()` between K-steps?
 
-### Design: Choose the right precision
-
 **Question**: "You're training a 70B-parameter model on an H100 cluster. Should you use FP16, BF16, or TF32?"
 
-**Expected answer**: BF16. It provides the same dynamic range as FP32 (preventing overflow during gradient accumulation) while halving memory bandwidth. TF32 is a fallback if BF16 support is unavailable, but FP16 requires loss scaling and may still overflow on large gradients.
+**Answer**: BF16. It provides the same dynamic range as FP32 (preventing overflow during gradient accumulation) while halving memory bandwidth. TF32 is a fallback if BF16 support is unavailable, but FP16 requires loss scaling and may still overflow on large gradients.
 
 ## Key Numbers to Memorize
 

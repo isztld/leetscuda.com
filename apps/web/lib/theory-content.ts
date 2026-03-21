@@ -41,8 +41,12 @@ function postProcess(html: string): string {
   )
 
   // 3a. Split paragraphs where no blank line existed between misconception markers —
-  // marked merges them into one <p> with \n between the <strong> tags.
-  // Split at any newline that precedes a <strong>❌ or <strong>✓ tag.
+  // marked merges them into one <p> with \n between entries.
+  // Two formats exist:
+  //   **❌ Wrong:** text  → \n<strong>❌ ...  (emoji inside bold)
+  //   ❌ **Wrong:** text  → \n❌ ...          (emoji outside bold)
+  // Split at any newline followed by ❌ or ✓ (either directly or inside <strong>).
+  html = html.replace(/\n([❌✓])/g, '</p>\n<p>$1')
   html = html.replace(/\n(<strong>[❌✓])/g, '</p>\n<p>$1')
 
   // 3. Transform ❌ Wrong / ✓ Correct patterns — two variants:
@@ -50,28 +54,65 @@ function postProcess(html: string): string {
   // Variant B: **❌ Wrong:** ... → <p><strong>❌ Wrong:</strong> ...</p>
   html = html
     .replace(
-      /<p>❌\s*<strong>Wrong[^<]*<\/strong>([\s\S]*?)<\/p>/g,
-      '<div class="misconception-wrong"><span class="misconception-icon">✕</span><div class="misconception-body"><strong>Common mistake</strong>$1</div></div>',
+      /<p>❌\s*<strong>Wrong[^<]*<\/strong>:?\s*([\s\S]*?)<\/p>/g,
+      '<div class="misconception-wrong"><span class="misconception-icon">✕</span><div class="misconception-body"><strong>Common mistake</strong> $1</div></div>',
     )
     .replace(
-      /<p><strong>❌\s*Wrong[^<]*<\/strong>([\s\S]*?)<\/p>/g,
-      '<div class="misconception-wrong"><span class="misconception-icon">✕</span><div class="misconception-body"><strong>Common mistake</strong>$1</div></div>',
+      /<p><strong>❌\s*Wrong[^<]*<\/strong>:?\s*([\s\S]*?)<\/p>/g,
+      '<div class="misconception-wrong"><span class="misconception-icon">✕</span><div class="misconception-body"><strong>Common mistake</strong> $1</div></div>',
     )
     .replace(
-      /<p>✓\s*<strong>Correct[^<]*<\/strong>([\s\S]*?)<\/p>/g,
-      '<div class="misconception-correct"><span class="misconception-icon">✓</span><div class="misconception-body"><strong>Correct understanding</strong>$1</div></div>',
+      /<p>✓\s*<strong>Correct[^<]*<\/strong>:?\s*([\s\S]*?)<\/p>/g,
+      '<div class="misconception-correct"><span class="misconception-icon">✓</span><div class="misconception-body"><strong>Correct understanding</strong> $1</div></div>',
     )
     .replace(
-      /<p><strong>✓\s*Correct[^<]*<\/strong>([\s\S]*?)<\/p>/g,
-      '<div class="misconception-correct"><span class="misconception-icon">✓</span><div class="misconception-body"><strong>Correct understanding</strong>$1</div></div>',
+      /<p><strong>✓\s*Correct[^<]*<\/strong>:?\s*([\s\S]*?)<\/p>/g,
+      '<div class="misconception-correct"><span class="misconception-icon">✓</span><div class="misconception-body"><strong>Correct understanding</strong> $1</div></div>',
     )
 
-  // 4. Transform **Q: ...** paragraphs into interview question blocks
-  // marked renders: <p><strong>Q: question text</strong></p>
-  // or: <p><strong>Q: question text</strong> answer text</p>
+  // 4. Transform **Question [N]**: / **Answer**: pairs into interview question blocks.
+  //
+  // The actual MDX format is:
+  //   **Question 1**: "question text"       → <p><strong>Question 1</strong>: "question text"</p>
+  //   **Answer**: answer text               → <p><strong>Answer</strong>: answer text</p>
+  //
+  // Two cases:
+  //   4a. Q paragraph + A paragraph with inline answer → collapsible <details>
+  //   4b. Lone Q paragraph (multi-element answer follows as list/code) → styled Q block only
+
+  // 4a: Pair adjacent Q + inline-A paragraphs — answer has content on same line
+  const answerLabels = 'Answer|Expected answer|Expected diagnostic|Answer framework'
   html = html.replace(
-    /<p><strong>Q:\s*(.*?)<\/strong>([\s\S]*?)<\/p>/g,
-    '<div class="interview-question"><div class="interview-q-label">Interview Q</div><div class="interview-q-text"><strong>$1</strong>$2</div></div>',
+    new RegExp(
+      `<p><strong>(Question[^<]*?)<\\/strong>:(.*?)<\\/p>\\n<p><strong>(?:${answerLabels})[^<]*?<\\/strong>:(.+?)<\\/p>`,
+      'g',
+    ),
+    (_match, _qLabel, qText, aText) => {
+      const question = qText.trim()
+      const answer = aText.trim()
+      return `<div class="interview-question"><div class="interview-q-label">Interview Q</div><div class="interview-q-text">${question}</div><details class="interview-answer"><summary>Show answer</summary><div class="interview-answer-body"><p>${answer}</p></div></details></div>`
+    },
+  )
+
+  // 4b: Lone Q paragraphs whose answers are multi-element (list/code follows separately)
+  html = html.replace(
+    /<p><strong>Question[^<]*?<\/strong>:(.*?)<\/p>/g,
+    (_match, text) =>
+      `<div class="interview-question"><div class="interview-q-label">Interview Q</div><div class="interview-q-text">${text.trim()}</div></div>`,
+  )
+
+  // 4d: **Pattern N — title.** content — interview pattern blocks (all visible, no toggle)
+  // marked renders: <p><strong>Pattern N — title.</strong> content</p>
+  html = html.replace(
+    /<p><strong>(Pattern[^<]+?)<\/strong>(.*?)<\/p>/g,
+    (_match, title, content) =>
+      `<div class="interview-question"><div class="interview-q-label">Interview Pattern</div><div class="interview-q-text"><strong>${title.trim()}</strong>${content}</div></div>`,
+  )
+
+  // 4c: Answer-label-only paragraphs (label with no inline content, multi-element answer follows)
+  html = html.replace(
+    new RegExp(`<p><strong>(?:${answerLabels})[^<]*?<\\/strong>:<\\/p>`, 'g'),
+    '<div class="interview-a-label">Answer</div>',
   )
 
   // 5. Wrap first paragraph after "Why this matters" h2 in callout

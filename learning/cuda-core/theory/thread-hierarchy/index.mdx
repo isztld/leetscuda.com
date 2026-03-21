@@ -253,27 +253,27 @@ Result: **2x slower** than no divergence.
 
 ## Interview patterns
 
-**Question 1**: "How do you calculate the global thread index in a 1D grid/block?"
+**Question**: "How do you calculate the global thread index in a 1D grid/block?"
 
 **Answer**: `int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;` This combines the block's position in the grid with the thread's position within the block.
 
-**Question 2**: "What's the maximum block size in CUDA?"
+**Question**: "What's the maximum block size in CUDA?"
 
 **Answer**: 1024 threads. This is the product of the x, y, z dimensions. Common choices are 128, 256, 512, or 1024.
 
-**Question 3**: "Why should block sizes be multiples of 32?"
+**Question**: "Why should block sizes be multiples of 32?"
 
 **Answer**: Warps are 32 threads. If the block size is not a multiple of 32, the last warp has fewer than 32 active threads (partial warp), wasting resources. For example, a block of 100 threads = 3 full warps + 1 partial warp with 4 threads.
 
-**Question 4**: "How many warps are in a block of 256 threads?"
+**Question**: "How many warps are in a block of 256 threads?"
 
 **Answer**: 256 / 32 = 8 warps. Each warp executes 32 threads in lockstep.
 
-**Question 5**: "Can blocks synchronize with each other?"
+**Question**: "Can blocks synchronize with each other?"
 
 **Answer**: Not with `__syncthreads()` (that only synchronizes threads within a block). Cross-block synchronization requires cooperative groups and special hardware support (launch with `cudaLaunchCooperativeKernel`).
 
-**Question 6**: "Write a kernel launch that processes 1 million integers with 256 threads per block."
+**Question**: "Write a kernel launch that processes 1 million integers with 256 threads per block."
 
 **Answer**:
 ```cpp

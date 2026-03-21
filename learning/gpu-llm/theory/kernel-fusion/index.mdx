@@ -214,93 +214,61 @@ __global__ void fused_residual_forward_kernel4(floatX* residual, floatX* normed,
 
 ---
 
-## Common Misconceptions
+## Common misconceptions
 
-❌ **Fusion always improves performance**
+❌ **Wrong**: "Fusion always improves performance"
 
-If each operation is compute-bound (above the roofline ridge point), fusion does not improve throughput. Consider a GEMM at AI = 500 FLOPs/byte on H100 (ridge = 295). Fusing it with a bias addition adds FLOPs but the kernel is already compute-saturated.
+✓ **Correct**: Fusion only helps memory-bound kernels. If each operation is compute-bound (above the roofline ridge point), fusion does not improve throughput — consider a GEMM at AI = 500 FLOPs/byte on H100 (ridge = 295): fusing it with a bias addition adds FLOPs but the kernel is already compute-saturated. Fusion trades memory bandwidth for compute; if the kernel is compute-bound, you're adding FLOPs without reducing memory traffic, which may hurt performance.
 
-✓ **Fusion only helps memory-bound kernels**
+❌ **Wrong**: "Fusion increases register pressure significantly"
 
-Fusion trades memory bandwidth for compute. If the kernel is compute-bound, you're adding FLOPs without reducing memory traffic, which may hurt performance.
-
----
-
-❌ **Fusion increases register pressure significantly**
-
-While fusion can increase live variables, careful design mitigates this:
-
+✓ **Correct**: Fusion is a tradeoff, not a free upgrade. While fusion can increase live variables, careful design mitigates this:
 - Process elements in tiles (reduce live state)
 - Use streaming loops (compute + write, then reuse registers)
 - Apply vectorized loads (amortize register usage across 4 elements)
 
-The kernel_v6 in `fused_residual_forward.cu` uses shared memory to cache weights and bias, trading SRAM for register pressure.
-
-✓ **Fusion is a tradeoff, not a free upgrade**
-
-Tradeoffs include:
+The kernel_v6 in `fused_residual_forward.cu` uses shared memory to cache weights and bias, trading SRAM for register pressure. Tradeoffs include:
 - Register pressure vs occupancy
 - Shared memory usage vs occupancy
 - Kernel complexity vs maintainability
 
----
+❌ **Wrong**: "CUDA Graphs and kernel fusion are the same"
 
-❌ **CUDA Graphs and kernel fusion are the same**
-
-CUDA Graphs capture a sequence of kernel launches and replay them with reduced overhead. This is distinct from fusion:
-
+✓ **Correct**: They solve different problems. CUDA Graphs capture a sequence of kernel launches and replay them with reduced overhead; this is distinct from fusion:
 - **CUDA Graphs:** Reduce launch overhead (typically ~10-20 microseconds per launch)
 - **Kernel Fusion:** Reduces per-kernel memory traffic (can be 2x-10x bandwidth improvement)
 
-For memory-bound workloads, fusion matters more. For latency-sensitive inference with small batches, CUDA Graphs matter more. Use both when possible.
-
-✓ **They solve different problems**
-
-Example: A transformer block with 10 unfused kernels:
+For memory-bound workloads, fusion matters more. For latency-sensitive inference with small batches, CUDA Graphs matter more. Use both when possible. Example: A transformer block with 10 unfused kernels:
 - CUDA Graphs save: 10 × 15μs = 150μs launch overhead
 - Fusion saves: 6N memory reads (e.g., 6 × 8192 × 4 bytes = 192KB per layer)
 
 For inference at batch 1, Graphs may dominate. For training at batch 2048, fusion dominates.
 
----
+❌ **Wrong**: "Online softmax is approximate"
 
-❌ **Online softmax is approximate**
+✓ **Correct**: Online softmax is numerically exact. The algorithm maintains running statistics (m, l) and rescales partial outputs, producing numerically exact results (within floating-point precision). FlashAttention's key insight: online softmax enables chunked computation without materializing the full attention matrix. The algorithm is exact—this is why FlashAttention can be used in training where gradients must match naive attention.
 
-The online softmax algorithm maintains running statistics (m, l) and rescales partial outputs. It produces numerically exact results (within floating-point precision), not approximations.
+## Interview patterns
 
-✓ **Online softmax is numerically exact**
+**Question**: "Design a transformer forward pass that fits 1B parameters in 80GB GPU memory."
 
-FlashAttention's key insight: online softmax enables chunked computation without materializing the full attention matrix. The algorithm is exact—this is why FlashAttention can be used in training where gradients must match naive attention.
-
----
-
-## Interview Patterns
-
-### Pattern 1: Design a Memory-Efficient Transformer
-
-**Question:** "Design a transformer forward pass that fits 1B parameters in 80GB GPU memory."
-
-**Expected answer elements:**
+**Answer**:
 1. Identify fusion opportunities: `QKV_proj -> bias -> gelu` can fuse; `attention -> softmax -> @V` can fuse via FlashAttention
 2. Quantify memory savings: unfused softmax materializes O(N^2); FlashAttention uses O(N)
 3. Tradeoff analysis: FlashAttention backward recomputes attention weights (2x FLOPs) vs storing O(N^2) matrix
 4. Mention gradient checkpointing: trade FLOPs for activation memory (AI increases)
 
-### Pattern 2: Why Is This Kernel Slow?
+**Question**: "A kernel doing `y = relu(linear(x) + bias)` is 3x slower than expected. Diagnose."
 
-**Question:** "A kernel doing `y = relu(linear(x) + bias)` is 3x slower than expected. Diagnose."
-
-**Expected answer elements:**
+**Answer**:
 1. Check memory footprint: likely separate kernels for linear, bias_add, relu
 2. Identify bottleneck: memory-bound (AI ~ 1/6 for SAXPY-like ops)
 3. Measure intermediate traffic: each materialization reads/writes N elements
 4. Propose fusion: single kernel reduces memory ops from 5N to 3N (40% improvement)
 
-### Pattern 3: CUDA Graphs vs Fusion Tradeoff
+**Question**: "For batch size 1 inference, should I prioritize CUDA Graphs or kernel fusion? Why?"
 
-**Question:** "For batch size 1 inference, should I prioritize CUDA Graphs or kernel fusion? Why?"
-
-**Expected answer elements:**
+**Answer**:
 1. Compute latency: small batches mean fewer elements per launch
 2. Launch overhead: 10-20μs per kernel launch becomes significant
 3. Memory bandwidth: less memory traffic per step, so fusion benefits are smaller

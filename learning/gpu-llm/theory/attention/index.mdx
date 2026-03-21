@@ -183,27 +183,17 @@ This is the core insight motivating FlashAttention: avoid materializing the N×N
 
 ## Interview patterns
 
-Expect these types of questions:
-
-### 1. Memory analysis
-
 **Question**: "For a sequence length of 8192 and d_k=128, how much HBM does the attention matrix require? How does this compare to the input Q, K, V?"
 
 **Answer**: Attention matrix = 8192² × 4 bytes = 256 MB. Q, K, V = 3 × 8192 × 128 × 4 bytes ≈ 12 MB. The attention matrix is ~21× larger than inputs.
-
-### 2. Complexity derivation
 
 **Question**: "Derive the FLOPs and memory complexity of multi-head attention. How does GQA change these?"
 
 **Answer**: FLOPs = 4N²d_k (unchanged by GQA). Memory = 4Nd_k + N² (standard) vs 4Ngd_k + N² (GQA with g groups). GQA reduces input memory but attention matrix dominates for large N.
 
-### 3. KV cache calculation
-
 **Question**: "A 70B LLM has 80 layers, h=8 query heads, g=8 groups, d_k=128. How much memory for 32K context KV cache?"
 
 **Answer**: Per layer per token = 2 × 8 × 128 × 4 = 8 KB. For 32K context = 8 KB × 32K = 256 MB per layer. Total = 256 MB × 80 = 20 GB.
-
-### 4. Optimization strategy
 
 **Question**: "Why can't we simply increase batch size to hide attention's memory latency?"
 
