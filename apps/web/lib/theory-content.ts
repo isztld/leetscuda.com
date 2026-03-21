@@ -40,15 +40,29 @@ function postProcess(html: string): string {
     (_match, attrs, code) => `<div class="code-block-wrapper"><button class="copy-code-btn" onclick="(function(btn){var code=btn.closest('.code-block-wrapper').querySelector('code');navigator.clipboard.writeText(code.innerText).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy'},1500)})})(this)">Copy</button><pre><code${attrs}>${code}</code></pre></div>`,
   )
 
-  // 3. Transform ❌ Wrong / ✓ Correct patterns
-  // marked renders: <p>❌ <strong>Wrong</strong>: ...</p>
+  // 3a. Split paragraphs where no blank line existed between misconception markers —
+  // marked merges them into one <p> with \n between the <strong> tags.
+  // Split at any newline that precedes a <strong>❌ or <strong>✓ tag.
+  html = html.replace(/\n(<strong>[❌✓])/g, '</p>\n<p>$1')
+
+  // 3. Transform ❌ Wrong / ✓ Correct patterns — two variants:
+  // Variant A: ❌ **Wrong**: ... → <p>❌ <strong>Wrong</strong>: ...</p>
+  // Variant B: **❌ Wrong:** ... → <p><strong>❌ Wrong:</strong> ...</p>
   html = html
     .replace(
-      /<p>❌\s*<strong>Wrong<\/strong>:([\s\S]*?)<\/p>/g,
+      /<p>❌\s*<strong>Wrong[^<]*<\/strong>([\s\S]*?)<\/p>/g,
       '<div class="misconception-wrong"><span class="misconception-icon">✕</span><div class="misconception-body"><strong>Common mistake</strong>$1</div></div>',
     )
     .replace(
-      /<p>✓\s*<strong>Correct<\/strong>:([\s\S]*?)<\/p>/g,
+      /<p><strong>❌\s*Wrong[^<]*<\/strong>([\s\S]*?)<\/p>/g,
+      '<div class="misconception-wrong"><span class="misconception-icon">✕</span><div class="misconception-body"><strong>Common mistake</strong>$1</div></div>',
+    )
+    .replace(
+      /<p>✓\s*<strong>Correct[^<]*<\/strong>([\s\S]*?)<\/p>/g,
+      '<div class="misconception-correct"><span class="misconception-icon">✓</span><div class="misconception-body"><strong>Correct understanding</strong>$1</div></div>',
+    )
+    .replace(
+      /<p><strong>✓\s*Correct[^<]*<\/strong>([\s\S]*?)<\/p>/g,
       '<div class="misconception-correct"><span class="misconception-icon">✓</span><div class="misconception-body"><strong>Correct understanding</strong>$1</div></div>',
     )
 
