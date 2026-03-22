@@ -91,8 +91,11 @@ Verification: position 0 gets 0 (exclusive base case); position 1 gets 1; positi
 
 #define BLOCK_SIZE 256
 
-// Single-block exclusive prefix scan using Blelloch algorithm
-__global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
+// Single-block exclusive prefix scan using Blelloch algorithm.
+// sums: if non-null, sums[blockIdx.x] receives the block's total sum
+//       (captured before the root is zeroed for exclusive-scan semantics).
+__global__ void blockScan(const unsigned int* in, unsigned int* out,
+                          unsigned int* sums, int n) {
     // Shared memory for the scan tree — needs 2*BLOCK_SIZE elements
     // Leaves stored at indices [BLOCK_SIZE, 2*BLOCK_SIZE)
     __shared__ unsigned int tree[2 * BLOCK_SIZE];
@@ -109,6 +112,9 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
     //   stride = 2^(d+1)
     //   if (tid % stride == stride/2) tree[tid] += tree[tid - stride/2]
     //   __syncthreads() after each level
+
+    // After upsweep, tree[2*BLOCK_SIZE - 1] = total block sum. Save it now.
+    if (tid == 0 && sums != nullptr) sums[blockIdx.x] = tree[2 * BLOCK_SIZE - 1];
 
     // Step 3: Set last element to 0 (exclusive scan base case)
     if (tid == 0) tree[2 * BLOCK_SIZE - 1] = 0;
@@ -127,17 +133,17 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
 // Three-pass scan for arrays larger than one block
 void scanPass1(const unsigned int* d_in, unsigned int* d_blocks,
                unsigned int* d_sums, int n) {
-    // TODO: Launch blockScan for each block
-    // TODO: Extract block sums (last element of each block's scan)
+    // TODO: Launch blockScan for each block, passing d_sums to collect block totals.
 }
 
 void scanPass2(unsigned int* d_sums, int numBlocks) {
-    // TODO: Recursively scan the block sums (single block)
+    // TODO: Exclusive-scan d_sums in-place (pass nullptr for sums param).
 }
 
 void scanPass3(const unsigned int* d_blocks, const unsigned int* d_offsets,
                unsigned int* d_out, int n) {
-    // TODO: Add offset from sums array to each element based on block membership
+    // TODO: Add d_offsets[bid] to every element in block bid (bid > 0).
+    // d_offsets[bid] is the exclusive prefix of block totals = sum of blocks 0..bid-1.
 }
 
 void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
@@ -153,7 +159,7 @@ void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
     cudaMemcpy(d_in, h_in, n * sizeof(unsigned int), cudaMemcpyHostToDevice);
 
     if (numBlocks == 1) {
-        blockScan<<<1, BLOCK_SIZE>>>(d_in, d_out, n);
+        blockScan<<<1, BLOCK_SIZE>>>(d_in, d_out, nullptr, n);
     } else {
         scanPass1(d_in, d_blocks, d_sums, n);
         scanPass2(d_sums, numBlocks);
@@ -178,7 +184,7 @@ void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
   input: "2\n3 7"
   expected: "0 3"
 - name: "Sequential 16 elements"
-  input: "16\nseq:1"
+  input: "16\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16"
   expected: "0 1 3 6 10 15 21 28 36 45 55 66 78 91 105 120"
 - name: "All zeros"
   input: "4\n0 0 0 0"
@@ -186,8 +192,14 @@ void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
 - name: "Large uniform fill"
   input: "64\nfill:5"
   expected: "0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 105 110 115 120 125 130 135 140 145 150 155 160 165 170 175 180 185 190 195 200 205 210 215 220 225 230 235 240 245 250 255 260 265 270 275 280 285 290 295 300 305 310 315"
-- name: "Verify N=128"
-  input: "verify\n128"
+- name: "Verify N=128 (single block)"
+  input: "verify 128"
+  expected: "1"
+- name: "Verify N=512 (multi-block)"
+  input: "verify 512"
+  expected: "1"
+- name: "Verify N=1024 (multi-block)"
+  input: "verify 1024"
   expected: "1"
 
 ---solution---
@@ -195,8 +207,11 @@ void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
 
 #define BLOCK_SIZE 256
 
-// Single-block exclusive prefix scan using Blelloch algorithm
-__global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
+// Single-block exclusive prefix scan using Blelloch algorithm.
+// If sums != nullptr, saves the total sum of this block to sums[blockIdx.x]
+// before zeroing the root (so callers can use it as the block total).
+__global__ void blockScan(const unsigned int* in, unsigned int* out,
+                          unsigned int* sums, int n) {
     __shared__ unsigned int tree[2 * BLOCK_SIZE];
 
     int tid = threadIdx.x;
@@ -215,6 +230,10 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
         }
         __syncthreads();
     }
+
+    // After upsweep, tree[2*BLOCK_SIZE - 1] = total sum of all block elements.
+    // Save it before zeroing the root for exclusive scan.
+    if (tid == 0 && sums != nullptr) sums[blockIdx.x] = tree[2 * BLOCK_SIZE - 1];
 
     // Step 3: Set last element to 0 (exclusive scan base case)
     if (tid == 0) tree[2 * BLOCK_SIZE - 1] = 0;
@@ -235,38 +254,29 @@ __global__ void blockScan(const unsigned int* in, unsigned int* out, int n) {
     out[i] = tree[BLOCK_SIZE + tid];
 }
 
-// Extract block sums (last element of each block)
-__global__ void extractSums(const unsigned int* blocks,
-                            unsigned int* sums, int numBlocks) {
-    int bid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (bid < numBlocks) {
-        sums[bid] = blocks[(bid + 1) * BLOCK_SIZE - 1];
-    }
-}
-
 void scanPass1(const unsigned int* d_in, unsigned int* d_blocks,
                unsigned int* d_sums, int n) {
     int numBlocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    blockScan<<<numBlocks, BLOCK_SIZE>>>(d_in, d_blocks, n);
-
-    // Extract block sums (last element of each block)
-    extractSums<<<(numBlocks + 255) / 256, 256>>>(d_blocks, d_sums, numBlocks);
+    // blockScan saves each block's total sum to d_sums[blockIdx.x]
+    blockScan<<<numBlocks, BLOCK_SIZE>>>(d_in, d_blocks, d_sums, n);
 }
 
 void scanPass2(unsigned int* d_sums, int numBlocks) {
-    // Recursively scan the block sums (single block)
-    blockScan<<<1, BLOCK_SIZE>>>(d_sums, d_sums, numBlocks);
+    // Recursively exclusive-scan the block totals to get per-block offsets.
+    // Pass nullptr for sums: we don't need the grand total here.
+    blockScan<<<1, BLOCK_SIZE>>>(d_sums, d_sums, nullptr, numBlocks);
 }
 
-// Add offset from sums array to each element based on block membership
+// Add offset from sums array to each element based on block membership.
+// After scanPass2, d_sums[bid] = sum of all elements in blocks 0..(bid-1),
+// which is the exact offset to add to every element in block bid.
 __global__ void addOffsets(unsigned int* blocks, const unsigned int* offsets,
                            int n, int numBlocks) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int bid = tid / BLOCK_SIZE;
-    int local_idx = tid % BLOCK_SIZE;
 
     if (tid < n && bid > 0) {
-        blocks[tid] += offsets[bid - 1];
+        blocks[tid] += offsets[bid];
     }
 }
 
@@ -297,7 +307,7 @@ void solve(const unsigned int* h_in, unsigned int* h_out, int n) {
     cudaMemcpy(d_in, h_in, n * sizeof(unsigned int), cudaMemcpyHostToDevice);
 
     if (numBlocks == 1) {
-        blockScan<<<1, BLOCK_SIZE>>>(d_in, d_out, n);
+        blockScan<<<1, BLOCK_SIZE>>>(d_in, d_out, nullptr, n);
     } else {
         scanPass1(d_in, d_blocks, d_sums, n);
         scanPass2(d_sums, numBlocks);
@@ -466,6 +476,6 @@ This uses the warp's register file instead of shared memory, eliminating bank co
 
 - **Wrong offset direction**: `__shfl_up_sync` reads from a lower lane index (up the warp); `__shfl_down_sync` reads from a higher lane index (down the warp). Prefix accumulation uses "up" because each thread needs values from preceding threads.
 
-- **Incorrect three-pass offset**: When adding offsets, use `offsets[bid - 1]` not `offsets[bid]`. Block 0 adds nothing; block 1 adds block 0's sum; block 2 adds blocks 0+1's sum.
+- **Incorrect three-pass offset**: Use `offsets[bid]` (with a `bid > 0` guard), not `offsets[bid - 1]`. After `scanPass2`, `offsets[bid]` contains the exclusive prefix of block totals = sum of elements in all blocks before block `bid`. Block 0 adds nothing (guarded out); block 1 adds `offsets[1]` = total of block 0; block 2 adds `offsets[2]` = total of blocks 0 and 1. Also critical: the block totals stored in `d_sums` must be the **actual total sum** of each block (captured from `tree[2*BLOCK_SIZE-1]` after upsweep, before zeroing), not the last element of the block's scan output (which excludes the last input element).
 
 ---end---

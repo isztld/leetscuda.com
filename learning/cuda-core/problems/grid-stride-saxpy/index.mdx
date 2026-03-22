@@ -155,11 +155,11 @@ void solve(const float* h_x, const float* h_y, float* h_out, int n, float a) {
   input: "16\n0.5\n1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0\n1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0"
   expected: "1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0 8.5 9.0"
 - name: "Large array requiring multiple iterations per thread"
-  input: "1000000\n1.0\nfill:1.0\nfill:1.0"
-  expected: "fill:2.0"
+  input: "verify 1000000 1.0 1.0 1.0"
+  expected: "1"
 - name: "Very large array (10M elements)"
-  input: "10000000\n2.0\nfill:1.0\nfill:0.0"
-  expected: "fill:2.0"
+  input: "verify 10000000 2.0 1.0 0.0"
+  expected: "1"
 - name: "Negative scalar"
   input: "10\n-1.0\n1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0\n10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0"
   expected: "9.0 8.0 7.0 6.0 5.0 4.0 3.0 2.0 1.0 0.0"
@@ -183,34 +183,16 @@ __global__ void saxpy(float a, const float* x, float* y, int n) {
 #include <cstring>
 #include <cmath>
 #include <vector>
-#include <limits>
 
-// Read a float (either a single value or "fill:value" for bulk values)
-static float readFloat(bool& isFill, float& fillValue) {
+static void readArr(std::vector<float>& v, int n) {
     char tok[64];
     scanf("%s", tok);
     if (strncmp(tok, "fill:", 5) == 0) {
-        isFill = true;
-        fillValue = atof(tok + 5);
-        return fillValue;
+        float val = atof(tok + 5);
+        for (int i = 0; i < n; i++) v[i] = val;
     } else {
-        isFill = false;
-        return atof(tok);
-    }
-}
-
-// Read an array of n floats
-static void readArray(std::vector<float>& arr, int n) {
-    arr.resize(n);
-    bool isFill;
-    float fillValue;
-    readFloat(isFill, fillValue);
-
-    if (isFill) {
-        for (int i = 0; i < n; i++) arr[i] = fillValue;
-    } else {
-        arr[0] = atof(tok);
-        for (int i = 1; i < n; i++) scanf("%f", &arr[i]);
+        v[0] = atof(tok);
+        for (int i = 1; i < n; i++) scanf("%f", &v[i]);
     }
 }
 
@@ -219,107 +201,38 @@ int main() {
     scanf("%s", first);
 
     if (strcmp(first, "verify") == 0) {
-        // Verify mode: run CPU reference and compare with GPU
+        // verify N a x_fill y_fill
+        // Generates uniform fill arrays and checks GPU result
         int N;
-        scanf("%d", &N);
+        float a_val, x_fill, y_fill;
+        scanf("%d %f %f %f", &N, &a_val, &x_fill, &y_fill);
 
-        float a_val;
-        readFloat(isFill, fillValue);
-        a_val = fillValue;
-
-        std::vector<float> x(N), y(N), gpu_out(N);
-
-        // Read x array
-        bool isFillX;
-        float fillX;
-        char tok[64];
-        scanf("%s", tok);
-        if (strncmp(tok, "fill:", 5) == 0) {
-            for (int i = 0; i < N; i++) x[i] = atof(tok + 5);
-        } else {
-            x[0] = atof(tok);
-            for (int i = 1; i < N; i++) scanf("%f", &x[i]);
-        }
-
-        // Read y array
-        bool isFillY;
-        float fillY;
-        scanf("%s", tok);
-        if (strncmp(tok, "fill:", 5) == 0) {
-            for (int i = 0; i < N; i++) y[i] = atof(tok + 5);
-        } else {
-            y[0] = atof(tok);
-            for (int i = 1; i < N; i++) scanf("%f", &y[i]);
-        }
-
-        // CPU reference: y[i] = a * x[i] + y[i]
-        for (int i = 0; i < N; i++) {
-            gpu_out[i] = a_val * x[i] + y[i];
-        }
-
-        // Call the GPU solution
-        extern void solve(const float*, const float*, float*, int, float);
-        std::vector<float> h_y_copy = y;
-        solve(x.data(), h_y_copy.data(), gpu_out.data(), N, a_val);
-
-        // Compare results with relative tolerance
-        bool passed = true;
-        float max_rel_err = 0.0f;
-        for (int i = 0; i < N; i++) {
-            float expected = a_val * x[i] + y[i];
-            float actual = gpu_out[i];
-            float rel_err = (expected != 0) ? fabs(actual - expected) / fabs(expected) : fabs(actual - expected);
-            if (rel_err > max_rel_err) max_rel_err = rel_err;
-            if (rel_err > 1e-4f) {
-                passed = false;
-                break;
-            }
-        }
-
-        printf("%d\n", passed ? 1 : 0);
-    } else {
-        // Normal mode: read input, run GPU, print result
-        int N = atoi(first);
-
-        // Read scalar a
-        float a_val;
-        char tok[64];
-        scanf("%s", tok);
-        a_val = atof(tok);
-
-        // Read x array
-        std::vector<float> x(N);
-        scanf("%s", tok);
-        if (strncmp(tok, "fill:", 5) == 0) {
-            float fill = atof(tok + 5);
-            for (int i = 0; i < N; i++) x[i] = fill;
-        } else {
-            x[0] = atof(tok);
-            for (int i = 1; i < N; i++) scanf("%f", &x[i]);
-        }
-
-        // Read y array
-        std::vector<float> y(N);
-        scanf("%s", tok);
-        if (strncmp(tok, "fill:", 5) == 0) {
-            float fill = atof(tok + 5);
-            for (int i = 0; i < N; i++) y[i] = fill;
-        } else {
-            y[0] = atof(tok);
-            for (int i = 1; i < N; i++) scanf("%f", &y[i]);
-        }
-
-        // Run GPU solution
-        std::vector<float> out(N);
+        std::vector<float> x(N, x_fill), y(N, y_fill), out(N);
         extern void solve(const float*, const float*, float*, int, float);
         solve(x.data(), y.data(), out.data(), N, a_val);
 
-        // Print result (first 10 elements, then count if larger)
-        for (int i = 0; i < N && i < 10; i++) {
-            if (i > 0) printf(" ");
+        float expected = a_val * x_fill + y_fill;
+        bool ok = true;
+        for (int i = 0; i < N; i++) {
+            if (fabsf(out[i] - expected) > 1e-3f) { ok = false; break; }
+        }
+        printf("%d\n", ok ? 1 : 0);
+    } else {
+        int N = atoi(first);
+        float a_val;
+        scanf("%f", &a_val);
+
+        std::vector<float> x(N), y(N), out(N);
+        readArr(x, N);
+        readArr(y, N);
+
+        extern void solve(const float*, const float*, float*, int, float);
+        solve(x.data(), y.data(), out.data(), N, a_val);
+
+        for (int i = 0; i < N; i++) {
+            if (i) printf(" ");
             printf("%.1f", out[i]);
         }
-        if (N > 10) printf(" ... (showing %d of %d)", 10, N);
         printf("\n");
     }
 

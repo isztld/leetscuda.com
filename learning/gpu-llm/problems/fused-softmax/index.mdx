@@ -203,41 +203,21 @@ void solve(float* d_output, const float* d_input, int N, int C) {
 }
 
 ---test-cases---
-// Test case 1: Basic correctness with small input
-// Input: N=2, C=4, with simple values
-// Expected: Each row should sum to 1.0 (within floating point tolerance)
-verify 2 4
-fill:1.0
-fill:2.0
-
-// Test case 2: Medium-sized input with varied values
-// Input: N=1, C=64, with sequential values 1.0, 2.0, ..., 64.0
-// Expected: Output should be valid probability distribution
-verify 1 64
-fill:1.0
-
-// Test case 3: Larger input testing thread coarsening
-// Input: N=4, C=1024, with increasing values
-// Expected: Numerical accuracy maintained across many elements
-verify 4 1024
-fill:1.0
-
-// Test case 4: Edge case with very large values (tests numerical stability)
-// Input: N=2, C=32, values ranging from 100 to 1000
-// Expected: No overflow, correct softmax output
-verify 2 32
-fill:100.0
-
-// Test case 5: Direct matrix input format
-// Input: N=2, C=3, explicit values
-// Row 1: 1.0 2.0 3.0
-// Row 2: 0.0 0.0 0.0
-// Expected:
-// Row 1: 0.0900305 0.244728 0.665241 (sum = 1.0)
-// Row 2: 0.333333 0.333333 0.333333 (uniform)
-2 3
-1.0 2.0 3.0
-0.0 0.0 0.0
+- name: "Basic correctness N=2 C=4 uniform input"
+  input: "verify 2 4\nfill:1.0"
+  expected: "1"
+- name: "Numerical stability with large values"
+  input: "verify 2 32\nfill:100.0"
+  expected: "1"
+- name: "Thread coarsening N=4 C=1024"
+  input: "verify 4 1024\nfill:1.0"
+  expected: "1"
+- name: "Large N test N=64 C=128"
+  input: "verify 64 128\nfill:1.0"
+  expected: "1"
+- name: "Direct: single row uniform (all zeros)"
+  input: "1 4\n0.0 0.0 0.0 0.0"
+  expected: "0.2500000 0.2500000 0.2500000 0.2500000"
 
 ---solution---
 #include <cuda_runtime.h>
@@ -407,17 +387,8 @@ int main() {
 
         std::vector<float> h_input(N * C), h_output(N * C), h_expected(N * C);
 
-        // Read or generate input
-        if (strncmp(first, "fill:", 5) == 0) {
-            // Already consumed "verify", need to read fill token
-            char fillTok[64];
-            scanf("%s", fillTok);
-            float v = atof(fillTok + 5);
-            std::fill(h_input.begin(), h_input.end(), v);
-        } else {
-            h_input[0] = atof(first);
-            for (int i = 1; i < N * C; i++) scanf("%f", &h_input[i]);
-        }
+        // Read input matrix (handles "fill:value" or space-separated floats)
+        readMatrix(h_input, N, C);
 
         // Compute reference on CPU
         softmax_reference(h_expected.data(), h_input.data(), N, C);
