@@ -120,30 +120,6 @@ __global__ void saxpy(float a, const float* x, float* y, int n) {
     // Your code here
 }
 
-// Host wrapper — allocates device memory, copies data, launches kernel with grid-stride compatibility, copies result back.
-// Do NOT modify anything below this line.
-void solve(const float* h_x, const float* h_y, float* h_out, int n, float a) {
-    float *d_x, *d_y;
-    size_t bytes = n * sizeof(float);
-
-    cudaMalloc(&d_x, bytes);
-    cudaMalloc(&d_y, bytes);
-
-    cudaMemcpy(d_x, h_x, bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_y, h_y, bytes, cudaMemcpyHostToDevice);
-
-    // Choose a fixed grid size that may be smaller than n
-    // The kernel must handle this correctly using grid-stride loops
-    const int blockSize = 256;
-    const int gridSize = 256;  // Fixed at 256 blocks regardless of n
-    saxpy<<<gridSize, blockSize>>>(a, d_x, d_y, n);
-
-    cudaMemcpy(h_out, d_y, bytes, cudaMemcpyDeviceToHost);
-
-    cudaFree(d_x);
-    cudaFree(d_y);
-}
-
 ---test-cases---
 - name: "Small array, single loop iteration per thread"
   input: "8\n2.0\n1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0\n10.0 20.0 30.0 40.0 50.0 60.0 70.0 80.0"
@@ -183,6 +159,30 @@ __global__ void saxpy(float a, const float* x, float* y, int n) {
 #include <cstring>
 #include <cmath>
 #include <vector>
+
+// Host wrapper — allocates device memory, copies data, launches kernel with grid-stride compatibility, copies result back.
+// Do NOT modify anything below this line.
+void solve(const float* h_x, const float* h_y, float* h_out, int n, float a) {
+    float *d_x, *d_y;
+    size_t bytes = n * sizeof(float);
+
+    cudaMalloc(&d_x, bytes);
+    cudaMalloc(&d_y, bytes);
+
+    cudaMemcpy(d_x, h_x, bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_y, h_y, bytes, cudaMemcpyHostToDevice);
+
+    // Choose a fixed grid size that may be smaller than n
+    // The kernel must handle this correctly using grid-stride loops
+    const int blockSize = 256;
+    const int gridSize = 256;  // Fixed at 256 blocks regardless of n
+    saxpy<<<gridSize, blockSize>>>(a, d_x, d_y, n);
+
+    cudaMemcpy(h_out, d_y, bytes, cudaMemcpyDeviceToHost);
+
+    cudaFree(d_x);
+    cudaFree(d_y);
+}
 
 static void readArr(std::vector<float>& v, int n) {
     char tok[64];

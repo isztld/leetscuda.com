@@ -15,43 +15,42 @@ cpp_standard: "17"
 cuda_min_version: "11.0"
 compute_min_cap: "sm_60"
 ---
-
 ## Background
 
-CUDA kernels run across thousands of GPU threads simultaneously. Each thread identifies itself using two built-in variables:
+CUDA (Compute Unified Device Architecture) is NVIDIA's parallel computing platform that lets you write programs that execute across thousands of GPU cores simultaneously. The fundamental unit of work in CUDA is the **kernel** — a function that runs on the GPU and is executed by many threads at once.
 
-- `threadIdx.x` — the thread's position within its block
-- `blockIdx.x` — the block's position in the grid
-
-The standard 1D global index formula is:
-
-```cpp
-int i = blockIdx.x * blockDim.x + threadIdx.x;
-```
-
-Because the grid may not divide evenly into the array length, always guard with `if (i < n)` before accessing memory.
+Threads in CUDA are organised into a hierarchy: threads are grouped into **blocks**, and blocks are grouped into a **grid**. Each thread has a unique identity given by `threadIdx` (position within its block) and `blockIdx` (the block's position in the grid). Using these two built-in variables, a thread can compute a global index into the data it is responsible for.
 
 ## What to Implement
 
-Implement the `vecAdd` CUDA kernel that adds two float arrays element-wise:
+Implement the `vecAdd` CUDA kernel that adds two floating-point arrays element-wise:
 
 ```
 c[i] = a[i] + b[i]   for every i in [0, n)
 ```
 
-Each thread handles exactly one element. The host code allocates device memory, transfers data, and launches your kernel with 256 threads per block — you only need to write the kernel.
+Each thread should handle exactly one element. Use the standard 1-D indexing formula:
+
+```cpp
+int i = blockIdx.x * blockDim.x + threadIdx.x;
+```
+
+Guard against out-of-bounds access with `if (i < n)` — the last block in the grid may have threads beyond the array length.
 
 ## Constraints
 
 - `1 ≤ n ≤ 10,000,000`
-- Elements are 32-bit floats in `[-10⁶, 10⁶]`
-- 256 threads per block (set by the harness)
+- Arrays `a` and `b` contain 32-bit floats in the range `[-10^6, 10^6]`
+- Use 256 threads per block (the host code already sets this up for you)
+- Do not modify the host setup code in `solve()`
 
 ## Example
 
 **Input:** `n = 4`, `a = [1.0, 2.0, 3.0, 4.0]`, `b = [10.0, 20.0, 30.0, 40.0]`
 
 **Output:** `c = [11.0, 22.0, 33.0, 44.0]`
+
+Each element `c[i]` is the sum of `a[i]` and `b[i]`. Thread 0 computes `c[0] = 1 + 10 = 11`, thread 1 computes `c[1] = 2 + 20 = 22`, and so on.
 
 ---starter-code---
 #include <cuda_runtime.h>

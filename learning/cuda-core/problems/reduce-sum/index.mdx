@@ -19,54 +19,29 @@ compute_min_cap: "sm_60"
 
 ## Background
 
-**Parallel reduction** is the canonical GPU algorithm for combining N elements into a single value using a binary associative operation (sum, max, min). A naive serial sum takes O(N) time. A well-designed GPU reduction achieves O(N/P) time where P is the number of parallel threads, with only O(log N) synchronization steps.
+**Parallel reduction** is a fundamental pattern in GPU computing: combining N elements into a single result (sum, max, min) using O(log N) parallel steps. A naïve single-threaded sum runs in O(N); a well-implemented GPU reduction runs in O(N/P) where P is the number of parallel processors.
 
-The fundamental insight is **tree reduction**: pairs of elements are combined in parallel, halving the active count at each step. After log2(N) steps, a single result remains. But naive implementations suffer from three performance killers:
+The classic approach uses **shared memory**: each block loads a contiguous chunk of the input, then performs a tree-reduction within the block, halving the active thread count at each step. After the block writes its partial sum to a global array, a second kernel pass (or a single-block final reduction) collapses all partial sums.
 
-1. **Warp divergence**: When only half the threads are active, the idle threads still consume scheduler slots
-2. **Shared memory bank conflicts**: When multiple threads in a warp access adjacent addresses, serialization occurs
-3. **Missing thread coarsening**: Each thread loads only one element when it could load many
-
-The evolution of reduction optimization follows five steps, each addressing a specific bottleneck. Understanding this progression is essential for principal-level GPU interview questions.
+For maximum throughput on modern NVIDIA hardware, avoid shared memory entirely within a warp and instead use **warp-shuffle intrinsics** (`__shfl_down_sync`). These intrinsics allow threads within a warp to directly exchange register values without going through shared memory, saving both latency and bandwidth.
 
 ## What to Implement
 
-Implement `reduceSum` that computes the sum of an array of `n` floats. The optimal approach follows this progression:
+Implement `reduceSum` that computes the sum of an array of `n` floats and writes the result to `*out`. The expected approach:
 
-**Step 1: Naive stride-1 reduction**
-- Load elements into shared memory
-- Use `sdata[tid] += sdata[tid + stride]` pattern with increasing stride (1, 2, 4, 8, ...)
-- Problem: high-indexed threads are always active, causing divergence
-
-**Step 2: Reverse indexing**
-- Lower-indexed threads always active, eliminating divergence
-- Pattern: `if (tid < stride) sdata[tid] += sdata[tid + stride]`
-
-**Step 3: Sequential addressing with halving**
-- For stride from blockDim/2 down to 1: `if (tid < stride) sdata[tid] += sdata[tid + stride]`
-- Coalesced shared memory access
-
-**Step 4: Unroll last warp**
-- For threads < 32, use warp-synchronous execution (no __syncthreads inside warp)
-- Removes loop overhead for final reduction
-
-**Step 5: Warp shuffle primitives**
-- Use `__shfl_down_sync(0xffffffff, val, offset)` instead of shared memory for intra-warp reduction
-- Zero shared memory traffic within a warp, 5 instructions (offset = 16, 8, 4, 2, 1)
-
-**Step 6: Thread coarsening**
-- Each thread loads multiple elements sequentially before the tree reduction
-- Reduces kernel launch overhead and improves arithmetic intensity
-
-Your implementation should use the optimal approach: thread coarsening + warp shuffles + two-pass reduction for large arrays.
+1. Each thread loads one element and accumulates into a local register
+2. Use `__shfl_down_sync(0xffffffff, val, offset)` for the warp-level reduction (offset = 16, 8, 4, 2, 1)
+3. Lane 0 of each warp writes the warp partial sum to shared memory
+4. The first warp reduces across all per-warp partial sums
+5. Thread 0 of the block writes the block partial sum to `partials[blockIdx.x]`
+6. The host (already provided) calls a second pass to sum the block partials
 
 ## Constraints
 
-- `n` is a power of 2, `1 <= n <= 2^24` (16M elements)
+- `n` is a power of 2, `1 ≤ n ≤ 2^24`
 - Use `blockDim.x = 256` (8 warps of 32 threads each)
-- Result must match sequential CPU sum within 1e-3 relative error
-- Do not modify the provided `solve()` function
-- Use `__shfl_down_sync(0xffffffff, val, offset)` for warp-level reduction
+- The result must match a sequential CPU sum within floating-point rounding tolerance (1e-3 relative error)
+- Do not modify `solve()`
 
 ## Example
 
@@ -76,45 +51,16 @@ Your implementation should use the optimal approach: thread coarsening + warp sh
 
 ---starter-code---
 #include <cuda_runtime.h>
-#include <cstdio>
 
-#define BLOCK_SIZE 256
-#define WARP_SIZE  32
-
-// First pass: each block reduces its slice to partials[blockIdx.x]
-// Use __shfl_down_sync for warp-level reduction
+// TODO: Each block reduces its slice to a single partial sum written to partials[blockIdx.x].
+// Use __shfl_down_sync for warp-level reduction.
 __global__ void reduceBlock(const float* in, float* partials, int n) {
-    // Your code here:
-    // 1. Each thread loads one (or more with coarsening) element(s)
-    // 2. Reduce within warp using __shfl_down_sync(0xffffffff, val, offset)
-    // 3. Write warp partial sums to shared memory
-    // 4. First warp reduces across warp sums
-    // 5. Lane 0 writes block result to partials[blockIdx.x]
+    // Your code here
 }
 
-// Second pass: reduce the partials array (gridSize=1)
+// Second-pass: sums the partials array (called by solve with gridSize=1).
 __global__ void reducePartials(float* partials, float* out, int count) {
-    // Same pattern as reduceBlock but for the partials array
-}
-
-// Do NOT modify below this line
-void solve(const float* h_in, float* h_out, int n) {
-    float *d_in, *d_partials, *d_out;
-    int gridSize = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    cudaMalloc(&d_in,       n        * sizeof(float));
-    cudaMalloc(&d_partials, gridSize * sizeof(float));
-    cudaMalloc(&d_out,      sizeof(float));
-
-    cudaMemcpy(d_in, h_in, n * sizeof(float), cudaMemcpyHostToDevice);
-
-    reduceBlock<<<gridSize, BLOCK_SIZE>>>(d_in, d_partials, n);
-    reducePartials<<<1, BLOCK_SIZE>>>(d_partials, d_out, gridSize);
-
-    cudaMemcpy(h_out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_in);
-    cudaFree(d_partials);
-    cudaFree(d_out);
+    // Your code here
 }
 
 ---test-cases---
@@ -201,6 +147,29 @@ __global__ void reducePartials(float* partials, float* out, int count) {
 #include <cstring>
 #include <cmath>
 #include <vector>
+
+#define BLOCK_SIZE 256
+#define WARP_SIZE  32
+
+// Do NOT modify below this line.
+void solve(const float* h_in, float* h_out, int n) {
+    float *d_in, *d_partials, *d_out;
+    int gridSize = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    cudaMalloc(&d_in,       n        * sizeof(float));
+    cudaMalloc(&d_partials, gridSize * sizeof(float));
+    cudaMalloc(&d_out,      sizeof(float));
+
+    cudaMemcpy(d_in, h_in, n * sizeof(float), cudaMemcpyHostToDevice);
+
+    reduceBlock<<<gridSize, BLOCK_SIZE>>>(d_in, d_partials, n);
+    reducePartials<<<1, BLOCK_SIZE>>>(d_partials, d_out, gridSize);
+
+    cudaMemcpy(h_out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(d_in);
+    cudaFree(d_partials);
+    cudaFree(d_out);
+}
 
 // Read matrix: either "fill:value" or space-separated values
 static void readFloats(std::vector<float>& v, int n) {
