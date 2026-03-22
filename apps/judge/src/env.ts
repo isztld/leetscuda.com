@@ -25,10 +25,6 @@ const envSchema = z.object({
   JUDGE_API_URL: z.string().url('JUDGE_API_URL must be a valid URL'),
   JUDGE_API_TOKEN: z.string().min(1, 'JUDGE_API_TOKEN is required').startsWith('jt_', 'JUDGE_API_TOKEN must start with jt_'),
   JUDGE_CAPABILITIES: z.string().min(1, 'JUDGE_CAPABILITIES is required'),
-  // When the judge runs inside Docker using the host Docker socket (DinD-style),
-  // volume mounts must reference host-side paths, not container-internal paths.
-  // Set this to the host path that maps to the judge container's tmp directory.
-  JUDGE_HOST_TMP_DIR: z.string().optional(),
   // Hard ceiling on execution timeout — job payloads cannot exceed this.
   JUDGE_MAX_TIMEOUT_MS: z.string().optional(),
   // Hard ceiling on code payload size — job payloads cannot exceed this.
@@ -48,6 +44,34 @@ const capabilities = parsed.data.JUDGE_CAPABILITIES.split(',').map((c) => c.trim
 const parsedCapabilities = parseCapabilities(parsed.data.JUDGE_CAPABILITIES)
 
 // ── Startup validation ────────────────────────────────────────────────────────
+
+// Security configuration checks
+{
+  const fs = await import('fs/promises')
+
+  const cppProfile  = '/etc/judge/seccomp-judge.json'
+  const cudaProfile = '/etc/judge/seccomp-judge-cuda.json'
+
+  await fs.access(cppProfile)
+    .then(() => console.log('[judge] Seccomp profile (cpp): found'))
+    .catch(() => console.log('[judge] WARNING: Seccomp profile not found at ' + cppProfile + ' — running without syscall filtering'))
+
+  await fs.access(cudaProfile)
+    .then(() => console.log('[judge] Seccomp profile (cuda): found'))
+    .catch(() => console.log('[judge] WARNING: Seccomp profile not found at ' + cudaProfile + ' — CUDA containers will run without syscall filtering'))
+
+  const uid = process.getuid?.()
+  if (uid === 0) {
+    console.log('[judge] WARNING: Judge process is running as root — sandbox containers will also start as root unless --user is set')
+  }
+
+  if (!process.env.DOCKER_HOST) {
+    console.log('[judge] WARNING: DOCKER_HOST not set — judge has direct Docker socket access (less secure)')
+    console.log('[judge] Recommended: use docker-compose.judge.yml with docker-socket-proxy')
+  } else {
+    console.log(`[judge] Docker host (proxy): ${process.env.DOCKER_HOST}`)
+  }
+}
 
 // If k8s capability is declared, verify kubeconform is available and offline validation works
 if (parsedCapabilities.some((c) => c.runtime === 'k8s')) {
@@ -111,7 +135,6 @@ export const env = {
   ...parsed.data,
   capabilities,
   parsedCapabilities,
-  hostTmpDir: parsed.data.JUDGE_HOST_TMP_DIR,
   maxTimeoutMs: parseInt(parsed.data.JUDGE_MAX_TIMEOUT_MS ?? '60000'),
   maxCodeBytes: parseInt(parsed.data.JUDGE_MAX_CODE_BYTES ?? String(16 * 1024)),
 }

@@ -2,12 +2,19 @@ import 'dotenv/config'
 import './env.js'
 import { execSync } from 'child_process'
 import { pollForJob, submitResult } from './api-client.js'
-import { runInSandbox } from './sandbox.js'
+import { runInSandbox, verifyDockerProxy } from './sandbox.js'
 import { verify } from './verifier.js'
 import { validateK8sManifest } from './k8s-validator.js'
 import type { CppJudgeJob, JudgeResult, SubmissionTestResult } from './types.js'
 import { env } from './env.js'
 import type { CudaCapability } from './env.js'
+
+async function clearGpuMemory(): Promise<void> {
+  // A proper implementation would run a trivial CUDA kernel that mallocs and zeros a large
+  // buffer to evict the previous job's GPU memory. This is a known limitation of GPU sandboxing
+  // that even commercial platforms do not fully solve; MIG (A100/H100) provides hardware isolation.
+  console.log('[judge] WARNING: GPU memory not cleared between jobs — potential data leakage between submissions')
+}
 
 /** Kill any containers from a previous crashed judge session before starting. */
 async function cleanupOrphanedContainers(): Promise<void> {
@@ -114,8 +121,9 @@ async function main() {
   console.log(`[judge] Capabilities: ${env.capabilities.join(', ')}`)
   console.log(`[judge] API URL: ${env.JUDGE_API_URL}`)
 
-  // Kill orphaned containers from any previous crash (only relevant for cpp/cuda judges)
+  // Verify Docker proxy / socket connectivity (only relevant for cpp/cuda judges)
   if (env.parsedCapabilities.some((c) => c.runtime === 'cpp' || c.runtime === 'cuda')) {
+    await verifyDockerProxy()
     await cleanupOrphanedContainers()
   }
 
@@ -182,6 +190,10 @@ async function main() {
       const result = await runCppJob(job)
       await submitResult(result)
       console.log(`[judge] ${job.submissionId} → ${result.status} in ${result.runtimeMs}ms`)
+
+      if (job.runtime === 'cuda') {
+        await clearGpuMemory()
+      }
     } catch (err) {
       console.error('[judge] Error in main loop:', err)
       await new Promise((r) => setTimeout(r, 1000))

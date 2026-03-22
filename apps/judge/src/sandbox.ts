@@ -1,12 +1,15 @@
-import { spawn } from 'child_process'
-import { execSync } from 'child_process'
+import { spawn, execSync, execFile } from 'child_process'
+import { promisify } from 'util'
 import fs from 'fs'
+import fsAsync from 'fs/promises'
 import path from 'path'
+import os from 'os'
+import { performance } from 'perf_hooks'
 import { fileURLToPath } from 'url'
-import { env } from './env.js'
 import type { CudaCapability } from './env.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const execFileAsync = promisify(execFile)
 
 export interface SandboxOptions {
   runtime: 'cpp' | 'cuda'
@@ -26,6 +29,9 @@ export interface SandboxResult {
 }
 
 const MAX_OUTPUT_BYTES = 64 * 1024 // 64 KB per stream
+
+const SECCOMP_CPP  = '/etc/judge/seccomp-judge.json'
+const SECCOMP_CUDA = '/etc/judge/seccomp-judge-cuda.json'
 
 // Strip ANSI escape sequences and non-printable characters (except \n, \r, \t)
 function sanitizeOutput(s: string): string {
@@ -62,6 +68,27 @@ function isDockerAvailable(): boolean {
     dockerAvailable = false
   }
   return dockerAvailable
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export async function verifyDockerProxy(): Promise<void> {
+  const dockerHost = process.env.DOCKER_HOST
+  if (!dockerHost) {
+    console.log('[judge] WARNING: DOCKER_HOST not set — using default socket (less secure)')
+    return
+  }
+  console.log(`[judge] Docker host: ${dockerHost}`)
+
+  try {
+    await execFileAsync('docker', ['ps', '--format', '{{.ID}}', '--filter', 'label=leetscuda-judge'])
+    console.log('[judge] Docker proxy connection: OK')
+  } catch (err) {
+    console.log(`[judge] ERROR: Cannot connect to Docker host ${dockerHost}: ${err}`)
+    process.exit(1)
+  }
 }
 
 async function runProcess(
@@ -112,7 +139,7 @@ async function runProcess(
 }
 
 async function runDocker(
-  tmpDir: string,
+  code: string,
   input: string,
   opts: SandboxOptions,
 ): Promise<SandboxResult> {
@@ -123,85 +150,107 @@ async function runDocker(
   const image = getDockerImage(opts.runtime, cudaCap)
   const srcFile = isCuda ? 'solution.cu' : 'solution.cpp'
   const computeArch = opts.judgeComputeCap ?? 'sm_86'
-
-  const compileCmd = isCuda
-    ? ['nvcc', `-std=c++${opts.cppStandard}`, `-arch=${computeArch}`, '-O2', '-o', 'solution', srcFile]
-    : ['g++', `-std=c++${opts.cppStandard}`, '-O2', '-o', 'solution', srcFile]
-
-  const dockerBaseArgs = isCuda
-    ? [
-        'run', '--rm', '--network', 'none', '--memory', '512m',
-        '--gpus', 'device=0', '--ulimit', 'nproc=128',
-        '--label', 'leetscuda-judge=1',
-      ]
-    : [
-        'run', '--rm', '--network', 'none', '--memory', '256m',
-        '--cpus', '0.5', '--ulimit', 'nproc=64',
-        '--label', 'leetscuda-judge=1',
-      ]
-
-  // When running inside Docker with the host Docker socket, volume mounts must use
-  // the host-side path. JUDGE_HOST_TMP_DIR maps the container's tmp dir to its host path.
-  const hostTmpDir = env.hostTmpDir
-    ? path.join(env.hostTmpDir, opts.submissionId)
-    : tmpDir
-
-  // Compile — short-lived container, SIGKILL on 30s timeout is fine
-  const compileResult = await runProcess(
-    'docker',
-    [...dockerBaseArgs, '-v', `${hostTmpDir}:/work`, '-w', '/work', image, ...compileCmd],
-    '',
-    30_000,
-  )
-
-  if (compileResult.exitCode !== 0) {
-    return {
-      stdout: '',
-      stderr: compileResult.stderr || compileResult.stdout,
-      exitCode: compileResult.exitCode,
-      runtimeMs: 0,
-    }
-  }
-
-  // Run — named container so we can do a two-phase SIGTERM/SIGKILL on timeout
   const containerName = `lc-judge-${opts.submissionId}`
-  const runArgs = [
-    ...dockerBaseArgs,
+  const memoryLimit = isCuda ? '512m' : '256m'
+
+  // Build compile + run script executed inside the container
+  const compileCmd = isCuda
+    ? `nvcc -std=c++${opts.cppStandard} -arch=${computeArch} -O2 -o /sandbox/solution /sandbox/${srcFile}`
+    : `g++ -std=c++${opts.cppStandard} -O2 -o /sandbox/solution /sandbox/${srcFile}`
+  const execScript = `set -e && ${compileCmd} && /sandbox/solution < /sandbox/input.txt`
+
+  // Determine seccomp profile — skip flag if profile file is absent (dev environment)
+  const seccompProfile = isCuda ? SECCOMP_CUDA : SECCOMP_CPP
+  const seccompExists = await fsAsync.access(seccompProfile).then(() => true).catch(() => false)
+
+  // Build docker create args
+  const createArgs: string[] = [
+    'create',
     '--name', containerName,
-    '--entrypoint', '/work/solution',
-    '-i',
-    '-v', `${hostTmpDir}:/work`,
-    '-w', '/work',
-    image,
+    '--network', 'none',
+    '--memory', memoryLimit,
+    '--cpus', '0.5',
+    '--pids-limit', '64',
+    '--user', '65534:65534',
+    '--read-only',
+    '--tmpfs', '/tmp:size=64m,mode=1777',
+    '--tmpfs', '/sandbox:size=32m,mode=0777',
+    '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges:true',
+    '--label', 'leetscuda-judge=1',
+    '--workdir', '/sandbox',
   ]
 
-  const start = Date.now()
-  // Give runProcess extra slack — we handle the real timeout externally via docker stop
-  const runPromise = runProcess('docker', runArgs, input, opts.timeoutMs + 30_000)
-  const timeoutP = new Promise<'TIMEOUT'>((resolve) =>
-    setTimeout(() => resolve('TIMEOUT'), opts.timeoutMs),
-  )
-
-  const race = await Promise.race([
-    runPromise.then((r) => ({ tag: 'done' as const, ...r })),
-    timeoutP,
-  ])
-  const runtimeMs = Date.now() - start
-
-  if (race === 'TIMEOUT') {
-    console.log(`[judge] TIMEOUT ${opts.submissionId} — SIGTERM sent, waiting 5s`)
-    try {
-      // docker stop: sends SIGTERM, waits --time seconds, then sends SIGKILL if still running
-      execSync(`docker stop --time 5 ${containerName}`, { stdio: 'ignore', timeout: 15_000 })
-    } catch {
-      // container may have already exited
-    }
-    // Drain the process promise to prevent unhandled rejection
-    await runPromise.catch(() => {})
-    return { stdout: '', stderr: '', exitCode: 124, runtimeMs, timedOut: true }
+  if (seccompExists) {
+    createArgs.push('--security-opt', `seccomp=${seccompProfile}`)
   }
 
-  return { stdout: race.stdout, stderr: race.stderr, exitCode: race.exitCode, runtimeMs }
+  if (isCuda) {
+    createArgs.push('--cap-add', 'SYS_PTRACE')
+    createArgs.push('--gpus', 'device=0')
+  }
+
+  createArgs.push(image, '/bin/sh', '-c', execScript)
+
+  const tempCodePath  = path.join(os.tmpdir(), `${opts.submissionId}-source`)
+  const tempInputPath = path.join(os.tmpdir(), `${opts.submissionId}-input`)
+
+  try {
+    // Step 1: Create container (stopped)
+    await execFileAsync('docker', createArgs)
+
+    // Step 2: Copy source code into container tmpfs — no host directory mount
+    await fsAsync.writeFile(tempCodePath, code, 'utf8')
+    await execFileAsync('docker', ['cp', tempCodePath, `${containerName}:/sandbox/${srcFile}`])
+    await fsAsync.unlink(tempCodePath)
+
+    await fsAsync.writeFile(tempInputPath, input, 'utf8')
+    await execFileAsync('docker', ['cp', tempInputPath, `${containerName}:/sandbox/input.txt`])
+    await fsAsync.unlink(tempInputPath)
+
+    // Step 3: Start container
+    const startTime = performance.now()
+    await execFileAsync('docker', ['start', containerName])
+
+    // Step 4: Wait for exit (with timeout)
+    const raceResult = await Promise.race([
+      execFileAsync('docker', ['wait', containerName]).then((r) => ({
+        tag: 'done' as const,
+        exitCode: parseInt(r.stdout.trim(), 10),
+      })),
+      sleep(opts.timeoutMs).then(() => ({ tag: 'timeout' as const })),
+    ])
+
+    const runtimeMs = Math.round(performance.now() - startTime)
+
+    if (raceResult.tag === 'timeout') {
+      console.log(`[judge] TIMEOUT ${opts.submissionId} — SIGTERM sent, waiting 5s`)
+      try {
+        await execFileAsync('docker', ['stop', '--time', '5', containerName])
+      } catch {
+        // container may have already exited
+      }
+      return { stdout: '', stderr: '', exitCode: 124, runtimeMs, timedOut: true }
+    }
+
+    const exitCode = raceResult.exitCode
+
+    // Step 5: Capture output
+    const logsResult = await execFileAsync('docker', ['logs', containerName])
+
+    return {
+      stdout: logsResult.stdout,
+      stderr: logsResult.stderr,
+      exitCode,
+      runtimeMs,
+      timedOut: false,
+    }
+  } finally {
+    // Step 6: Always clean up container and any remaining temp files
+    await execFileAsync('docker', ['rm', '-f', containerName]).catch(() => {})
+    await fsAsync.unlink(tempCodePath).catch(() => {})
+    await fsAsync.unlink(tempInputPath).catch(() => {})
+  }
 }
 
 async function runDirect(
@@ -242,6 +291,16 @@ export async function runInSandbox(
   input: string,
   opts: SandboxOptions,
 ): Promise<SandboxResult> {
+  if (isDockerAvailable()) {
+    const result = await runDocker(code, input, opts)
+    return {
+      ...result,
+      stdout: sanitizeOutput(result.stdout),
+      stderr: sanitizeOutput(result.stderr),
+    }
+  }
+
+  // Direct execution fallback (local dev / no Docker)
   const tmpBase = path.join(__dirname, '..', 'tmp')
   const tmpDir = path.join(tmpBase, opts.submissionId)
   const isCuda = opts.runtime === 'cuda'
@@ -251,10 +310,7 @@ export async function runInSandbox(
     fs.mkdirSync(tmpDir, { recursive: true })
     fs.writeFileSync(path.join(tmpDir, srcFile), code, 'utf8')
 
-    const result = isDockerAvailable()
-      ? await runDocker(tmpDir, input, opts)
-      : await runDirect(tmpDir, input, opts)
-
+    const result = await runDirect(tmpDir, input, opts)
     return {
       ...result,
       stdout: sanitizeOutput(result.stdout),

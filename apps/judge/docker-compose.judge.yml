@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      # Allow only what the judge needs
+      CONTAINERS: 1      # create, start, stop, remove, wait, logs
+      POST: 1            # allow POST requests
+      # Explicitly deny everything dangerous
+      EXEC: 0            # no docker exec
+      IMAGES: 0          # no image management
+      NETWORKS: 0        # no network management
+      BUILD: 0           # no docker build
+      COMMIT: 0          # no docker commit
+      CONFIGS: 0         # no config management
+      DISTRIBUTION: 0    # no registry access
+      INFO: 0            # no docker info
+      NODES: 0           # no swarm nodes
+      PLUGINS: 0         # no plugins
+      SECRETS: 0         # no secrets
+      SERVICES: 0        # no swarm services
+      SESSION: 0         # no session
+      SWARM: 0           # no swarm management
+      SYSTEM: 0          # no system events
+      TASKS: 0           # no swarm tasks
+      VOLUMES: 0         # no volumes
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - judge-internal
+    # Socket proxy itself should be isolated
+    read_only: true
+    tmpfs:
+      - /run
+
+  judge:
+    image: leetscuda-judge
+    restart: unless-stopped
+    depends_on:
+      - socket-proxy
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+    env_file:
+      - .env
+    networks:
+      - judge-internal
+    # Judge container has NO docker socket mount
+    # It communicates with the proxy over the internal network only
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m    # for temp files during job processing
+
+networks:
+  judge-internal:
+    driver: bridge
+    internal: true    # no external network access for this network

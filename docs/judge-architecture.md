@@ -151,10 +151,11 @@ The leetscuda judge is a standalone Node.js worker process that evaluates user c
 │    ├── runK8sJob()  → validateK8sManifest() → kubeconform                  │
 │    └── submitResult() → POST /api/judge/result                              │
 │                                                                             │
-│  Docker daemon (host socket: /var/run/docker.sock)                          │
-│    └── spawns sibling sandbox containers:                                   │
-│         ├── gcc:14             (cpp problems)                               │
-│         └── nvidia/cuda:13.0.0-devel-ubuntu24.04  (cuda problems)          │
+│  socket-proxy (tcp://socket-proxy:2375, filtered API — DOCKER_HOST)         │
+│    └── Docker daemon (/var/run/docker.sock)                                 │
+│         └── spawns sibling sandbox containers:                              │
+│              ├── gcc:14             (cpp problems)                          │
+│              └── nvidia/cuda:13.0.0-devel-ubuntu24.04  (cuda problems)     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -644,108 +645,111 @@ Checks are evaluated in order, and results are aggregated into the final `testRe
 
 ## 6. Sandbox execution — C++ and CUDA
 
-### 6.1 Docker-in-Docker architecture
+### 6.1 Docker socket proxy architecture
 
-The most architecturally significant aspect of the judge is how it runs user code in isolation while itself running inside Docker. This is achieved by mounting the host Docker socket into the judge container — a pattern sometimes called "Docker-in-Docker" (DinD), though technically it is more accurate to call it "Docker socket mounting" because no Docker daemon runs inside the judge container. The judge is a client of the host daemon.
+The judge spawns sandbox containers by calling the Docker CLI, which communicates with the Docker daemon. In the hardened deployment, the judge never has direct access to the host Docker socket. Instead, a **docker-socket-proxy** service sits between the judge and the daemon, enforcing an API allowlist.
 
 ```
 Host machine
 │
 ├── Docker daemon (/var/run/docker.sock)
+│        ▲
+│        │ (read-only socket mount)
+├── socket-proxy container  [tecnativa/docker-socket-proxy]
+│   ├── Allowlist: CONTAINERS=1, POST=1
+│   ├── Blocklist: EXEC=0, IMAGES=0, BUILD=0, NETWORKS=0, VOLUMES=0, ...
+│   └── Exposes: tcp://socket-proxy:2375  (internal network only)
 │
 ├── Judge container  [leetscuda-judge image]
-│   ├── Volume mount: /var/run/docker.sock → /var/run/docker.sock
-│   ├── Volume mount: /host/path/to/judge/tmp → /app/apps/judge/tmp
-│   │   (required for DinD temp directory access — see §6.2)
-│   ├── Runs: tsx src/worker.ts
-│   └── Executes: docker run gcc:14 ...  (via the mounted socket)
+│   ├── DOCKER_HOST=tcp://socket-proxy:2375  (no socket mount)
+│   ├── Runs: tsx src/worker.ts  (as non-root user "judge")
+│   └── Executes: docker create/cp/start/wait/logs/rm  (via proxy)
 │
 └── Sandbox container  [gcc:14 or nvidia/cuda image]  ← SIBLING, not child
     ├── Image: gcc:14
-    ├── Volume mount: /host/path/to/judge/tmp/{submissionId}/ → /work/
-    ├── Network: none  (no outbound connections possible)
+    ├── Network: none
     ├── Memory: 256m (cpp) / 512m (cuda)
-    └── Runs: g++ compile, then ./solution < input
+    ├── User: 65534:65534 (nobody:nogroup)
+    ├── Read-only root filesystem + tmpfs /tmp + tmpfs /sandbox
+    ├── Capabilities: ALL dropped  (+ SYS_PTRACE for CUDA)
+    ├── Seccomp: seccomp-judge.json  (or seccomp-judge-cuda.json)
+    └── Runs: g++ compile + ./solution < /sandbox/input.txt  (single sh -c)
 ```
 
-**Critical DinD subtlety:** When the judge calls `docker run -v /app/apps/judge/tmp/xyz:/work ...`, the Docker daemon receives this volume path and resolves it on the **host filesystem**, not inside the judge container. This means the path `/app/apps/judge/tmp/xyz` must exist on the host, not just inside the judge container. The `JUDGE_HOST_TMP_DIR` environment variable provides the mapping:
+**Socket proxy security model:** The proxy allows only the API calls the judge needs — container lifecycle (create, start, stop, wait, logs, rm) and POST requests. It blocks `exec`, image management, build, registry access, swarm operations, and all other Docker API surface. This limits the blast radius if the judge process is compromised: an attacker cannot use the Docker API to pull images, run privileged containers, or access volumes.
+
+**No host directory mounts:** Source code and input are copied into the sandbox container's tmpfs using `docker cp`, not via a `-v` volume mount. This eliminates the `JUDGE_HOST_TMP_DIR` indirection that was needed to reconcile judge-container paths with host-daemon paths.
+
+### 6.2 Sandbox container lifecycle
+
+Each test case within a submission gets its own isolated sandbox container. Source code and input are transferred via `docker cp` into the container's tmpfs — no host directory is mounted:
 
 ```
-JUDGE_HOST_TMP_DIR=/actual/host/path/to/apps/judge/tmp
+Step 1 — CREATE CONTAINER (stopped)
+  docker create --name lc-judge-{submissionId}-{tcIdx}
+    --network none --memory {limit} --cpus 0.5 --pids-limit 64
+    --user 65534:65534 --read-only
+    --tmpfs /tmp:size=64m,mode=1777
+    --tmpfs /sandbox:size=32m,mode=0777
+    --cap-drop ALL [--cap-add SYS_PTRACE for CUDA]
+    --security-opt no-new-privileges:true
+    --security-opt seccomp=/etc/judge/seccomp-judge[-cuda].json
+    --label leetscuda-judge=1
+    image /bin/sh -c "set -e && {compiler} ... && /sandbox/solution < /sandbox/input.txt"
+
+Step 2 — COPY SOURCE FILES (via docker cp — no volume mount)
+  write code  → /tmp/{id}-source  (judge's own tmpfs)
+  docker cp /tmp/{id}-source  {container}:/sandbox/solution.{cpp|cu}
+  write input → /tmp/{id}-input
+  docker cp /tmp/{id}-input   {container}:/sandbox/input.txt
+  delete judge-side temp files
+
+Step 3 — START CONTAINER
+  docker start {container}
+  startTime = performance.now()
+
+Step 4 — WAIT FOR EXIT (with timeout)
+  Promise.race([
+    docker wait {container}  → exit code printed to stdout
+    sleep(timeoutMs)         → 'timeout'
+  ])
+
+Step 5 — STOP ON TIMEOUT (if fired)
+  docker stop --time 5 {container}
+  return { exitCode: 124, timedOut: true }
+
+Step 6 — CAPTURE OUTPUT
+  docker logs {container}  → { stdout, stderr }
+
+Step 7 — CLEANUP (always, in finally block)
+  docker rm -f {container}
+  unlink judge-side temp files (best-effort)
 ```
 
-When set, the sandbox uses this host-side path for volume mounts:
-
-```typescript
-const hostTmpDir = env.hostTmpDir
-  ? path.join(env.hostTmpDir, opts.submissionId)
-  : tmpDir
-// hostTmpDir is used in -v flag; tmpDir is used for file writes inside judge container
-```
-
-If `JUDGE_HOST_TMP_DIR` is not set, the judge assumes it is running directly on the host (not inside Docker) and uses the container-internal path.
-
-### 6.2 Temp directory lifecycle
-
-Each test case within a submission gets its own isolated temp directory, using `{submissionId}-{testCaseIndex}` as the directory name to avoid conflicts when test cases run sequentially:
-
-```
-Step 1 — CREATE
-  tmpBase = /app/apps/judge/tmp          (relative to worker.ts, resolved at runtime)
-  tmpDir  = tmpBase/{submissionId}-{tcIdx}
-  fs.mkdirSync(tmpDir, { recursive: true })
-
-Step 2 — WRITE SOURCE FILE
-  /app/apps/judge/tmp/{submissionId}-{tcIdx}/solution.cpp   (C++ problems)
-  /app/apps/judge/tmp/{submissionId}-{tcIdx}/solution.cu    (CUDA problems)
-  Content: job.code + '\n' + job.harness  (concatenated before write)
-
-Step 3 — MOUNT INTO SANDBOX CONTAINER
-  docker run -v {hostTmpDir}/{submissionId}-{tcIdx}:/work ...
-  Container sees the source file at /work/solution.cpp (or .cu)
-  Container writes compiled binary to /work/solution
-
-Step 4 — COMPILE (inside container, separate docker run invocation)
-  g++ -std=c++{standard} -O2 -o /work/solution /work/solution.cpp
-  OR
-  nvcc -std=c++{standard} -arch={computeCap} -O2 -o /work/solution /work/solution.cu
-  Compile errors: exit code ≠ 0 → return RUNTIME_ERROR with stderr
-
-Step 5 — RUN (inside container, named container for timeout control)
-  /work/solution  (stdin receives test case input, stdout is captured)
-  Runtime is measured: start = Date.now(), end = Date.now()
-
-Step 6 — CLEANUP (always, in finally block — even if compile/run throws)
-  fs.rmSync(tmpDir, { recursive: true, force: true })
-  If cleanup fails, the error is swallowed (best-effort)
-```
-
-The `finally` block ensures cleanup happens even if:
-- The compile step crashes the judge process
-- The Docker spawn throws an exception
-- The judge receives SIGTERM mid-execution
-
-If cleanup fails (e.g. permission error, disk full), the error is silently ignored. The orphan container cleanup on next startup (§6.7) handles container leftovers; temp directories that survive a crash are cleaned on next restart or by a cron job.
+**Compile + run in one container:** The compilation and execution happen inside a single container via a `sh -c` script using `set -e`. If compilation fails, the shell exits with the compiler's exit code and the run step is skipped. Compile errors appear in the container's stderr; solution output appears in stdout.
 
 ### 6.3 Docker run flags — security rationale
 
-Each sandbox container is launched with a fixed set of flags. Here is the complete set with rationale:
+Each sandbox container is created with a fixed set of flags. Here is the complete set with rationale:
 
 | Flag | C++ value | CUDA value | Purpose |
 |------|-----------|------------|---------|
-| `--rm` | ✓ | ✓ | Auto-remove container filesystem after exit. Prevents disk accumulation from thousands of submissions. |
 | `--network none` | ✓ | ✓ | Disable all network interfaces inside the container. User code cannot exfiltrate data, call external APIs, or initiate network connections of any kind. This is the primary data exfiltration defence. |
 | `--memory 256m` | ✓ | — | Hard memory limit. The kernel OOM-kills the process if it exceeds this. Prevents a submission from consuming all host RAM. |
 | `--memory 512m` | — | ✓ | CUDA programs need more memory for CUDA runtime initialization and GPU buffers. |
-| `--cpus 0.5` | ✓ | — | Limits the container to 50% of one CPU core. Prevents CPU monopolization on multi-tenant judge nodes. Not applied to CUDA containers because the interesting work happens on the GPU, not the CPU. |
-| `--ulimit nproc=64` | ✓ | — | Limits the number of processes the container can spawn. Prevents fork bombs: a fork bomb that doubles processes until system resources are exhausted. With 64 as the ceiling, the impact is bounded. |
-| `--ulimit nproc=128` | — | ✓ | CUDA runtime spawns more internal threads, so the limit is raised for CUDA containers. |
+| `--cpus 0.5` | ✓ | ✓ | Limits the container to 50% of one CPU core. Prevents CPU monopolization on multi-tenant judge nodes. |
+| `--pids-limit 64` | ✓ | ✓ | Kernel cgroup limit on the total number of processes/threads the container can create. Unlike `--ulimit nproc`, this cannot be overridden from inside the container even with elevated privileges. Prevents fork bombs. |
+| `--user 65534:65534` | ✓ | ✓ | Run all container processes as `nobody:nogroup` (UID/GID 65534). Ensures the user code is never root, even if container isolation is partially broken. |
+| `--read-only` | ✓ | ✓ | Mount the container's root filesystem as read-only. User code cannot modify the image layers or install tools. Combined with `--tmpfs` for writable scratch space. |
+| `--tmpfs /tmp:size=64m,mode=1777` | ✓ | ✓ | Writable tmpfs for runtime temp files (stays in RAM, auto-cleared on container exit). |
+| `--tmpfs /sandbox:size=32m,mode=0777` | ✓ | ✓ | Writable tmpfs where source code and compiled binary live. Populated via `docker cp` before the container starts. |
+| `--cap-drop ALL` | ✓ | ✓ | Drop all Linux capabilities. Without capabilities, the process cannot modify network config, mount filesystems, load kernel modules, or perform any privileged operation. |
+| `--cap-add SYS_PTRACE` | — | ✓ | CUDA driver requires `ptrace` for some internal operations (device initialization, debugging hooks). Added back only for CUDA containers. |
+| `--security-opt no-new-privileges:true` | ✓ | ✓ | Prevents any process from gaining new privileges via `setuid` binaries or `execve`. The container process can never escalate beyond its starting privilege level. |
+| `--security-opt seccomp=...` | `seccomp-judge.json` | `seccomp-judge-cuda.json` | Restricts system calls to those needed for C++/CUDA execution. Blocks dangerous syscalls: `ptrace` (cpp only), `bpf`, `mount`, `unshare`, `kexec_load`, `init_module`, and many others. The CUDA profile additionally allows `ptrace` and `perf_event_open`. |
 | `--label leetscuda-judge=1` | ✓ | ✓ | Tags every judge-spawned container. Used by the orphan cleanup routine (§6.7) to identify and stop leftover containers after a crash. |
 | `--gpus device=0` | — | ✓ | Attaches the first GPU (device 0) to the container. Without this, `cudaMalloc` returns `cudaErrorNoDevice`. Requires `nvidia-container-toolkit` on the host. |
-| `--name lc-judge-{submissionId}` | ✓ (run phase) | ✓ (run phase) | Names the run-phase container so the timeout handler can issue `docker stop lc-judge-{submissionId}` by name without needing to track a container ID. |
-| `--stop-timeout` | handled via `docker stop --time 5` | same | See §6.6 for the two-phase kill sequence. |
-
-Compile-phase containers are not named (they use `--rm` and exit quickly with a 30-second hard timeout via SIGKILL from `runProcess`). Only run-phase containers are named for timeout control.
+| `--name lc-judge-{submissionId}` | ✓ | ✓ | Names the container so the timeout handler can issue `docker stop lc-judge-{submissionId}` by name without tracking a container ID. |
 
 ### 6.4 Compilation step
 
@@ -1352,6 +1356,7 @@ A CPU judge handles C++ problems only.
 
 # 2. Pre-pull Docker image on the judge machine
 docker pull gcc:14
+docker pull ghcr.io/tecnativa/docker-socket-proxy:latest
 
 # 3. Configure judge environment
 cp apps/judge/.env.example apps/judge/.env
@@ -1359,25 +1364,24 @@ cp apps/judge/.env.example apps/judge/.env
 #   JUDGE_API_URL=https://www.leetscuda.com
 #   JUDGE_API_TOKEN=jt_...your-token...
 #   JUDGE_CAPABILITIES=cpp
-#   JUDGE_HOST_TMP_DIR=/absolute/host/path/to/apps/judge/tmp
+#   (DOCKER_HOST is set automatically by docker-compose.judge.yml)
 
 # 4. Build the judge image
 docker build -t leetscuda-judge -f apps/judge/Dockerfile .
 
-# 5. Run the judge
-docker run \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /absolute/host/path/to/apps/judge/tmp:/app/apps/judge/tmp \
-  --env-file apps/judge/.env \
-  --restart unless-stopped \
-  leetscuda-judge
+# 5. Start judge with socket proxy (recommended — hardened deployment)
+docker compose -f apps/judge/docker-compose.judge.yml up -d
+
+# Check logs
+docker compose -f apps/judge/docker-compose.judge.yml logs -f judge
+
+# Stop
+docker compose -f apps/judge/docker-compose.judge.yml down
 ```
 
-The double volume mount is critical:
-- `-v /var/run/docker.sock:/var/run/docker.sock` — allows the judge to spawn sandbox containers via the host Docker daemon.
-- `-v /absolute/host/path/to/apps/judge/tmp:/app/apps/judge/tmp` — ensures that the temp directories the judge creates inside the container are accessible on the host filesystem (because sandbox containers mount from the host path, not the judge container path).
-
-`JUDGE_HOST_TMP_DIR` must be set to the same host path used in the second `-v` mount.
+The `docker-compose.judge.yml` starts two services:
+- `socket-proxy` — mounts the host Docker socket read-only, exposes a filtered API on `tcp://socket-proxy:2375`
+- `judge` — the judge process, configured with `DOCKER_HOST=tcp://socket-proxy:2375`, no socket mount, read-only filesystem
 
 ### 11.2 GPU judge setup
 
@@ -1394,25 +1398,20 @@ A GPU judge handles both C++ and CUDA problems. Additional prerequisites:
 # 2. Pre-pull Docker images
 docker pull gcc:14
 docker pull nvidia/cuda:13.0.0-devel-ubuntu24.04
+docker pull ghcr.io/tecnativa/docker-socket-proxy:latest
 
 # 3. Configure
-#   JUDGE_CAPABILITIES=cpp,cuda:13.0
+#   JUDGE_CAPABILITIES=cpp,cuda:13.0:sm_120
 
 # 4. Verify GPU is accessible
 docker run --rm --gpus device=0 nvidia/cuda:13.0.0-devel-ubuntu24.04 nvidia-smi
 # Should print GPU information
 
-# 5. Run the judge
-docker run \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /absolute/host/path/to/apps/judge/tmp:/app/apps/judge/tmp \
-  --gpus all \
-  --env-file apps/judge/.env \
-  --restart unless-stopped \
-  leetscuda-judge
+# 5. Start judge with socket proxy
+docker compose -f apps/judge/docker-compose.judge.yml up -d
 ```
 
-Note: `--gpus all` on the judge container itself is only needed if `runDirect()` fallback is used. For the Docker-based sandbox (normal production mode), the judge container does not need GPU access — only the spawned sandbox containers do, and those get `--gpus device=0` when spawned.
+The judge container itself does not need GPU access — only the spawned sandbox containers get `--gpus device=0` when created. The socket proxy forwards the CUDA container create/start calls to the host daemon, which has access to the GPU through `nvidia-container-toolkit`.
 
 ### 11.3 K8s judge setup
 
@@ -1445,18 +1444,22 @@ RUN printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\n' > /tmp/t
 
 This causes kubeconform to download and cache its schema bundle during `docker build`, so the runtime container starts up instantly with no network schema downloads.
 
-### 11.4 DinD host path mapping
+### 11.4 Source code delivery — docker cp
 
-When the judge runs inside Docker and spawns sibling sandbox containers, the temp directory path must be mapped correctly. The judge writes files to its internal path `/app/apps/judge/tmp/{id}/solution.cpp`. It then tells Docker to mount `{JUDGE_HOST_TMP_DIR}/{id}` into the sandbox container. If `JUDGE_HOST_TMP_DIR` is `/host/repo/apps/judge/tmp`, then:
+Source code and input are transferred into the sandbox container using `docker cp` instead of volume mounts. This eliminates the `JUDGE_HOST_TMP_DIR` path-mapping problem that existed with the old DinD approach.
 
 ```
-Judge container internal path:  /app/apps/judge/tmp/abc123/solution.cpp
-Host filesystem path:           /host/repo/apps/judge/tmp/abc123/solution.cpp
-Sandbox container mount:        /host/repo/apps/judge/tmp/abc123 → /work
-Sandbox container sees:         /work/solution.cpp   ✓
+Judge writes code to:   /tmp/{submissionId}-source   (judge's own tmpfs, in RAM)
+docker cp transfers to: {container}:/sandbox/solution.cpp  (container's tmpfs)
+Judge deletes:          /tmp/{submissionId}-source   (immediately after cp)
+
+Same for input:
+Judge writes to:        /tmp/{submissionId}-input
+docker cp transfers to: {container}:/sandbox/input.txt
+Judge deletes:          /tmp/{submissionId}-input
 ```
 
-If `JUDGE_HOST_TMP_DIR` is wrong, the sandbox container's `/work` directory will be empty and compilation will fail with "No such file or directory."
+The `/sandbox` directory inside the container is a tmpfs (in RAM), auto-cleared when the container is removed. No host filesystem path is required.
 
 ### 11.5 Revoking a judge node
 
@@ -1482,30 +1485,35 @@ The next poll request from that judge returns 401, and the judge process exits. 
 
 | Threat | Mitigations |
 |--------|-------------|
-| Malicious code reading host filesystem | Docker volume mount provides read-write access only to `/work` (the temp dir). No other host directories are mounted. |
+| Malicious code reading host filesystem | `--read-only` root filesystem. No host directories mounted. Source code delivered via `docker cp` to container tmpfs only. |
 | Malicious code exfiltrating data via network | `--network none` disables all network interfaces inside the container. No TCP, UDP, or Unix socket connections to external systems are possible. |
-| Fork bomb (exponential process spawning) | `--ulimit nproc=64` (cpp) / `--ulimit nproc=128` (cuda) caps total process count. A fork bomb is stopped before it exhausts the kernel process table. |
+| Fork bomb (exponential process spawning) | `--pids-limit 64` enforced by kernel cgroup — cannot be overridden from inside the container even with elevated privileges. |
 | Memory exhaustion | `--memory 256m` / `--memory 512m` hard OOM limit. Process is killed if it exceeds the limit. |
 | CPU monopolization | `--cpus 0.5` limits CPU share. Timeout kills the process at `timeoutMs` regardless. |
-| Infinite loop | `timeoutMs` (default 30 s) + two-phase SIGTERM/SIGKILL ensures the process is killed. |
+| Infinite loop | `timeoutMs` (default 30 s) + `docker stop --time 5` SIGTERM/SIGKILL ensures the process is killed. |
 | Infinite output | Output is capped at 64 KB per stream. Excess output causes SIGKILL. |
+| Privilege escalation via setuid / execve | `--security-opt no-new-privileges:true` prevents any process from gaining new privileges. |
+| Dangerous syscall invocation | Seccomp profile blocks `bpf`, `mount`, `unshare`, `kexec_load`, `init_module`, `ptrace` (cpp), and many others. |
+| Capability abuse | `--cap-drop ALL` removes all Linux capabilities. CUDA adds back only `SYS_PTRACE`. |
+| Container escape via writable Docker socket | Mitigated by socket proxy. The judge has no direct socket access. The proxy allowlist blocks exec, image management, build, and all other high-risk API calls. See §12.2. |
 | Compromised judge token | Per-judge tokens allow instant revocation. A compromised token can be disabled without affecting other judges. |
 | Solution extraction | Solution section is parsed server-side in `loadProblemContent()` but is never included in the job payload or API response. |
 | Replay attacks | Each job's `submissionId` is a cuid (globally unique). The result endpoint writes to the specific submission row — replaying the same result is idempotent (overwrites with same data). |
-| Container escape via writable Docker socket | See §12.2. |
 | GPU memory snooping | See §12.2. |
 
 ### 12.2 Known limitations
 
 The following are known security limitations that have not been fully mitigated:
 
-**Docker socket privilege escalation:** The judge container is granted access to the host Docker socket (`/var/run/docker.sock`). This socket provides root-equivalent access to the Docker daemon. A sophisticated attacker who achieves code execution inside a *sandbox container* (not the judge container) would need to first escape the sandbox container's isolation (which requires exploiting a Docker vulnerability), then interact with the judge process or the Docker socket. However, the judge container itself has the Docker socket mounted — if the judge process is itself compromised (e.g. via a vulnerability in Node.js or the judge code), an attacker could use the socket to spawn privileged containers with full host filesystem access.
+**Docker socket access (residual risk):** The socket proxy significantly reduces the Docker API surface exposed to the judge. The judge can no longer spawn privileged containers, pull images, or access the full Docker API. However, the `CONTAINERS` permission grants the ability to create and start containers. A compromised judge process could create and start a malicious container (though it cannot use `--privileged` or arbitrary volume mounts through the proxy). The proxy also blocks `EXEC` (no `docker exec` into running containers) and `IMAGES` (no image pulls/builds).
 
-Mitigation: run the judge machine in an isolated network segment with no connectivity to internal infrastructure (no access to the production database, no access to internal services). Treat the judge machine as untrusted infrastructure.
+Recommendation: run the judge machine in an isolated network segment with no connectivity to internal infrastructure. Treat the judge machine as untrusted infrastructure even with the proxy in place.
 
 **GPU memory isolation:** CUDA does not provide strong memory isolation between containers sharing a physical GPU. A malicious CUDA kernel could potentially read GPU memory from previous executions if that memory has not been zeroed. This is analogous to DRAM cold boot attacks. NVIDIA's MIG (Multi-Instance GPU) technology provides hardware-level isolation on A100/H100, but requires specific hardware and configuration.
 
-Mitigation: use MIG where available; clear GPU memory between submissions (not currently implemented); or dedicate one GPU per judge with periodic resets.
+GPU memory clearing between jobs is not currently implemented — the judge logs a warning (`WARNING: GPU memory not cleared between jobs`) after each CUDA submission.
+
+Mitigation: use MIG where available; or dedicate one GPU per judge with periodic resets.
 
 **Timing side channels:** The reported `runtimeMs` is observable by the submitting user. A sufficiently careful attacker could submit variations of code and observe timing differences to infer information about test case content (e.g. input size, whether an early-exit condition is triggered). This is a low-risk attack for a coding platform — test case inputs are typically visible in the problem description anyway — but worth noting for problems with secret test cases.
 
