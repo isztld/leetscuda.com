@@ -28,8 +28,9 @@ services:
       VOLUMES: 0         # no volumes
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - judge-internal
+    # Bind to loopback only — reachable from the judge via host networking
+    ports:
+      - "127.0.0.1:2375:2375"
     # Socket proxy itself should be isolated
     read_only: true
     tmpfs:
@@ -42,21 +43,17 @@ services:
     depends_on:
       - socket-proxy
     environment:
-      DOCKER_HOST: tcp://socket-proxy:2375
+      # Proxy is bound to 127.0.0.1:2375 on the host, reachable via host networking
+      DOCKER_HOST: tcp://127.0.0.1:2375
     env_file:
       - .env
-    networks:
-      - judge-internal   # reaches socket-proxy
-      - judge-external   # outbound HTTPS to the web app
+    # Host networking: the judge shares the host's network stack.
+    # localhost inside the container IS the host's localhost — so
+    # JUDGE_API_URL=http://localhost:3001 works for local dev.
+    # The Docker socket is still proxied — no direct socket access.
+    network_mode: host
     # Judge container has NO docker socket mount
-    # It communicates with the proxy over the internal network only
     read_only: true
     tmpfs:
       - /tmp:size=512m    # for temp files during job processing
 
-networks:
-  judge-internal:
-    driver: bridge
-    internal: true    # no external access — socket-proxy only
-  judge-external:
-    driver: bridge    # default bridge — judge can reach the internet for API polling
