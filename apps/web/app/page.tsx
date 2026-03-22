@@ -5,7 +5,7 @@ import stats from '@/public/stats.json'
 
 const tracks = [
   {
-    slug: 'cuda',
+    slug: 'cuda-core',
     title: 'CUDA & GPU Programming',
     color: '#7C3AED',
     description:

@@ -16,7 +16,7 @@ const columns = [
       { label: 'Contributing', href: '/contributing' },
       { label: 'FAQ', href: '/faq' },
       { label: 'GitHub ↗', href: 'https://github.com/isztld/leetscuda.com', external: true },
-      { label: 'Discord ↗', href: '#', external: true },
+      //{ label: 'Discord ↗', href: '#', external: true },
     ],
   },
   {
@@ -25,7 +25,7 @@ const columns = [
       { label: 'About', href: '/about' },
       { label: 'Contact', href: '/contact' },
       { label: "What's Coming", href: '/whats-coming' },
-      { label: 'Changelog', href: '#' },
+      //{ label: 'Changelog', href: '#' },
     ],
   },
   {
@@ -86,7 +86,7 @@ export function Footer() {
 
         {/* Bottom bar */}
         <div className="mt-10 pt-8 border-t border-slate-800 text-sm text-slate-500">
-          © 2026 leetscuda.com · Built for the interview nobody warns you about · Germany
+          © 2026 leetscuda.com · Built for the interview nobody warns you about · From Switzerland with ♥
         </div>
       </div>
     </footer>
