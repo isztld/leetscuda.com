@@ -1130,13 +1130,34 @@ export function ProblemDetail({
                 )
               ) : (
                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-                  {submissionStatus.errorMsg && (
-                    <div className="bg-red-950/10 border border-red-200 rounded p-3">
-                      <p className="text-xs text-red-700 font-mono whitespace-pre-wrap">
-                        {submissionStatus.errorMsg}
-                      </p>
-                    </div>
-                  )}
+                  {submissionStatus.errorMsg && (() => {
+                    const isJudgeCrash =
+                      submissionStatus.errorMsg.includes('Judge') &&
+                      submissionStatus.errorMsg.includes('resubmit')
+                    if (isJudgeCrash) {
+                      return (
+                        <div className="bg-amber-50 border border-amber-200 rounded p-3 space-y-2">
+                          <p className="text-sm text-amber-800">
+                            The judge was unavailable during your submission. Your daily submission count has not been affected.
+                          </p>
+                          <button
+                            onClick={handleSubmit}
+                            disabled={isSubmitting}
+                            className="text-xs font-medium text-amber-700 underline hover:text-amber-900 disabled:opacity-50"
+                          >
+                            Resubmit
+                          </button>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div className="bg-red-950/10 border border-red-200 rounded p-3">
+                        <p className="text-xs text-red-700 font-mono whitespace-pre-wrap">
+                          {submissionStatus.errorMsg}
+                        </p>
+                      </div>
+                    )
+                  })()}
                   {submissionStatus.status === 'CANCELLED' && (
                     <p className="text-sm text-slate-500">Submission cancelled.</p>
                   )}

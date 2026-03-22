@@ -79,6 +79,24 @@ export async function pollForJob(): Promise<JudgeJob | null> {
   return parsed.data
 }
 
+export async function recoverStuckSubmissions(): Promise<number> {
+  try {
+    const res = await fetch(`${env.JUDGE_API_URL}/api/judge/recover`, {
+      method: 'POST',
+      headers: BASE_HEADERS,
+    })
+    if (res.status === 401) {
+      console.log('[judge] Authentication failed during recovery — check JUDGE_API_TOKEN')
+      process.exit(1)
+    }
+    const data = await res.json() as { recovered?: number }
+    return data.recovered ?? 0
+  } catch (err) {
+    console.log(`[judge] Recovery call failed: ${err} — continuing anyway`)
+    return 0
+  }
+}
+
 export async function submitResult(result: JudgeResult): Promise<void> {
   let res: Response
   try {

@@ -1,12 +1,14 @@
 import '@/lib/env'
 import { initTRPC, TRPCError } from '@trpc/server'
 import { auth } from '@/lib/auth'
+import { ensureWatchdogStarted } from '@/lib/startup'
 
 /**
  * Context created per request. Reads the NextAuth session so procedures
  * can enforce authentication without re-fetching the session themselves.
  */
 export const createContext = async () => {
+  ensureWatchdogStarted()
   const session = await auth()
   return { session }
 }

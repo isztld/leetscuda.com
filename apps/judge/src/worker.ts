@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import './env.js'
 import { execSync } from 'child_process'
-import { pollForJob, submitResult } from './api-client.js'
+import { pollForJob, submitResult, recoverStuckSubmissions } from './api-client.js'
 import { runInSandbox, verifyDockerProxy } from './sandbox.js'
 import { verify } from './verifier.js'
 import { validateK8sManifest } from './k8s-validator.js'
@@ -125,6 +125,12 @@ async function main() {
   if (env.parsedCapabilities.some((c) => c.runtime === 'cpp' || c.runtime === 'cuda')) {
     await verifyDockerProxy()
     await cleanupOrphanedContainers()
+  }
+
+  // Mark any submissions left RUNNING from the previous crash as RUNTIME_ERROR
+  const recovered = await recoverStuckSubmissions()
+  if (recovered > 0) {
+    console.log(`[judge] Startup recovery: marked ${recovered} stuck RUNNING submission(s) as RUNTIME_ERROR`)
   }
 
   process.on('SIGINT', () => {
