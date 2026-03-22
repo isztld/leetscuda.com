@@ -10,14 +10,14 @@ export const ProblemFrontmatterSchema = z
     runtime: z.enum(['cpp', 'cuda', 'k8s']),
     cpp_standard: z.enum(['14', '17', '20', '23']).optional(),
     k8s_multi_doc: z.boolean().default(false),
-    cuda_version: z.string().optional(),
-    compute_cap: z.string().optional(),
+    cuda_min_version: z.string().optional(),
+    compute_min_cap: z.string().optional(),
     tags: z.array(z.string()).default([]),
     status: z.enum(['draft', 'published']),
     author: z.string().default('community'),
   })
-  .refine((data) => data.runtime !== 'cuda' || (!!data.cuda_version && !!data.compute_cap), {
-    message: 'cuda_version and compute_cap are required when runtime is cuda',
+  .refine((data) => data.runtime !== 'cuda' || (!!data.cuda_min_version && !!data.compute_min_cap), {
+    message: 'cuda_min_version and compute_min_cap are required when runtime is cuda',
   })
   .refine((data) => data.runtime === 'k8s' || !!data.cpp_standard, {
     message: 'cpp_standard is required when runtime is not k8s',

@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client'
 import { authenticateJudge } from '@/lib/judge-auth'
 import { prisma } from '@/lib/prisma'
 import { updateStreak } from '@/lib/streak'
-import { toCppStandard, toCudaVersion, toComputeCap } from '@/lib/runtime-maps'
+import { toCppStandard } from '@/lib/runtime-maps'
 
 const SubmissionTestResultSchema = z.object({
   index: z.number().int().nonnegative(),
@@ -22,8 +22,6 @@ const ResultSchema = z.object({
   errorMsg: z.string().optional(),
   testResults: z.array(SubmissionTestResultSchema).optional(),
   cppStandard: z.string().optional(),
-  cudaVersion: z.string().optional(),
-  computeCap: z.string().optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -60,8 +58,6 @@ export async function POST(req: NextRequest) {
         ? (result.testResults as unknown as Prisma.InputJsonValue)
         : Prisma.JsonNull,
       cppStandard: toCppStandard(result.cppStandard),
-      cudaVersion: toCudaVersion(result.cudaVersion),
-      computeCap: toComputeCap(result.computeCap),
     },
   })
 

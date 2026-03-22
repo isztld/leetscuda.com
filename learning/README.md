@@ -54,8 +54,8 @@ difficulty: easy               # easy | medium | hard
 xp: 100
 runtime: cpp                   # cpp | cuda | k8s
 cpp_standard: "17"             # "14" | "17" | "20" | "23"
-cuda_version: "12.6"           # only for runtime: cuda
-compute_cap: "sm_120"          # only for runtime: cuda
+cuda_min_version: "11.0"       # minimum CUDA toolkit version required (only for runtime: cuda)
+compute_min_cap: "sm_60"       # minimum compute capability required (only for runtime: cuda)
 k8s_multi_doc: false           # only for runtime: k8s
 tags:
   - tag1
@@ -64,6 +64,26 @@ status: published              # draft | published
 author: your-github-username
 ---
 ```
+
+### CUDA problems — minimum requirements
+
+`cuda_min_version` is the oldest CUDA toolkit that can compile and run the problem. `compute_min_cap` is the oldest GPU SM architecture that can execute it. A judge with a higher version/SM than these minimums can serve the problem. The `-arch=` flag passed to `nvcc` is always the judge's own declared SM, not the problem's minimum.
+
+| `cuda_min_version` | Meaning |
+|--------------------|---------|
+| `"11.0"` | Basic CUDA — runs on any modern GPU |
+| `"12.0"` | Requires Ampere-era features (e.g. WMMA API improvements) |
+| `"12.3"` | Requires Hopper TMA / WGMMA |
+| `"13.0"` | Requires Blackwell-specific features |
+
+| `compute_min_cap` | SM architecture | Notable features |
+|-------------------|-----------------|------------------|
+| `"sm_60"` | Pascal | Safe baseline for all basic CUDA |
+| `"sm_70"` | Volta | Tensor Cores (WMMA API) |
+| `"sm_80"` | Ampere | BF16, async copies, improved tensor cores |
+| `"sm_90"` | Hopper | TMA, WGMMA, FP8 |
+| `"sm_100"` | Blackwell | NVLink 5, FP4, transformer engine |
+| `"sm_120"` | Blackwell B200/B100 | Full Blackwell feature set |
 
 ### Problem body sections
 
@@ -198,7 +218,7 @@ Rules:
 ## Content standards
 
 - Problems must have real test cases with correct expected outputs
-- CUDA problems must compile cleanly with `nvcc -arch=sm_86`
+- CUDA problems must compile cleanly with `nvcc -arch=` matching the problem's `compute_min_cap`
 - The `dry-run` check validates your manifest against the official Kubernetes
   JSON schemas using `kubeconform` in strict offline mode. No cluster required.
 - Theory content must be technically accurate — cite sources

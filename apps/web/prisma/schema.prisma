@@ -40,15 +40,6 @@ enum CppStandard {
   CPP23
 }
 
-enum CudaVersion {
-  CUDA_12_6
-  CUDA_13_0
-}
-
-enum ComputeCap {
-  SM_86
-  SM_120
-}
 
 enum SubmissionStatus {
   PENDING
@@ -158,8 +149,8 @@ model Problem {
   xpReward         Int              @default(100)
   executionRuntime ExecutionRuntime @default(CPP)
   cppStandard      CppStandard      @default(CPP17)
-  cudaVersion      CudaVersion?
-  computeCap       ComputeCap?
+  cudaMinVersion   String?
+  computeMinCap    String?
   submissions      Submission[]
   comments         Comment[]
   progress         UserProgress[]
@@ -179,8 +170,6 @@ model Submission {
   testResults Json?
   submittedAt DateTime         @default(now())
   cppStandard CppStandard?
-  cudaVersion CudaVersion?
-  computeCap  ComputeCap?
 }
 
 model UserProgress {

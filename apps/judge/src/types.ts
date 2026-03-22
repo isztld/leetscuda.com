@@ -23,8 +23,8 @@ export const CppJudgeJobSchema = z.object({
   language: z.literal('cpp'),
   runtime: z.enum(['cpp', 'cuda']),
   cppStandard: z.enum(['14', '17', '20', '23']),
-  cudaVersion: z.string().optional(),
-  computeCap: z.string().optional(),
+  cudaMinVersion: z.string().optional(),
+  computeMinCap: z.string().optional(),
   testCases: z.array(TestCaseSchema),
   timeoutMs: z.number().int().positive(),
 })
@@ -67,6 +67,4 @@ export type JudgeResult = {
   errorMsg?: string
   testResults?: SubmissionTestResult[]
   cppStandard?: string
-  cudaVersion?: string
-  computeCap?: string
 }

@@ -9,7 +9,7 @@
 import fs from 'fs'
 import fsPromises from 'fs/promises'
 import path from 'path'
-import { PrismaClient, Difficulty, ProblemStatus, ExecutionRuntime, CppStandard, CudaVersion, ComputeCap } from '@prisma/client'
+import { PrismaClient, Difficulty, ProblemStatus, ExecutionRuntime, CppStandard } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { scanProblems } from '../lib/sync/scan-problems'
 import type { ProblemFrontmatter } from '../lib/sync/validate-frontmatter'
@@ -52,22 +52,6 @@ function mapCppStandard(s: ProblemFrontmatter['cpp_standard']): CppStandard {
     '23': CppStandard.CPP23,
   }
   return (s ? map[s] : undefined) ?? CppStandard.CPP17
-}
-
-function mapCudaVersion(v: string): CudaVersion | null {
-  const map: Record<string, CudaVersion> = {
-    '12.6': CudaVersion.CUDA_12_6,
-    '13.0': CudaVersion.CUDA_13_0,
-  }
-  return map[v] ?? null
-}
-
-function mapComputeCap(c: string): ComputeCap | null {
-  const map: Record<string, ComputeCap> = {
-    'sm_86': ComputeCap.SM_86,
-    'sm_120': ComputeCap.SM_120,
-  }
-  return map[c] ?? null
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -132,9 +116,6 @@ async function main() {
         continue
       }
 
-      const cudaVersion = fm.cuda_version ? mapCudaVersion(fm.cuda_version) : null
-      const computeCap = fm.compute_cap ? mapComputeCap(fm.compute_cap) : null
-
       const data = {
         title:            fm.title,
         difficulty:       mapDifficulty(fm.difficulty),
@@ -144,8 +125,8 @@ async function main() {
         xpReward:         fm.xp,
         executionRuntime: mapRuntime(fm.runtime),
         cppStandard:      mapCppStandard(fm.cpp_standard),
-        cudaVersion:      cudaVersion ?? undefined,
-        computeCap:       computeCap ?? undefined,
+        cudaMinVersion:   fm.cuda_min_version ?? null,
+        computeMinCap:    fm.compute_min_cap ?? null,
       }
 
       await prisma.problem.upsert({

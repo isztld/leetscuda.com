@@ -79,7 +79,7 @@ The leetscuda judge is a standalone Node.js worker process that evaluates user c
 ### 1.1 Design principles
 
 - **Pull-based polling** — the judge initiates all communication. It long-polls the web app's `/api/judge/poll` endpoint for work. The judge machine never needs an inbound port opened, no reverse proxy, no webhook delivery. This makes it trivial to run behind NAT or in an ephemeral cloud VM.
-- **Capability-aware routing** — each judge token declares what it can run (`cpp`, `cuda:13.0`, `k8s`). The poll endpoint uses those capabilities to BLPOP from only the queues that token can service. A CPU-only judge never receives CUDA jobs.
+- **Capability-aware routing** — each judge token declares what it can run using structured capability strings (`cpp`, `cuda:13.0:sm_120`, `k8s`). All CUDA jobs go to a single `judge:queue:cuda` queue; the poll endpoint checks per-job compatibility against `cuda_min_version` and `compute_min_cap`. Jobs that exceed the judge's capability are re-queued for a more capable judge.
 - **Defense in depth** — security is layered: bearer-token authentication, SHA-256 hashed token storage, timing-safe comparison, Docker network isolation, memory/CPU limits, ulimits, output size caps, and a secondary code-size check inside the judge itself.
 - **Stateless judge** — the judge holds no local database, no Redis connection, and no persistent state between jobs. All state (submission records, user progress, XP) lives in the web app's Postgres database. The judge is disposable: kill it, restart it, and it resumes with a fresh orphan-container cleanup pass.
 
@@ -88,7 +88,7 @@ The leetscuda judge is a standalone Node.js worker process that evaluates user c
 | Runtime | Queue | Docker image | Use case |
 |---------|-------|-------------|----------|
 | `cpp` | `judge:queue:cpp` | `gcc:14` | C++ problems (compiled with g++) |
-| `cuda` | `judge:queue:cuda:{version}` (e.g. `judge:queue:cuda:13.0`) | `nvidia/cuda:13.0.0-devel-ubuntu24.04` | GPU kernel problems (compiled with nvcc) |
+| `cuda` | `judge:queue:cuda` | `nvidia/cuda:{version}-devel-...` (selected by judge's declared CUDA version) | GPU kernel problems (compiled with nvcc) |
 | `k8s` | `judge:queue:k8s` | n/a (runs `kubeconform` directly) | Kubernetes manifest validation |
 
 ---
@@ -134,7 +134,7 @@ The leetscuda judge is a standalone Node.js worker process that evaluates user c
 │  Redis              │                               │  PostgreSQL (Supabase)│
 │                     │                               │                       │
 │  judge:queue:cpp    │                               │  Submission           │
-│  judge:queue:cuda:* │                               │  JudgeToken           │
+│  judge:queue:cuda   │                               │  JudgeToken           │
 │  judge:queue:k8s    │                               │  Problem              │
 │  submission:daily:* │                               │  UserProgress         │
 │  submission:ratelimit:* │                           │  User                 │
@@ -174,12 +174,15 @@ Every arrow labeled HTTPS is an outbound request from the judge. The judge never
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  GPU Judge                                                                  │
-│  JUDGE_CAPABILITIES=cpp,cuda:13.0                                           │
+│  GPU Judge (Blackwell)                                                      │
+│  JUDGE_CAPABILITIES=cpp,cuda:13.0:sm_120                                   │
 │                                                                             │
-│  Polls: judge:queue:cpp AND judge:queue:cuda:13.0                           │
+│  Polls: judge:queue:cpp AND judge:queue:cuda                                │
+│  Per-job check: accepts CUDA jobs where cuda_min_version<=13.0 AND          │
+│                 compute_min_cap<=sm_120; re-queues incompatible jobs        │
 │  Spawns: gcc:14 containers (cpp jobs)                                       │
 │          nvidia/cuda:13.0.0-devel-ubuntu24.04 containers (cuda jobs)        │
+│  Compiles CUDA with: nvcc -arch=sm_120                                      │
 │  Needs: Docker socket + NVIDIA drivers + nvidia-container-toolkit           │
 │  Run flag for CUDA containers: --gpus device=0                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -239,13 +242,14 @@ This means that even if the database is compromised, an attacker cannot recover 
 
 ### 3.2 Token capabilities
 
-Each `JudgeToken` row has a `capabilities: String[]` field that declares what the judge can execute. Examples:
+Each `JudgeToken` row has a `capabilities: String[]` field that declares what the judge can execute. The format is `cpp`, `cuda:{version}:{sm_cap}`, or `k8s`. Examples:
 
 - `["cpp"]` — CPU judge, serves only `judge:queue:cpp`
-- `["cpp", "cuda:13.0"]` — GPU judge, serves `judge:queue:cpp` and `judge:queue:cuda:13.0`
+- `["cpp", "cuda:13.0:sm_120"]` — Blackwell GPU judge, serves `judge:queue:cpp` and `judge:queue:cuda`
+- `["cpp", "cuda:12.6:sm_86"]` — Ampere GPU judge, serves `judge:queue:cpp` and `judge:queue:cuda`
 - `["k8s"]` — K8s judge, serves only `judge:queue:k8s`
 
-At poll time, the web app reads `judge.capabilities` and constructs the exact set of Redis queue names to BLPOP from. A judge with `["cpp"]` capabilities can never receive a CUDA job — it simply never touches `judge:queue:cuda:*`.
+All CUDA jobs go to the single `judge:queue:cuda` queue regardless of their requirements. At poll time, the web app checks the dequeued job's `cuda_min_version` and `compute_min_cap` against the judge's declared version and SM. If the job's requirements exceed what the judge supports, the job is re-queued and the judge receives a 204.
 
 Capabilities are also forwarded by the judge in the `X-Judge-Capabilities` HTTP header on every request, providing an additional observability signal (the server logs which judge is talking).
 
@@ -254,7 +258,7 @@ Capabilities are also forwarded by the judge in the `X-Judge-Capabilities` HTTP 
 ```
 Judge ──GET /api/judge/poll──────────────────────────────────────────────────►
        Authorization: Bearer jt_a3f8e1c24b9...
-       X-Judge-Capabilities: cpp,cuda:13.0
+       X-Judge-Capabilities: cpp,cuda:13.0:sm_120
 
 Web app:
   1. Extract raw token from Authorization header

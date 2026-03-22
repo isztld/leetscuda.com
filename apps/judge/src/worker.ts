@@ -7,6 +7,7 @@ import { verify } from './verifier.js'
 import { validateK8sManifest } from './k8s-validator.js'
 import type { CppJudgeJob, JudgeResult, SubmissionTestResult } from './types.js'
 import { env } from './env.js'
+import type { CudaCapability } from './env.js'
 
 /** Kill any containers from a previous crashed judge session before starting. */
 async function cleanupOrphanedContainers(): Promise<void> {
@@ -36,6 +37,9 @@ async function runCppJob(job: CppJudgeJob): Promise<JudgeResult> {
   // Clamp timeout to the hard ceiling — never trust the payload blindly
   const effectiveTimeout = Math.min(job.timeoutMs ?? env.maxTimeoutMs, env.maxTimeoutMs)
 
+  // Resolve judge's own CUDA capability from env — used for image selection and -arch= flag
+  const cudaCap = env.parsedCapabilities.find((c) => c.runtime === 'cuda') as CudaCapability | undefined
+
   type FinalStatus = 'ACCEPTED' | 'WRONG_ANSWER' | 'RUNTIME_ERROR' | 'TIME_LIMIT'
   let finalStatus: FinalStatus = 'ACCEPTED'
   let maxRuntimeMs = 0
@@ -47,8 +51,8 @@ async function runCppJob(job: CppJudgeJob): Promise<JudgeResult> {
     const sandboxResult = await runInSandbox(job.code + '\n' + job.harness, tc.input, {
       runtime: job.runtime,
       cppStandard: job.cppStandard,
-      cudaVersion: job.cudaVersion,
-      computeCap: job.computeCap,
+      judgeComputeCap: cudaCap?.computeCap,
+      judgeCudaVersion: cudaCap?.version,
       timeoutMs: effectiveTimeout,
       submissionId: `${job.submissionId}-${tcIdx}`,
     })
@@ -102,8 +106,6 @@ async function runCppJob(job: CppJudgeJob): Promise<JudgeResult> {
     errorMsg: firstStderr || undefined,
     testResults,
     cppStandard: job.cppStandard,
-    cudaVersion: job.cudaVersion,
-    computeCap: job.computeCap,
   }
 }
 
@@ -113,7 +115,7 @@ async function main() {
   console.log(`[judge] API URL: ${env.JUDGE_API_URL}`)
 
   // Kill orphaned containers from any previous crash (only relevant for cpp/cuda judges)
-  if (!env.capabilities.every((c) => c === 'k8s')) {
+  if (env.parsedCapabilities.some((c) => c.runtime === 'cpp' || c.runtime === 'cuda')) {
     await cleanupOrphanedContainers()
   }
 

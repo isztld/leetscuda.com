@@ -8,6 +8,23 @@ const POLL_TIMEOUT_S = 30
 const RATE_LIMIT_WINDOW_S = 60
 const RATE_LIMIT_MAX = 60
 
+function parseSm(sm: string): number {
+  return parseInt(sm.replace('sm_', ''), 10)
+}
+
+function isCudaCompatible(
+  judgeVersion: string,
+  judgeSm: string,
+  jobMinVersion: string,
+  jobMinSm: string,
+): boolean {
+  const [jMajor, jMinor = 0] = judgeVersion.split('.').map(Number)
+  const [mMajor, mMinor = 0] = jobMinVersion.split('.').map(Number)
+  const versionOk = jMajor > mMajor || (jMajor === mMajor && jMinor >= mMinor)
+  const smOk = parseSm(judgeSm) >= parseSm(jobMinSm)
+  return versionOk && smOk
+}
+
 export async function GET(req: NextRequest) {
   // 1. Authenticate
   const judge = await authenticateJudge(req)
@@ -34,21 +51,22 @@ export async function GET(req: NextRequest) {
     if (cap === 'cpp') {
       queues.push('judge:queue:cpp')
     } else if (cap.startsWith('cuda:')) {
-      const version = cap.slice(5) // e.g. "13.0"
-      queues.push(`judge:queue:cuda:${version}`)
+      queues.push('judge:queue:cuda')
     } else if (cap === 'k8s') {
       queues.push('judge:queue:k8s')
     }
   }
+  // Deduplicate (a judge with multiple cuda caps would add the queue twice)
+  const uniqueQueues = [...new Set(queues)]
 
-  if (queues.length === 0 || !redis) {
+  if (uniqueQueues.length === 0 || !redis) {
     return new NextResponse(null, { status: 204 })
   }
 
   // 4. BLPOP from all eligible queues — pops from whichever has a job first
   let payload: string | null = null
   try {
-    const result = await redis.blpop(...queues, POLL_TIMEOUT_S)
+    const result = await redis.blpop(...uniqueQueues, POLL_TIMEOUT_S)
     if (!result) return new NextResponse(null, { status: 204 })
     payload = result[1]
   } catch {
@@ -62,13 +80,30 @@ export async function GET(req: NextRequest) {
     language: string
     runtime: string
     cppStandard?: string
-    cudaVersion?: string
-    computeCap?: string
+    cudaMinVersion?: string
+    computeMinCap?: string
   }
   try {
     job = JSON.parse(payload)
   } catch {
     return new NextResponse(null, { status: 204 })
+  }
+
+  // 4a. For CUDA jobs, verify the judge can satisfy the problem's minimum requirements
+  if (job.runtime === 'cuda' && job.cudaMinVersion && job.computeMinCap) {
+    const cudaCap = judge.capabilities
+      .map((c) => c.split(':'))
+      .find((parts) => parts[0] === 'cuda' && parts.length === 3)
+
+    if (cudaCap) {
+      const [, judgeVersion, judgeSm] = cudaCap
+      if (!isCudaCompatible(judgeVersion, judgeSm, job.cudaMinVersion, job.computeMinCap)) {
+        // Re-queue the job and signal no-work — another judge with a higher-capability GPU will pick it up
+        await redis.rpush('judge:queue:cuda', payload)
+        await new Promise((r) => setTimeout(r, 1000))
+        return new NextResponse(null, { status: 204 })
+      }
+    }
   }
 
   // 5. Fetch submission + problem + track from Postgres
@@ -155,8 +190,8 @@ export async function GET(req: NextRequest) {
     language: 'cpp',
     runtime: job.runtime ?? 'cpp',
     cppStandard: job.cppStandard ?? '17',
-    cudaVersion: job.cudaVersion ?? undefined,
-    computeCap: job.computeCap ?? undefined,
+    cudaMinVersion: job.cudaMinVersion ?? undefined,
+    computeMinCap: job.computeMinCap ?? undefined,
     testCases,
     timeoutMs: 10_000,
   })

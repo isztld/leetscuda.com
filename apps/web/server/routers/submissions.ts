@@ -4,7 +4,7 @@ import { ExecutionRuntime } from '@prisma/client'
 import { router, protectedProcedure } from '../trpc'
 import { prisma } from '@/lib/prisma'
 import { getRedis } from '@/lib/redis'
-import { CPP_STANDARD, CUDA_VERSION, COMPUTE_CAP } from '@/lib/runtime-maps'
+import { CPP_STANDARD } from '@/lib/runtime-maps'
 import { validateSubmission } from '@/lib/submission-validator'
 import { SubmissionConfig } from '@/lib/submission-config'
 
@@ -69,8 +69,6 @@ export const submissionsRouter = router({
           language: input.language,
           status: 'PENDING',
           cppStandard: problem.cppStandard,
-          cudaVersion: problem.cudaVersion,
-          computeCap: problem.computeCap,
         },
       })
 
@@ -89,12 +87,11 @@ export const submissionsRouter = router({
       // Enqueue job to the correct queue based on execution runtime
       const isK8s = problem.executionRuntime === ExecutionRuntime.K8S
       const isCuda = problem.executionRuntime === ExecutionRuntime.CUDA
-      const cudaVerStr = problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : '13.0'
       let queueName: string
       if (isK8s) {
         queueName = 'judge:queue:k8s'
       } else if (isCuda) {
-        queueName = `judge:queue:cuda:${cudaVerStr}`
+        queueName = 'judge:queue:cuda'
       } else {
         queueName = 'judge:queue:cpp'
       }
@@ -116,8 +113,8 @@ export const submissionsRouter = router({
                 language: input.language,
                 runtime: isCuda ? 'cuda' : 'cpp',
                 cppStandard: CPP_STANDARD[problem.cppStandard],
-                cudaVersion: problem.cudaVersion ? CUDA_VERSION[problem.cudaVersion] : undefined,
-                computeCap: problem.computeCap ? COMPUTE_CAP[problem.computeCap] : undefined,
+                cudaMinVersion: problem.cudaMinVersion ?? undefined,
+                computeMinCap: problem.computeMinCap ?? undefined,
               })
           await redis.rpush(queueName, jobPayload)
         } catch (err) {
@@ -320,14 +317,11 @@ export const submissionsRouter = router({
       // Reconstruct the exact queue name and job payload as stored by create
       const isK8sCancel = submission.problem.executionRuntime === ExecutionRuntime.K8S
       const isCudaCancel = submission.problem.executionRuntime === ExecutionRuntime.CUDA
-      const cudaVerStrCancel = submission.problem.cudaVersion
-        ? CUDA_VERSION[submission.problem.cudaVersion]
-        : '13.0'
       let queueName: string
       if (isK8sCancel) {
         queueName = 'judge:queue:k8s'
       } else if (isCudaCancel) {
-        queueName = `judge:queue:cuda:${cudaVerStrCancel}`
+        queueName = 'judge:queue:cuda'
       } else {
         queueName = 'judge:queue:cpp'
       }
@@ -347,12 +341,8 @@ export const submissionsRouter = router({
             language: submission.language,
             runtime: isCudaCancel ? 'cuda' : 'cpp',
             cppStandard: CPP_STANDARD[submission.problem.cppStandard],
-            cudaVersion: submission.problem.cudaVersion
-              ? CUDA_VERSION[submission.problem.cudaVersion]
-              : undefined,
-            computeCap: submission.problem.computeCap
-              ? COMPUTE_CAP[submission.problem.computeCap]
-              : undefined,
+            cudaMinVersion: submission.problem.cudaMinVersion ?? undefined,
+            computeMinCap: submission.problem.computeMinCap ?? undefined,
           })
 
       // LREM: atomic remove — if it returns 0 the judge already picked it up

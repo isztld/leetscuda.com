@@ -4,14 +4,15 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { env } from './env.js'
+import type { CudaCapability } from './env.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export interface SandboxOptions {
   runtime: 'cpp' | 'cuda'
   cppStandard: '14' | '17' | '20' | '23'
-  cudaVersion?: string
-  computeCap?: string
+  judgeComputeCap?: string   // judge's actual SM, e.g. "sm_120" — used for -arch= flag
+  judgeCudaVersion?: string  // judge's actual CUDA version, e.g. "13.0" — used to select image
   timeoutMs: number
   submissionId: string
 }
@@ -34,9 +35,19 @@ function sanitizeOutput(s: string): string {
     .replace(/[^\x09\x0a\x0d\x20-\x7e]/g, '') // keep tab, LF, CR, printable ASCII
 }
 
-const DOCKER_IMAGES: Record<string, string> = {
-  cpp: 'gcc:14',
-  'cuda:13.0': 'nvidia/cuda:13.0.0-devel-ubuntu24.04',
+const CUDA_IMAGES: Record<string, string> = {
+  '13.0': 'nvidia/cuda:13.0.0-devel-ubuntu24.04',
+  '12.6': 'nvidia/cuda:12.6.0-devel-ubuntu22.04',
+}
+
+function getDockerImage(runtime: 'cpp' | 'cuda', cudaCapability?: CudaCapability): string {
+  if (runtime === 'cpp') return 'gcc:14'
+  if (runtime === 'cuda' && cudaCapability) {
+    const image = CUDA_IMAGES[cudaCapability.version]
+    if (!image) throw new Error(`No Docker image configured for CUDA ${cudaCapability.version}`)
+    return image
+  }
+  throw new Error(`Cannot determine Docker image for runtime: ${runtime}`)
 }
 
 // Detect if Docker is available (cached after first check)
@@ -106,10 +117,12 @@ async function runDocker(
   opts: SandboxOptions,
 ): Promise<SandboxResult> {
   const isCuda = opts.runtime === 'cuda'
-  const imageKey = isCuda ? `cuda:${opts.cudaVersion ?? '13.0'}` : 'cpp'
-  const image = DOCKER_IMAGES[imageKey] ?? DOCKER_IMAGES['cpp']
+  const cudaCap: CudaCapability | undefined = isCuda && opts.judgeCudaVersion
+    ? { runtime: 'cuda', version: opts.judgeCudaVersion, computeCap: opts.judgeComputeCap ?? 'sm_86' }
+    : undefined
+  const image = getDockerImage(opts.runtime, cudaCap)
   const srcFile = isCuda ? 'solution.cu' : 'solution.cpp'
-  const computeArch = opts.computeCap ?? 'sm_86'
+  const computeArch = opts.judgeComputeCap ?? 'sm_86'
 
   const compileCmd = isCuda
     ? ['nvcc', `-std=c++${opts.cppStandard}`, `-arch=${computeArch}`, '-O2', '-o', 'solution', srcFile]
@@ -203,7 +216,7 @@ async function runDirect(
   const binFile = path.join(tmpDir, 'solution')
 
   const compileArgs = isCuda
-    ? ['nvcc', `-std=c++${opts.cppStandard}`, `-arch=${opts.computeCap ?? 'sm_86'}`, '-O2', '-o', binFile, srcFile]
+    ? ['nvcc', `-std=c++${opts.cppStandard}`, `-arch=${opts.judgeComputeCap ?? 'sm_86'}`, '-O2', '-o', binFile, srcFile]
     : ['g++', `-std=c++${opts.cppStandard}`, '-O2', '-o', binFile, srcFile]
 
   const compileResult = await runProcess(compileArgs[0], compileArgs.slice(1), '', 30_000, tmpDir)
