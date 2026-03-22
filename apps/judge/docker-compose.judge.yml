@@ -46,7 +46,8 @@ services:
     env_file:
       - .env
     networks:
-      - judge-internal
+      - judge-internal   # reaches socket-proxy
+      - judge-external   # outbound HTTPS to the web app
     # Judge container has NO docker socket mount
     # It communicates with the proxy over the internal network only
     read_only: true
@@ -56,4 +57,6 @@ services:
 networks:
   judge-internal:
     driver: bridge
-    internal: true    # no external network access for this network
+    internal: true    # no external access — socket-proxy only
+  judge-external:
+    driver: bridge    # default bridge — judge can reach the internet for API polling
