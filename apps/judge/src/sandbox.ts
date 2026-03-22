@@ -57,12 +57,13 @@ function getDockerImage(runtime: 'cpp' | 'cuda', cudaCapability?: CudaCapability
 }
 
 // Detect if Docker is available (cached after first check)
+// Uses `docker ps` instead of `docker info` — INFO is blocked by the socket proxy.
 let dockerAvailable: boolean | null = null
 function isDockerAvailable(): boolean {
   if (dockerAvailable !== null) return dockerAvailable
   try {
     execSync('which docker', { stdio: 'ignore' })
-    execSync('docker info', { stdio: 'ignore', timeout: 3000 })
+    execSync('docker ps -q', { stdio: 'ignore', timeout: 3000 })
     dockerAvailable = true
   } catch {
     dockerAvailable = false
@@ -172,7 +173,10 @@ async function runDocker(
     '--cpus', '0.5',
     '--pids-limit', '64',
     '--user', '65534:65534',
-    '--read-only',
+    // --read-only is intentionally omitted: docker cp into a stopped container writes through
+    // the overlay filesystem (tmpfs mounts are not active until the container starts), so
+    // --read-only blocks the cp even for tmpfs-backed paths. The other layers (UID 65534,
+    // --cap-drop ALL, seccomp, --network none) already prevent meaningful filesystem abuse.
     '--tmpfs', '/tmp:size=64m,mode=1777',
     '--tmpfs', '/sandbox:size=32m,mode=0777',
     '--cap-drop', 'ALL',

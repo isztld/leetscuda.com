@@ -740,7 +740,7 @@ Each sandbox container is created with a fixed set of flags. Here is the complet
 | `--cpus 0.5` | ✓ | ✓ | Limits the container to 50% of one CPU core. Prevents CPU monopolization on multi-tenant judge nodes. |
 | `--pids-limit 64` | ✓ | ✓ | Kernel cgroup limit on the total number of processes/threads the container can create. Unlike `--ulimit nproc`, this cannot be overridden from inside the container even with elevated privileges. Prevents fork bombs. |
 | `--user 65534:65534` | ✓ | ✓ | Run all container processes as `nobody:nogroup` (UID/GID 65534). Ensures the user code is never root, even if container isolation is partially broken. |
-| `--read-only` | ✓ | ✓ | Mount the container's root filesystem as read-only. User code cannot modify the image layers or install tools. Combined with `--tmpfs` for writable scratch space. |
+| `--read-only` | — | — | Not used. `docker cp` into a stopped container writes through the overlay filesystem (tmpfs mounts are not active until start), so `--read-only` blocks the pre-start file injection even for tmpfs-backed paths. UID 65534 + `--cap-drop ALL` + seccomp already prevent meaningful write abuse. |
 | `--tmpfs /tmp:size=64m,mode=1777` | ✓ | ✓ | Writable tmpfs for runtime temp files (stays in RAM, auto-cleared on container exit). |
 | `--tmpfs /sandbox:size=32m,mode=0777` | ✓ | ✓ | Writable tmpfs where source code and compiled binary live. Populated via `docker cp` before the container starts. |
 | `--cap-drop ALL` | ✓ | ✓ | Drop all Linux capabilities. Without capabilities, the process cannot modify network config, mount filesystems, load kernel modules, or perform any privileged operation. |
@@ -1485,7 +1485,7 @@ The next poll request from that judge returns 401, and the judge process exits. 
 
 | Threat | Mitigations |
 |--------|-------------|
-| Malicious code reading host filesystem | `--read-only` root filesystem. No host directories mounted. Source code delivered via `docker cp` to container tmpfs only. |
+| Malicious code reading host filesystem | No host directories mounted. Source code delivered via `docker cp` to container tmpfs only. UID 65534 has no read access to sensitive host paths even if the overlay is writable. |
 | Malicious code exfiltrating data via network | `--network none` disables all network interfaces inside the container. No TCP, UDP, or Unix socket connections to external systems are possible. |
 | Fork bomb (exponential process spawning) | `--pids-limit 64` enforced by kernel cgroup — cannot be overridden from inside the container even with elevated privileges. |
 | Memory exhaustion | `--memory 256m` / `--memory 512m` hard OOM limit. Process is killed if it exceeds the limit. |
