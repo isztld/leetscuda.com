@@ -121,15 +121,18 @@ RooflineResult analyse_kernel(
 }
 
 ---test-cases---
-- name: "Memory-bound vector add"
-  input: "flops=2e9 bytes=24e9 peak_gflops=19500 peak_gbps=2000"
-  expected: "ai=0.083 compute_bound=false attainable≈166 GFLOP/s"
-- name: "Compute-bound matmul"
-  input: "flops=137e9 bytes=201e6 peak_gflops=19500 peak_gbps=2000"
-  expected: "ai≈682 compute_bound=true attainable=19500 GFLOP/s"
-- name: "Ridge point A100"
-  input: "peak_gflops=19500 peak_gbps=2000"
-  expected: "ridge=9.75 FLOP/byte"
+- name: "Arithmetic intensity and ridge point"
+  input: "3\nAI 10.0 2.0\nRIDGE 1000.0 200.0\nAI 100.0 10.0"
+  expected: "5.0000\n5.0000\n10.0000"
+- name: "Compute bound classification"
+  input: "4\nBOUND 3.0 1000.0 200.0\nBOUND 7.0 1000.0 200.0\nPERF 3.0 1000.0 200.0\nPERF 7.0 1000.0 200.0"
+  expected: "0\n1\n600.0000\n1000.0000"
+- name: "Analyse kernel (memory-bound)"
+  input: "1\nANALYSE 200.0 100.0 500.0 100.0"
+  expected: "2.0000 200.0000 0 5.0000"
+- name: "Analyse kernel (compute-bound)"
+  input: "1\nANALYSE 600.0 10.0 500.0 100.0"
+  expected: "60.0000 500.0000 1 5.0000"
 
 ---solution---
 double arithmetic_intensity(double flops, double bytes_moved) {
@@ -159,6 +162,47 @@ RooflineResult analyse_kernel(
         is_compute_bound(ai, peak_gflops, peak_gbps),
         ridge_point(peak_gflops, peak_gbps),
     };
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int q = 0; q < n; ++q) {
+        char cmd[16];
+        scanf("%s", cmd);
+
+        if (strcmp(cmd, "AI") == 0) {
+            double flops, bytes;
+            scanf("%lf %lf", &flops, &bytes);
+            printf("%.4f\n", arithmetic_intensity(flops, bytes));
+        } else if (strcmp(cmd, "RIDGE") == 0) {
+            double pg, pb;
+            scanf("%lf %lf", &pg, &pb);
+            printf("%.4f\n", ridge_point(pg, pb));
+        } else if (strcmp(cmd, "BOUND") == 0) {
+            double ai, pg, pb;
+            scanf("%lf %lf %lf", &ai, &pg, &pb);
+            printf("%d\n", is_compute_bound(ai, pg, pb) ? 1 : 0);
+        } else if (strcmp(cmd, "PERF") == 0) {
+            double ai, pg, pb;
+            scanf("%lf %lf %lf", &ai, &pg, &pb);
+            printf("%.4f\n", attainable_perf(ai, pg, pb));
+        } else if (strcmp(cmd, "ANALYSE") == 0) {
+            double flops, bytes, pg, pb;
+            scanf("%lf %lf %lf %lf", &flops, &bytes, &pg, &pb);
+            RooflineResult r = analyse_kernel(flops, bytes, pg, pb);
+            printf("%.4f %.4f %d %.4f\n",
+                   r.ai, r.attainable_gflops,
+                   r.compute_bound ? 1 : 0,
+                   r.ridge);
+        }
+    }
+    return 0;
 }
 
 ---editorial---

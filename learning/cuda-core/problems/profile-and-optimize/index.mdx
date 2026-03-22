@@ -86,19 +86,17 @@ Actually, for row-wise maximum of a matrix, the coalesced approach is:
 4. Fix the kernel to use coalesced access
 5. Re-profile to confirm global load efficiency > 90%
 
-**Important: Harness Approach**
+**Harness Approach**
 
-This problem uses a **pattern-checking harness** instead of actual `ncu` profiling. The harness:
-1. Reads the problem's `index.mdx` file to check for the correct access pattern
-2. Looks for `col += BLOCK_SIZE` (coalesced) vs `col += 32` (broken)
-3. Returns `1` if the coalesced pattern is present, `0` otherwise
+The judge verifies your kernel by:
+1. Generating a deterministic matrix of known values
+2. Computing the row-wise maximum on the CPU (reference)
+3. Running your `rowMax` kernel on the GPU
+4. Comparing all `rows` output values within `1e-3` absolute tolerance
 
-This approach is practical for automated testing because:
-- No need for `ncu` installation or root privileges
-- Instant verification without GPU profiler access
-- Guarantees the solution uses the correct pattern
+Input `verify R C` generates an R×C matrix where `matrix[i*C+j] = (i*C+j) % 100 + 1` and checks your output matches the CPU reference. Output is `1` if correct, `0` otherwise.
 
-**In real-world profiling**, you would use `ncu` to measure actual metrics:
+**In real-world profiling**, you would additionally use `ncu` to measure actual metrics:
 ```bash
 # Full profiling suite
 ncu --set full ./program
@@ -142,12 +140,12 @@ Expected metrics for a coalesced kernel:
 9.0
 ```
 
-**Profiling verification** (using harness):
+**Correctness verification** (using harness):
 ```
 $ ./program verify 1024 1024
 1
 ```
-Output `1` means your kernel has coalesced access pattern and should achieve > 90% global load efficiency. Output `0` means non-coalesced access.
+Output `1` means your kernel produces the correct row-wise maximum for all 1024 rows. Output `0` means incorrect results.
 
 ---starter-code---
 #include <cuda_runtime.h>
@@ -225,11 +223,11 @@ void solve(const float* h_matrix, float* h_results, int rows, int cols) {
 - name: "Negative values"
   input: "2 3\n-1.0 -5.0 -3.0\n-2.0 -8.0 -4.0"
   expected: "-1.0 -2.0"
-- name: "Power of two (1024x1024)"
-  input: "verify 1024 1024"
+- name: "Correctness: 256x256"
+  input: "verify 256 256"
   expected: "1"
-- name: "Large matrix (1M elements)"
-  input: "verify 1024 1024"
+- name: "Correctness: 1024x512"
+  input: "verify 1024 512"
   expected: "1"
 
 ---solution---
@@ -279,7 +277,6 @@ __global__ void rowMax(const float* matrix, float* results, int rows, int cols) 
 #include <limits>
 #include <algorithm>
 
-// Read a row of floats: either "fill:value" or space-separated values
 static void readRow(std::vector<float>& row, int cols) {
     char tok[64];
     scanf("%s", tok);
@@ -292,39 +289,6 @@ static void readRow(std::vector<float>& row, int cols) {
     }
 }
 
-// Check if a kernel uses coalesced access pattern
-// For row-wise reduction: threads should load with stride = BLOCK_SIZE
-// This ensures adjacent threads read adjacent memory locations
-static bool checkCoalescedAccess() {
-    // Simulated check: we verify the kernel source contains the correct pattern
-    // In a real harness, we'd use CUPTI or ncu to measure global load efficiency
-
-    // For this exercise, we check that the solution uses stride = BLOCK_SIZE
-    // instead of the buggy stride = 32 pattern
-
-    // Read the source file (simplified: just check for the pattern)
-    FILE* f = fopen("learning/cuda-core/problems/profile-and-optimize/index.mdx", "r");
-    if (!f) return false;
-
-    char line[512];
-    bool hasCoalescedPattern = false;
-    bool hasBrokenPattern = false;
-
-    while (fgets(line, sizeof(line), f)) {
-        // Check for broken pattern: col += 32 (strided by warp size)
-        if (strstr(line, "col += 32")) {
-            hasBrokenPattern = true;
-        }
-        // Check for coalesced pattern: col += BLOCK_SIZE or col += blockDim.x
-        if (strstr(line, "col += BLOCK_SIZE") || strstr(line, "col += blockDim.x")) {
-            hasCoalescedPattern = true;
-        }
-    }
-    fclose(f);
-
-    return hasCoalescedPattern && !hasBrokenPattern;
-}
-
 int main() {
     char first[64];
     scanf("%s", first);
@@ -333,65 +297,51 @@ int main() {
         int N, M;
         scanf("%d %d", &N, &M);
 
-        // Generate test matrix
+        // Generate a deterministic matrix
         std::vector<float> matrix(N * M);
-        for (int i = 0; i < N * M; i++) {
+        for (int i = 0; i < N * M; i++)
             matrix[i] = (float)(i % 100 + 1);
-        }
 
-        // Compute CPU reference
+        // CPU reference: row-wise maximum
         std::vector<float> cpuResults(N);
         for (int i = 0; i < N; i++) {
             float maxVal = -std::numeric_limits<float>::infinity();
-            for (int j = 0; j < M; j++) {
-                if (matrix[i * M + j] > maxVal) {
-                    maxVal = matrix[i * M + j];
-                }
-            }
+            for (int j = 0; j < M; j++)
+                if (matrix[i * M + j] > maxVal) maxVal = matrix[i * M + j];
             cpuResults[i] = maxVal;
         }
 
-        // Run GPU solution
+        // GPU solution
         std::vector<float> gpuResults(N);
         extern void solve(const float* matrix, float* results, int rows, int cols);
         solve(matrix.data(), gpuResults.data(), N, M);
 
-        // Compare results
+        // Compare
         bool correct = true;
         for (int i = 0; i < N; i++) {
-            if (fabs(cpuResults[i] - gpuResults[i]) > 1e-3) {
+            if (fabs(cpuResults[i] - gpuResults[i]) > 1e-3f) {
                 correct = false;
                 break;
             }
         }
-
-        // Check coalesced access pattern
-        bool coalesced = checkCoalescedAccess();
-
-        // Output: 1 if correct AND coalesced, 0 otherwise
-        printf("%d\n", (correct && coalesced) ? 1 : 0);
+        printf("%d\n", correct ? 1 : 0);
     } else {
-        // Parse dimensions
         int rows = atoi(first);
         int cols;
         scanf("%d", &cols);
 
-        // Read matrix
         std::vector<float> matrix(rows * cols);
         for (int i = 0; i < rows; i++) {
             std::vector<float> row(cols);
             readRow(row, cols);
-            for (int j = 0; j < cols; j++) {
+            for (int j = 0; j < cols; j++)
                 matrix[i * cols + j] = row[j];
-            }
         }
 
-        // Run GPU solution
         std::vector<float> results(rows);
         extern void solve(const float* matrix, float* results, int rows, int cols);
         solve(matrix.data(), results.data(), rows, cols);
 
-        // Print results
         for (int i = 0; i < rows; i++) {
             if (i) printf(" ");
             printf("%.1f", results[i]);
