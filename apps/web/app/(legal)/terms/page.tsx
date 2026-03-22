@@ -70,15 +70,18 @@ export default function TermsPage() {
 
       <h2>8. Governing law</h2>
       <p>
-        These terms are governed by the laws of the Federal Republic of Germany. Any disputes shall
-        be subject to the jurisdiction of the competent courts in Germany.
+        These terms are governed by Swiss law (Schweizer Recht). Any disputes shall be subject to
+        the exclusive jurisdiction of the competent courts of Zurich, Switzerland.
+      </p>
+      <p>
+        Operator: {/* [YOUR FULL NAME], */}Zürich, Switzerland.
       </p>
 
       <h2>9. Contact</h2>
       <p>
         For questions about these terms:{' '}
-        {/* TODO: replace [YOUR EMAIL ADDRESS] with your contact email */}
-        <a href="mailto:[YOUR EMAIL ADDRESS]">[YOUR EMAIL ADDRESS]</a>
+        {/* TODO: replace support@leetscuda.com with your contact email */}
+        <a href="mailto:support@leetscuda.com">support@leetscuda.com</a>
       </p>
     </article>
   )

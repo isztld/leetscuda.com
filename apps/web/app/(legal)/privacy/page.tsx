@@ -10,25 +10,29 @@ export default function PrivacyPage() {
       <h1>Datenschutzerklärung</h1>
       <p>
         <em>
-          Deutsche Version (gesetzlich vorgeschrieben). English translation follows below.
+          Deutsche Version (massgeblich). English translation follows below.
         </em>
       </p>
 
-      {/* TODO: replace all [YOUR FULL LEGAL NAME], [YOUR STREET ADDRESS], [YOUR POSTAL CODE], [YOUR CITY], [YOUR EMAIL ADDRESS] with real legal details */}
       <h2>1. Verantwortlicher</h2>
-      <p>
-        [YOUR FULL LEGAL NAME]
+      <p>{/*
+        [YOUR FULL NAME]
         <br />
-        [YOUR STREET ADDRESS]
+        */}Zürich, Switzerland
         <br />
-        [YOUR POSTAL CODE] [YOUR CITY]
-        <br />
-        Deutschland
-        <br />
-        E-Mail: [YOUR EMAIL ADDRESS]
+        E-Mail: support@leetscuda.com
       </p>
 
-      <h2>2. Erhobene Daten</h2>
+      <h2>2. Anwendbares Recht</h2>
+      <p>
+        Diese Datenschutzerklärung richtet sich nach dem schweizerischen{' '}
+        <strong>revDSG (revidiertes Datenschutzgesetz / Swiss Data Protection Act)</strong>, in
+        Kraft seit September 2023. Für Nutzerinnen und Nutzer aus der Europäischen Union gelten
+        ergänzend die Rechte der EU-Datenschutz-Grundverordnung (DSGVO / GDPR, Art. 15–22), die
+        auf Anfrage ebenfalls gewährt werden.
+      </p>
+
+      <h2>3. Erhobene Daten</h2>
       <h3>Kontodaten</h3>
       <p>
         Bei der Registrierung via GitHub oder Google OAuth erheben wir: E-Mail-Adresse, Anzeigename
@@ -48,15 +52,15 @@ export default function PrivacyPage() {
         Server-Logs für Sicherheit und Fehlerdiagnose. Diese werden nach 30 Tagen gelöscht.
       </p>
 
-      <h2>3. Rechtsgrundlage</h2>
+      <h2>4. Rechtsgrundlage</h2>
       <p>
-        Art. 6 Abs. 1 lit. b DSGVO — Vertragserfüllung (Bereitstellung des Dienstes).
+        Art. 31 revDSG — Bearbeitung zur Erfüllung eines Vertrags (Bereitstellung des Dienstes).
       </p>
 
-      <h2>4. Auftragsverarbeiter</h2>
+      <h2>5. Auftragsverarbeiter</h2>
       <ul>
         <li>
-          <strong>Vercel</strong> (Hosting, EU-Region soweit möglich) —{' '}
+          <strong>Vercel</strong> (Hosting) —{' '}
           <a href="https://vercel.com/legal/dpa" target="_blank" rel="noopener noreferrer">
             Vercel DPA
           </a>
@@ -72,34 +76,41 @@ export default function PrivacyPage() {
         </li>
       </ul>
 
-      <h2>5. Speicherdauer</h2>
+      <h2>6. Speicherdauer</h2>
       <p>
         Kontodaten werden bis zur Kontolöschung gespeichert. Server-Logs werden nach 30 Tagen
         gelöscht.
       </p>
 
-      <h2>6. Betroffenenrechte</h2>
+      <h2>7. Betroffenenrechte</h2>
       <p>
         Sie haben das Recht auf Auskunft, Berichtigung, Löschung, Datenübertragbarkeit und
-        Widerspruch. Anfragen an: [YOUR EMAIL ADDRESS]
+        Widerspruch. Anfragen an: support@leetscuda.com
       </p>
 
-      <h2>7. Cookies</h2>
+      <h2>8. Cookies</h2>
       <p>
         Wir setzen ausschließlich technisch notwendige Cookies. Keine Tracking-Cookies, keine
         Analyse-Cookies, keine Werbe-Cookies. Details finden Sie in unserer{' '}
         <a href="/cookies">Cookie-Richtlinie</a>.
       </p>
 
-      <h2>8. Keine Datenweitergabe</h2>
+      <h2>9. Keine Datenweitergabe</h2>
       <p>
         Ihre Daten werden nicht verkauft oder an Werbetreibende weitergegeben.
       </p>
 
-      <h2>9. Beschwerderecht</h2>
+      <h2>10. Beschwerderecht</h2>
       <p>
-        Sie haben das Recht, sich bei der zuständigen Datenschutzaufsichtsbehörde zu beschweren.
-        Für Deutschland ist dies die jeweilige Landesdatenschutzbehörde.
+        Sie haben das Recht, sich bei der zuständigen Aufsichtsbehörde zu beschweren. Zuständig
+        ist der:
+      </p>
+      <p>
+        <strong>Eidgenössischer Datenschutz- und Öffentlichkeitsbeauftragter (EDÖB)</strong>
+        <br />
+        <a href="https://www.edoeb.admin.ch" target="_blank" rel="noopener noreferrer">
+          https://www.edoeb.admin.ch
+        </a>
       </p>
 
       <hr />
@@ -112,15 +123,26 @@ export default function PrivacyPage() {
       </p>
 
       <h2>1. Controller</h2>
-      <p>
-        [YOUR FULL LEGAL NAME]
+      <p>{/*
+        [YOUR FULL NAME]
         <br />
-        [YOUR STREET ADDRESS], [YOUR POSTAL CODE] [YOUR CITY], Germany
+        */}Zürich, Switzerland
         <br />
-        Email: [YOUR EMAIL ADDRESS]
+        Email: support@leetscuda.com
       </p>
 
-      <h2>2. Data collected</h2>
+      <h2>2. Applicable law</h2>
+      <p>
+        This privacy policy is governed by Swiss law, specifically the{' '}
+        <strong>revDSG (Swiss Data Protection Act)</strong>, in force since September 2023.
+      </p>
+      <p>
+        For users located in the European Union, rights under the EU General Data Protection
+        Regulation (GDPR, Art. 15–22) are also recognised and will be honoured upon request to{' '}
+        support@leetscuda.com.
+      </p>
+
+      <h2>3. Data collected</h2>
       <p>
         <strong>Account data:</strong> email, name, avatar URL from GitHub/Google OAuth — to provide
         your account.
@@ -138,13 +160,16 @@ export default function PrivacyPage() {
         days.
       </p>
 
-      <h2>3. Legal basis</h2>
-      <p>Art. 6(1)(b) GDPR — performance of contract (providing the service).</p>
+      <h2>4. Legal basis</h2>
+      <p>
+        Art. 31 revDSG (Swiss Data Protection Act) — performance of contract (providing the
+        service). For EU users, Art. 6(1)(b) GDPR applies in parallel.
+      </p>
 
-      <h2>4. Data processors</h2>
+      <h2>5. Data processors</h2>
       <ul>
         <li>
-          <strong>Vercel</strong> (hosting, EU region where possible) —{' '}
+          <strong>Vercel</strong> (hosting) —{' '}
           <a href="https://vercel.com/legal/dpa" target="_blank" rel="noopener noreferrer">
             Vercel DPA
           </a>
@@ -160,27 +185,34 @@ export default function PrivacyPage() {
         </li>
       </ul>
 
-      <h2>5. Retention</h2>
+      <h2>6. Retention</h2>
       <p>Account data retained until account deletion. Server logs deleted after 30 days.</p>
 
-      <h2>6. Your rights</h2>
+      <h2>7. Your rights</h2>
       <p>
-        Access, rectification, erasure, portability, objection. Contact: [YOUR EMAIL ADDRESS]
+        Access, rectification, erasure, portability, objection. Contact: support@leetscuda.com
       </p>
 
-      <h2>7. Cookies</h2>
+      <h2>8. Cookies</h2>
       <p>
         Essential cookies only. No tracking, no analytics, no advertising cookies. See our{' '}
         <a href="/cookies">Cookie Policy</a>.
       </p>
 
-      <h2>8. No data selling</h2>
+      <h2>9. No data selling</h2>
       <p>Your data is never sold or shared with advertisers.</p>
 
-      <h2>9. Right to lodge a complaint</h2>
+      <h2>10. Supervisory authority</h2>
       <p>
-        You have the right to lodge a complaint with the relevant supervisory authority. In Germany,
-        this is the relevant state DPA (Landesdatenschutzbehörde).
+        You have the right to lodge a complaint with the Swiss Federal Data Protection and
+        Information Commissioner (FDPIC / EDÖB):
+      </p>
+      <p>
+        <strong>Eidgenössischer Datenschutz- und Öffentlichkeitsbeauftragter (EDÖB)</strong>
+        <br />
+        <a href="https://www.edoeb.admin.ch" target="_blank" rel="noopener noreferrer">
+          https://www.edoeb.admin.ch
+        </a>
       </p>
     </article>
   )

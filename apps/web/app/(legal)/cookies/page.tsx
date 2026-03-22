@@ -55,10 +55,17 @@ export default function CookiesPage() {
 
       <h2>Do we need your consent?</h2>
       <p>
-        Under GDPR and the ePrivacy Directive, strictly necessary cookies do not require consent
-        because they are essential to deliver the service you have requested. We inform you as a
-        matter of transparency, not because we are legally required to ask permission for these
-        particular cookies.
+        Under the revDSG (Swiss Data Protection Act) and, for EU users, the GDPR and the ePrivacy
+        Directive, strictly necessary cookies do not require consent because they are essential to
+        deliver the service you have requested. We inform you as a matter of transparency, not
+        because we are legally required to ask permission for these particular cookies.
+      </p>
+      <p>
+        Questions or complaints may be directed to the Swiss Federal Data Protection and Information
+        Commissioner (FDPIC / EDÖB):{' '}
+        <a href="https://www.edoeb.admin.ch" target="_blank" rel="noopener noreferrer">
+          https://www.edoeb.admin.ch
+        </a>
       </p>
 
       <h2>Third-party cookies</h2>
@@ -70,8 +77,8 @@ export default function CookiesPage() {
       <h2>Questions</h2>
       <p>
         For questions about our cookie use, contact{' '}
-        {/* TODO: replace [YOUR EMAIL ADDRESS] with your contact email */}
-        <a href="mailto:[YOUR EMAIL ADDRESS]">[YOUR EMAIL ADDRESS]</a>.
+        {/* TODO: replace support@leetscuda.com with your contact email */}
+        <a href="mailto:support@leetscuda.com">support@leetscuda.com</a>.
       </p>
     </article>
   )

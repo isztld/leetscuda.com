@@ -34,8 +34,8 @@ export default function ContactPage() {
           <p className="text-sm text-slate-600 mb-3">
             Requests for access, deletion, or portability of your personal data under GDPR.
           </p>
-          {/* TODO: replace [YOUR EMAIL ADDRESS] with your contact email */}
-          <span className="text-sm text-slate-500 italic">[YOUR EMAIL ADDRESS]</span>
+          {/* TODO: replace support@leetscuda.com with your contact email */}
+          <span className="text-sm text-slate-500 italic">support@leetscuda.com</span>
         </div>
 
         <div className="border border-slate-200 rounded-xl p-6">
@@ -43,8 +43,8 @@ export default function ContactPage() {
           <p className="text-sm text-slate-600 mb-3">
             Questions, feedback, partnership enquiries, or anything else.
           </p>
-          {/* TODO: replace [YOUR EMAIL ADDRESS] with your contact email */}
-          <span className="text-sm text-slate-500 italic">[YOUR EMAIL ADDRESS]</span>
+          {/* TODO: replace support@leetscuda.com with your contact email */}
+          <span className="text-sm text-slate-500 italic">support@leetscuda.com</span>
         </div>
       </div>
 

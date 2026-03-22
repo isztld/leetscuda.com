@@ -7,47 +7,42 @@ export const metadata: Metadata = {
 export default function ImpressumPage() {
   return (
     <article className="max-w-2xl mx-auto py-16 px-6 prose prose-slate">
+      {/* Swiss law (Art. 12 UWG) requires operator identification.
+          For private individuals, name + city + email is sufficient.
+          Add full address if operating as a registered business (GmbH/AG). */}
       <h1>Impressum</h1>
 
-      {/* TODO: replace all [YOUR FULL LEGAL NAME], [YOUR STREET ADDRESS], [YOUR POSTAL CODE], [YOUR CITY], [YOUR EMAIL ADDRESS] with real legal details */}
-      <h2>Angaben gemäß § 5 TMG</h2>
-      <p>
-        Name: [YOUR FULL LEGAL NAME]
+      <h2>Betreiber dieser Website / Operator of this website</h2>
+      <p>{/*
+        [YOUR FULL NAME]
         <br />
-        Adresse: [YOUR STREET ADDRESS]
+        */}Zürich, Switzerland
         <br />
-        [YOUR POSTAL CODE] [YOUR CITY]
-        <br />
-        Deutschland
+        E-Mail: support@leetscuda.com
       </p>
 
-      <h2>Kontakt</h2>
-      <p>E-Mail: [YOUR EMAIL ADDRESS]</p>
+      {/*
+      <h2>Verantwortlich für den Inhalt / Responsible for content</h2>
+      <p>[YOUR FULL NAME]</p>
+      */}
 
-      <h2>Verantwortlich für den Inhalt nach § 55 Abs. 2 RStV</h2>
       <p>
-        [YOUR FULL LEGAL NAME]
-        <br />
-        [YOUR STREET ADDRESS]
-        <br />
-        [YOUR POSTAL CODE] [YOUR CITY]
-        <br />
-        Deutschland
+        <em>Angaben gemäß Art. 12 UWG (Schweiz)</em>
       </p>
 
       <h2>Haftungsausschluss</h2>
       <h3>Haftung für Inhalte</h3>
       <p>
-        Als Diensteanbieter sind wir gemäß § 7 Abs. 1 TMG für eigene Inhalte auf diesen Seiten nach
-        den allgemeinen Gesetzen verantwortlich. Nach §§ 8 bis 10 TMG sind wir als Diensteanbieter
-        jedoch nicht verpflichtet, übermittelte oder gespeicherte fremde Informationen zu überwachen
-        oder nach Umständen zu forschen, die auf eine rechtswidrige Tätigkeit hinweisen.
+        Als Betreiber dieser Website sind wir für eigene Inhalte nach den allgemeinen Gesetzen
+        verantwortlich. Wir sind jedoch nicht verpflichtet, übermittelte oder gespeicherte fremde
+        Informationen zu überwachen oder nach Umständen zu forschen, die auf eine rechtswidrige
+        Tätigkeit hinweisen.
       </p>
       <p>
         Verpflichtungen zur Entfernung oder Sperrung der Nutzung von Informationen nach den
         allgemeinen Gesetzen bleiben hiervon unberührt. Eine diesbezügliche Haftung ist jedoch erst
-        ab dem Zeitpunkt der Kenntnis einer konkreten Rechtsverletzung möglich. Bei Bekanntwerden von
-        entsprechenden Rechtsverletzungen werden wir diese Inhalte umgehend entfernen.
+        ab dem Zeitpunkt der Kenntnis einer konkreten Rechtsverletzung möglich. Bei Bekanntwerden
+        von entsprechenden Rechtsverletzungen werden wir diese Inhalte umgehend entfernen.
       </p>
 
       <h3>Haftung für Links</h3>
@@ -67,10 +62,10 @@ export default function ImpressumPage() {
 
       <h2>Urheberrecht</h2>
       <p>
-        Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten unterliegen dem
-        deutschen Urheberrecht. Die Vervielfältigung, Bearbeitung, Verbreitung und jede Art der
-        Verwertung außerhalb der Grenzen des Urheberrechtes bedürfen der schriftlichen Zustimmung des
-        jeweiligen Autors bzw. Erstellers. Downloads und Kopien dieser Seite sind nur für den
+        Die durch den Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten unterliegen dem
+        schweizerischen Urheberrecht. Die Vervielfältigung, Bearbeitung, Verbreitung und jede Art
+        der Verwertung außerhalb der Grenzen des Urheberrechtes bedürfen der schriftlichen Zustimmung
+        des jeweiligen Autors bzw. Erstellers. Downloads und Kopien dieser Seite sind nur für den
         privaten, nicht kommerziellen Gebrauch gestattet.
       </p>
       <p>

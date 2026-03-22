@@ -35,7 +35,7 @@ const board = [
     color: 'bg-amber-100 text-amber-800',
     dot: 'bg-amber-500',
     items: [
-      'GPU execution tier — real CUDA execution on GPU hardware',
+      'GPU execution tiers',
       'Performance benchmarking — rank solutions by runtime',
       'Company interview guides — track-specific prep paths per company',
       'Quiz system — theory quizzes with auto-grading',

@@ -65,8 +65,8 @@ const faqs = [
     items: [
       {
         q: 'How do I delete my account?',
-        // TODO: replace [YOUR EMAIL ADDRESS] with your contact email
-        a: 'Email [YOUR EMAIL ADDRESS] with your username and we will delete your data within 30 days per GDPR Art. 17.',
+        // TODO: replace support@leetscuda.com with your contact email
+        a: 'To request deletion of your account and personal data under the revDSG (Swiss Data Protection Act) — or under GDPR if you are located in the EU — email support@leetscuda.com with your username. Requests are processed within 30 days.',
       },
       {
         q: 'What data do you store about me?',
