@@ -134,9 +134,9 @@ void solve(const float* h_a, const float* h_b, float* h_c, int n) {
 - name: "Small vectors"
   input: "4\n1.0 2.0 3.0 4.0\n10.0 20.0 30.0 40.0"
   expected: "11.0 22.0 33.0 44.0"
-- name: "All zeros"
-  input: "3\n0.0 0.0 0.0\n0.0 0.0 0.0"
-  expected: "0.0 0.0 0.0"
+- name: "Mixed values including zero"
+  input: "3\n5.0 -3.0 0.0\n2.0 7.0 -1.5"
+  expected: "7.0 4.0 -1.5"
 - name: "Not multiple of block size"
   input: "5\n1.0 1.0 1.0 1.0 1.0\n2.0 2.0 2.0 2.0 2.0"
   expected: "3.0 3.0 3.0 3.0 3.0"
@@ -147,8 +147,8 @@ void solve(const float* h_a, const float* h_b, float* h_c, int n) {
   input: "4\n-1.0 2.0 -3.0 4.0\n10.0 -20.0 30.0 -40.0"
   expected: "9.0 -18.0 27.0 -36.0"
 - name: "Large uniform array (1M elements)"
-  input: "1000000\nfill:1.0\nfill:2.0"
-  expected: "fill:3.0"
+  input: "verify 1000000\nfill:1.0\nfill:2.0"
+  expected: "1"
 
 ---solution---
 __global__ void vecAdd(const float* a, const float* b, float* c, int n) {

@@ -210,7 +210,9 @@ void solve(
 
     // Launch kernel
     int num_blocks = N;
-    fused_layer_norm_forward_kernel<<<num_blocks, THREADS_PER_BLOCK>>>(
+    // 2 arrays of THREADS_PER_BLOCK floats: shared_mean and shared_var
+    size_t smem = 2 * THREADS_PER_BLOCK * sizeof(float);
+    fused_layer_norm_forward_kernel<<<num_blocks, THREADS_PER_BLOCK, smem>>>(
         d_residual_out, d_normed_out, d_mean_out, d_rstd_out,
         d_inp1, d_inp2, d_weight, d_bias,
         N, C

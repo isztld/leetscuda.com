@@ -295,11 +295,11 @@ void solve(const float* hQ, const float* hK, const float* hV,
 }
 
 ---test-cases---
-- name: "Small sequence correctness (batch=1, seqlen=64, head_dim=64)"
-  input: "verify 1 64 64"
+- name: "Small sequence correctness (batch=1, seqlen=64, head_dim=64, nheads=1)"
+  input: "verify 1 64 64 1"
   expected: "1"
-- name: "Single head correctness (batch=1, seqlen=128, head_dim=32)"
-  input: "verify 1 128 32"
+- name: "Single head correctness (batch=1, seqlen=128, head_dim=32, nheads=1)"
+  input: "verify 1 128 32 1"
   expected: "1"
 - name: "Multiple heads (batch=1, seqlen=64, head_dim=64, nheads=2)"
   input: "verify 1 64 64 2"
@@ -631,10 +631,8 @@ int main() {
 
     if (strcmp(first, "verify") == 0) {
         // Verification mode
-        int batch_size, seqlen, head_dim;
-        scanf("%d %d %d", &batch_size, &seqlen, &head_dim);
-
-        int nheads = 1;  // Simplified: single head
+        int batch_size, seqlen, head_dim, nheads;
+        scanf("%d %d %d %d", &batch_size, &seqlen, &head_dim, &nheads);
         int qkv_size = batch_size * seqlen * nheads * head_dim;
 
         // Generate random test data
