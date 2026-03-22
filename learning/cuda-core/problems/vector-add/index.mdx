@@ -18,87 +18,40 @@ compute_min_cap: "sm_60"
 
 ## Background
 
-CUDA (Compute Unified Device Architecture) is NVIDIA's parallel computing platform that lets you write programs that execute across thousands of GPU cores simultaneously. The fundamental unit of work in CUDA is the **kernel** — a function that runs on the GPU and is executed by many threads at once.
+CUDA kernels run across thousands of GPU threads simultaneously. Each thread identifies itself using two built-in variables:
 
-Threads in CUDA are organised into a hierarchy: threads are grouped into **blocks**, and blocks are grouped into a **grid**. Each thread has a unique identity given by `threadIdx` (position within its block) and `blockIdx` (the block's position in the grid). Using these two built-in variables, a thread can compute a global index into the data it is responsible for.
+- `threadIdx.x` — the thread's position within its block
+- `blockIdx.x` — the block's position in the grid
 
-### Vector Addition: A Fundamental Operation
-
-Vector addition is one of the most basic operations in scientific computing, representing an **element-wise** operation where each output element depends only on the corresponding input elements. This makes it an ideal starting point for learning CUDA because:
-
-1. **Embarrassingly parallel**: Each output element `c[i]` is computed independently from `a[i]` and `b[i]`, with no dependencies between threads
-2. **Memory-bound, not compute-bound**: The operation performs one floating-point addition per element read, making memory bandwidth the primary performance limiter rather than arithmetic throughput
-3. **Simple correctness verification**: The expected output is trivial to compute, making it easy to validate your kernel
-
-### Thread Indexing and the 1D Grid Pattern
-
-The canonical 1D thread indexing formula is:
+The standard 1D global index formula is:
 
 ```cpp
 int i = blockIdx.x * blockDim.x + threadIdx.x;
 ```
 
-This formula maps each thread to a unique global index:
-- `threadIdx.x` ranges from 0 to `blockDim.x - 1` (e.g., 0 to 255 for a 256-thread block)
-- `blockIdx.x` ranges from 0 to `gridSize - 1`
-- The result `i` ranges from 0 to `gridSize * blockDim.x - 1`
-
-With 256 threads per block and 1024 blocks, you can address up to 262,144 elements (256 × 1024). For larger arrays, you need either more blocks (up to the 2^31-1 limit) or the grid-stride loop pattern covered in the next problem.
-
-### Memory Coalescing: Why Thread Order Matters
-
-When multiple threads in a warp (a group of 32 threads) access global memory, the GPU can combine their memory requests into a single transaction if the addresses are contiguous or have a regular stride. This is called **coalesced memory access**.
-
-In vector addition, when threads 0-31 (the first warp) access `a[0]`, `a[1]`, ..., `a[31]`, the GPU issues a single 128-byte memory transaction that loads all 32 floats at once. This is the most efficient use of memory bandwidth.
-
-Conversely, **uncoalesced access** occurs when threads in a warp access scattered addresses. For example, if thread 0 accesses `a[0]`, thread 1 accesses `a[1024]`, thread 2 accesses `a[2048]`, and so on, the GPU must issue 32 separate memory transactions, reducing effective bandwidth by up to 32x.
-
-The standard indexing formula `i = blockIdx.x * blockDim.x + threadIdx.x` ensures coalesced access because adjacent threads (within a warp) access adjacent memory locations. This is why proper thread indexing is critical for GPU performance, not just correctness.
-
-### CUDA Memory Management Workflow
-
-GPU memory management follows a strict separation between host (CPU) and device (GPU) memory. The typical workflow is:
-
-1. **Allocate device memory**: `cudaMalloc(&d_ptr, nbytes)` allocates nbytes on the GPU and returns a device pointer
-2. **Copy data to device**: `cudaMemcpy(d_ptr, h_ptr, nbytes, cudaMemcpyHostToDevice)` transfers data from host to device
-3. **Launch kernel**: `kernel<<<gridSize, blockSize>>>(d_ptr, ...)` executes the kernel on the GPU
-4. **Copy results back**: `cudaMemcpy(h_ptr, d_ptr, nbytes, cudaMemcpyDeviceToHost)` transfers results to host
-5. **Free device memory**: `cudaFree(d_ptr)` releases GPU memory
-
-All of these operations are **blocking** by default (except kernel launches, which are asynchronous). This means `cudaMemcpy` with `HostToDevice` will not return until the data transfer is complete, and `cudaFree` will not return until all prior operations on that memory have finished.
-
-Error handling in CUDA typically involves checking the return value of each API call, as errors like `cudaErrorMemoryAllocation` or `cudaErrorInvalidDevicePointer` can occur if the GPU runs out of memory or receives invalid pointers.
+Because the grid may not divide evenly into the array length, always guard with `if (i < n)` before accessing memory.
 
 ## What to Implement
 
-Implement the `vecAdd` CUDA kernel that adds two floating-point arrays element-wise:
+Implement the `vecAdd` CUDA kernel that adds two float arrays element-wise:
 
 ```
 c[i] = a[i] + b[i]   for every i in [0, n)
 ```
 
-Each thread should handle exactly one element. Use the standard 1-D indexing formula:
-
-```cpp
-int i = blockIdx.x * blockDim.x + threadIdx.x;
-```
-
-Guard against out-of-bounds access with `if (i < n)` — the last block in the grid may have threads beyond the array length.
+Each thread handles exactly one element. The host code allocates device memory, transfers data, and launches your kernel with 256 threads per block — you only need to write the kernel.
 
 ## Constraints
 
 - `1 ≤ n ≤ 10,000,000`
-- Arrays `a` and `b` contain 32-bit floats in the range `[-10^6, 10^6]`
-- Use 256 threads per block (the host code already sets this up for you)
-- Do not modify the host setup code in `solve()`
+- Elements are 32-bit floats in `[-10⁶, 10⁶]`
+- 256 threads per block (set by the harness)
 
 ## Example
 
 **Input:** `n = 4`, `a = [1.0, 2.0, 3.0, 4.0]`, `b = [10.0, 20.0, 30.0, 40.0]`
 
 **Output:** `c = [11.0, 22.0, 33.0, 44.0]`
-
-Each element `c[i]` is the sum of `a[i]` and `b[i]`. Thread 0 computes `c[0] = 1 + 10 = 11`, thread 1 computes `c[1] = 2 + 20 = 22`, and so on.
 
 ---starter-code---
 #include <cuda_runtime.h>
@@ -107,27 +60,6 @@ Each element `c[i]` is the sum of `a[i]` and `b[i]`. Thread 0 computes `c[0] = 1
 // Each thread computes one element: c[i] = a[i] + b[i].
 __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
     // Your code here
-}
-
-// Host wrapper — allocates device memory, copies data, launches kernel, copies result back.
-// Do NOT modify anything below this line.
-void solve(const float* h_a, const float* h_b, float* h_c, int n) {
-    float *d_a, *d_b, *d_c;
-    cudaMalloc(&d_a, n * sizeof(float));
-    cudaMalloc(&d_b, n * sizeof(float));
-    cudaMalloc(&d_c, n * sizeof(float));
-
-    cudaMemcpy(d_a, h_a, n * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, h_b, n * sizeof(float), cudaMemcpyHostToDevice);
-
-    const int blockSize = 256;
-    const int gridSize  = (n + blockSize - 1) / blockSize;
-    vecAdd<<<gridSize, blockSize>>>(d_a, d_b, d_c, n);
-
-    cudaMemcpy(h_c, d_c, n * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_a);
-    cudaFree(d_b);
-    cudaFree(d_c);
 }
 
 ---test-cases---
@@ -163,6 +95,27 @@ __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
 #include <cstring>
 #include <cmath>
 #include <vector>
+
+// Host wrapper — allocates device memory, copies data, launches kernel, copies result back.
+// Do NOT modify anything below this line.
+void solve(const float* h_a, const float* h_b, float* h_c, int n) {
+    float *d_a, *d_b, *d_c;
+    cudaMalloc(&d_a, n * sizeof(float));
+    cudaMalloc(&d_b, n * sizeof(float));
+    cudaMalloc(&d_c, n * sizeof(float));
+
+    cudaMemcpy(d_a, h_a, n * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, n * sizeof(float), cudaMemcpyHostToDevice);
+
+    const int blockSize = 256;
+    const int gridSize  = (n + blockSize - 1) / blockSize;
+    vecAdd<<<gridSize, blockSize>>>(d_a, d_b, d_c, n);
+
+    cudaMemcpy(h_c, d_c, n * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_c);
+}
 
 // Read a float (either a single value or "fill:value" for bulk values)
 static float readFloat(bool& isFill, float& fillValue) {
@@ -286,12 +239,13 @@ int main() {
 }
 
 ---editorial---
+
 ## Approach
 
-This is the canonical "Hello, CUDA" problem. Each thread independently computes one output element: `c[i] = a[i] + b[i]`. The key steps are:
+Each thread independently computes one output element: `c[i] = a[i] + b[i]`. The key steps are:
 
 1. Compute the global thread index: `int i = blockIdx.x * blockDim.x + threadIdx.x`
-2. Guard against out-of-bounds: `if (i < n)` — the last block may have threads beyond the array length when `n` is not a multiple of `blockDim.x`
+2. Guard against out-of-bounds access with `if (i < n)`. The last block may have threads beyond the array length when `n` is not a multiple of `blockDim.x`.
 3. Perform the addition and write to output
 
 ```cpp
@@ -305,7 +259,7 @@ __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
 
 ### Kernel Launch Configuration
 
-The host code launches the kernel with:
+The harness launches the kernel with:
 
 ```cpp
 const int blockSize = 256;
@@ -313,134 +267,28 @@ const int gridSize = (n + blockSize - 1) / blockSize;
 vecAdd<<<gridSize, blockSize>>>(d_a, d_b, d_c, n);
 ```
 
-This configuration ensures:
-- **Full occupancy**: All threads are busy (except possibly the last warp of the last block)
-- **Correct coverage**: The grid covers exactly `gridSize * blockSize >= n` indices
-- **Efficient use**: No more than 511 "wasted" threads (when n is just over a multiple of 256)
+The grid size uses ceiling division. `(n + blockSize - 1) / blockSize` is the standard integer idiom for `ceil(n / blockSize)`, guaranteeing the grid covers all `n` elements even when `n` is not a multiple of 256. 256 threads per block is a practical sweet spot: too few threads can't hide memory latency through parallelism; too many can reduce the number of blocks that fit on a streaming multiprocessor simultaneously.
 
-### CUDA Error Handling Patterns
+### Performance
 
-While the host code in this problem omits error checking for clarity, production CUDA code should handle errors at every step:
+This kernel is memory-bound, not compute-bound. Each element requires one addition but two reads and one write. The bottleneck is global memory bandwidth, not arithmetic throughput.
 
-```cpp
-// Pattern 1: Check cudaMalloc for null
-float *d_ptr;
-cudaError_t err = cudaMalloc(&d_ptr, nbytes);
-if (err != cudaSuccess) {
-    fprintf(stderr, "cudaMalloc failed: %s\n", cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-}
-
-// Pattern 2: Check kernel launch errors (requires a sync to flush)
-vecAdd<<<gridSize, blockSize>>>(d_a, d_b, d_c, n);
-err = cudaGetLastError();  // Catches launch errors (invalid config, etc.)
-if (err != cudaSuccess) {
-    fprintf(stderr, "Kernel launch failed: %s\n", cudaGetErrorString(err));
-}
-
-// Pattern 3: Check for runtime errors after cudaMemcpy
-err = cudaMemcpy(h_c, d_c, nbytes, cudaMemcpyDeviceToHost);
-if (err != cudaSuccess) {
-    fprintf(stderr, "cudaMemcpy failed: %s\n", cudaGetErrorString(err));
-}
-```
-
-Common error types:
-- `cudaErrorInvalidDeviceFunction`: Kernel not compiled for target architecture
-- `cudaErrorInvalidConfiguration`: Invalid gridSize or blockSize (e.g., blockSize > 1024)
-- `cudaErrorMemoryAllocation`: GPU out of memory
-- `cudaErrorIllegalAddress`: Kernel accessed invalid memory (bug in your code)
-
-### Memory Performance: Why 256 Threads Per Block?
-
-The choice of 256 threads per block is a practical compromise:
-
-- **Small blocks (32-64 threads)**: May not provide enough parallelism to hide memory latency
-- **Large blocks (512-1024 threads)**: May reduce occupancy (fewer blocks can reside on an SM simultaneously)
-- **256 threads**: Good balance — 8 warps per block, fits easily within SM register and shared memory limits
-
-On an H100 GPU with 132 SMs and 4 warps schedulers per SM:
-- With 256-thread blocks: Each SM can run multiple blocks concurrently
-- With proper register usage, you can achieve high occupancy (many warps resident per SM)
-- High occupancy enables zero-overhead context switching between warps when one stalls on memory
-
-## Complexity
-
-### Time Complexity
-
-- **Serial baseline**: O(n) — a CPU loop processes n elements sequentially
-- **Parallel GPU**: O(n/P + log P) where P is the number of parallel threads
-  - `n/P`: Each of P threads processes ~n/P elements
-  - `log P`: Synchronization and kernel launch overhead (negligible for large n)
-
-For n = 10,000,000 and P ≈ 65,536 active threads (256 blocks × 256 threads):
-- Each thread processes ~152 elements
-- Theoretical speedup: ~152x (ignoring memory overhead)
-
-In practice, speedup is limited by:
-- **Memory bandwidth**: H100 achieves ~3.35 TB/s HBM3 bandwidth
-- **Kernel launch latency**: ~10-20 microseconds per launch
-- **PCIe transfer time**: Host↔device transfers add 100-500 microseconds for 40MB of data
-
-### Space Complexity
-
-- **Device memory**: O(n) — three float arrays of size n
-  - For n = 10,000,000: 3 × 10M × 4 bytes ≈ 120 MB
-  - This fits easily in typical GPU memory (H100: 80 GB, A100: 40-80 GB)
-- **Host memory**: O(n) — three float arrays for input/output
-- **Extra space**: O(1) — no auxiliary buffers needed
-
-### Memory Throughput Analysis
-
-For n = 10,000,000 floats (40 MB):
-- **Reads**: 2 × 40 MB = 80 MB (arrays a and b)
-- **Writes**: 1 × 40 MB = 40 MB (array c)
-- **Total**: 120 MB memory traffic
-
-On an H100 with 3.35 TB/s bandwidth:
-- Theoretical memory time: 120 MB / 3.35 TB/s ≈ 36 microseconds
-- Realistic time (with overhead): ~100-200 microseconds
-
-Compare to CPU (DDR5, ~50 GB/s):
-- Memory time: 120 MB / 50 GB/s ≈ 2.4 milliseconds
-- Speedup from bandwidth alone: ~12-24x
+The standard indexing formula ensures **coalesced memory access**: adjacent threads (within a warp of 32) access adjacent memory addresses, so the GPU services an entire warp's reads in a single 128-byte transaction rather than 32 separate ones.
 
 ## Key Insights
 
-1. **The 1D indexing formula is universal**: `blockIdx.x * blockDim.x + threadIdx.x` is the foundation for all 1D CUDA problems. Memorize this pattern.
+1. **Bounds checking is non-negotiable**: when `n` is not a multiple of `blockDim.x`, the last block has threads with indices beyond the array. The `if (i < n)` guard prevents those threads from writing to invalid memory.
 
-2. **Bounds checking is non-negotiable**: When n is not a multiple of the total thread count, the last block has "overflow" threads that must not access memory. The `if (i < n)` guard is essential.
+2. **Ceiling division is a universal pattern**: `(n + blockSize - 1) / blockSize` appears in virtually every CUDA kernel launch. Understand it once, use it everywhere.
 
-3. **Coalesced access is automatic with proper indexing**: The standard indexing formula ensures that thread 0, 1, 2, ..., 31 (the first warp) access consecutive memory addresses, enabling efficient 128-byte memory transactions.
-
-4. **Grid size calculation uses ceiling division**: `(n + blockSize - 1) / blockSize` computes `ceil(n / blockSize)` using integer arithmetic. This is a common idiom in CUDA code.
-
-5. **This problem is memory-bound, not compute-bound**: Adding two floats takes a fraction of a nanosecond. The dominant cost is loading a and b from global memory and writing c back. Optimizations that reduce memory traffic (e.g., reusing loaded values) have more impact than optimizing the arithmetic.
+3. **The indexing formula ensures correctness and performance simultaneously**: `blockIdx.x * blockDim.x + threadIdx.x` gives each thread a unique global index and keeps adjacent threads on adjacent memory addresses for coalesced access.
 
 ## Common Mistakes
 
-### Critical Errors
+- **Forgetting the bounds check**: for `n = 5` and `blockDim.x = 256`, block 0 spawns 256 threads but only indices 0–4 are valid. Without the guard, threads 5–255 write to arbitrary memory locations.
 
-- **Forgetting the bounds check**: If n=5 and blockDim.x=256, block 0 has 256 threads but only indices 0–4 are valid. Threads 5–255 write to c[5], c[6], ..., c[255] — undefined behavior that may corrupt memory or cause a crash.
+- **Using floor division for grid size**: `n / blockSize` truncates, so for `n = 513` and `blockSize = 256` you get 2 blocks covering only indices 0–511, silently skipping the last element.
 
-- **Off-by-one in grid size**: Using `n / blockSize` instead of `(n + blockSize - 1) / blockSize` causes the last elements to be skipped. For n=513 and blockSize=256, `513/256 = 1` (integer division), but you need 2 blocks to cover all elements.
-
-- **Swapping a and b in the formula**: Writing `c[i] = a[i] + b` (missing index) or `c[i] = a + b[i]` (missing index) compiles but produces garbage or crashes.
-
-### Performance Pitfalls
-
-- **Using too few blocks**: Launching with gridSize=1 limits parallelism to 256 threads, making the GPU act like a 256-core CPU. For large n, use more blocks to saturate the GPU.
-
-- **Unnecessary synchronization**: Adding `__syncthreads()` inside the kernel is redundant and harmful. Each thread works independently, so no synchronization is needed.
-
-- **Ignoring kernel launch asynchrony**: Kernel launches are asynchronous — the host continues immediately after `<<<>>>`. If you need to ensure completion, call `cudaDeviceSynchronize()` or check for errors.
-
-### Debugging Tips
-
-- **Use cuda-memcheck**: Run `cuda-memcheck ./program` to detect out-of-bounds accesses, race conditions, and other runtime errors.
-
-- **Check the last warp**: The most common bug is in the last block's overflow threads. Test with n values just above powers of 2 (e.g., n=257, n=513, n=1025) to trigger edge cases.
-
-- **Print thread indices**: For debugging, have threads print their indices: `if (threadIdx.x == 0) printf("Block %d: threads 0-%d\n", blockIdx.x, blockDim.x-1);`
+- **Adding unnecessary synchronisation**: each thread works entirely independently, so `__syncthreads()` inside this kernel is redundant and wastes cycles.
 
 ---end---
