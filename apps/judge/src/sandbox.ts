@@ -41,9 +41,13 @@ function sanitizeOutput(s: string): string {
     .replace(/[^\x09\x0a\x0d\x20-\x7e]/g, '') // keep tab, LF, CR, printable ASCII
 }
 
+// Custom images built from Dockerfile.cuda-sandbox — adds a proper nobody user (uid 65534)
+// with a real home directory so glibc TLS initialization succeeds under --user 65534:65534.
+// Build with: docker build --build-arg CUDA_IMAGE=nvidia/cuda:{ver}-devel-... \
+//   -t leetscuda-cuda-sandbox:{ver} -f apps/judge/Dockerfile.cuda-sandbox .
 const CUDA_IMAGES: Record<string, string> = {
-  '13.0': 'nvidia/cuda:13.0.0-devel-ubuntu24.04',
-  '12.6': 'nvidia/cuda:12.6.0-devel-ubuntu22.04',
+  '13.0': 'leetscuda-cuda-sandbox:13.0',
+  '12.6': 'leetscuda-cuda-sandbox:12.6',
 }
 
 function getDockerImage(runtime: 'cpp' | 'cuda', cudaCapability?: CudaCapability): string {
@@ -175,8 +179,7 @@ async function runDocker(
     '--user', '65534:65534',
     // --read-only is intentionally omitted: docker cp into a stopped container writes through
     // the overlay filesystem (tmpfs mounts are not active until the container starts), so
-    // --read-only blocks the cp even for tmpfs-backed paths. The other layers (UID 65534,
-    // --cap-drop ALL, seccomp, --network none) already prevent meaningful filesystem abuse.
+    // --read-only blocks the cp even for tmpfs-backed paths.
     '--tmpfs', '/tmp:size=64m,mode=1777',
     '--tmpfs', '/sandbox:size=32m,mode=0777',
     '--cap-drop', 'ALL',

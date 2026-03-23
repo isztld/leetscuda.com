@@ -739,7 +739,7 @@ Each sandbox container is created with a fixed set of flags. Here is the complet
 | `--memory 512m` | — | ✓ | CUDA programs need more memory for CUDA runtime initialization and GPU buffers. |
 | `--cpus 0.5` | ✓ | ✓ | Limits the container to 50% of one CPU core. Prevents CPU monopolization on multi-tenant judge nodes. |
 | `--pids-limit 64` | ✓ | ✓ | Kernel cgroup limit on the total number of processes/threads the container can create. Unlike `--ulimit nproc`, this cannot be overridden from inside the container even with elevated privileges. Prevents fork bombs. |
-| `--user 65534:65534` | ✓ | ✓ | Run all container processes as `nobody:nogroup` (UID/GID 65534). Ensures the user code is never root, even if container isolation is partially broken. |
+| `--user 65534:65534` | ✓ | ✓ | Run all container processes as `nobody:nogroup` (UID/GID 65534). The CUDA sandbox uses `Dockerfile.cuda-sandbox` which re-creates `nobody` with a real home directory — the base nvidia/cuda image ships `nobody` without a home dir (`/nonexistent`), which causes glibc TLS initialization to fail. |
 | `--read-only` | — | — | Not used. `docker cp` into a stopped container writes through the overlay filesystem (tmpfs mounts are not active until start), so `--read-only` blocks the pre-start file injection even for tmpfs-backed paths. UID 65534 + `--cap-drop ALL` + seccomp already prevent meaningful write abuse. |
 | `--tmpfs /tmp:size=64m,mode=1777` | ✓ | ✓ | Writable tmpfs for runtime temp files (stays in RAM, auto-cleared on container exit). |
 | `--tmpfs /sandbox:size=32m,mode=0777` | ✓ | ✓ | Writable tmpfs where source code and compiled binary live. Populated via `docker cp` before the container starts. |

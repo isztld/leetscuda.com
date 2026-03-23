@@ -1,0 +1,23 @@
+# Thin wrapper over an nvidia/cuda devel image that adds a proper non-root sandbox user.
+# The base nvidia/cuda images ship with nobody (uid 65534) but without a home directory,
+# which causes glibc TLS initialization to fail when the container is started with
+# --user 65534:65534. This image adds a real home dir and /etc/passwd entry so that
+# glibc can allocate TLS blocks normally.
+#
+# Build for each CUDA version the judge supports:
+#   docker build --build-arg CUDA_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu24.04 \
+#     -t leetscuda-cuda-sandbox:13.0 -f apps/judge/Dockerfile.cuda-sandbox .
+#
+#   docker build --build-arg CUDA_IMAGE=nvidia/cuda:12.6.0-devel-ubuntu22.04 \
+#     -t leetscuda-cuda-sandbox:12.6 -f apps/judge/Dockerfile.cuda-sandbox .
+
+ARG CUDA_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu24.04
+FROM ${CUDA_IMAGE}
+
+# Give nobody a real home directory so glibc TLS init succeeds.
+# Ubuntu ships nobody with home=/nonexistent (no such dir), which breaks
+# TLS block allocation when the container runs as --user 65534:65534.
+# nogroup/nobody already exist in the base image — just update the home dir.
+RUN mkdir -p /home/sandbox /sandbox && \
+    chown 65534:65534 /home/sandbox /sandbox && \
+    usermod -d /home/sandbox nobody
