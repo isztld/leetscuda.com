@@ -1,8 +1,7 @@
 # judge-cuda-cpp — Architecture
 
-> Version: 0.1.0 (design, pre-implementation)
+> Version: 0.1.0
 > Runtimes handled: `cpp` (g++), `cuda` (nvcc)
-> Replaces: `apps/judge` (cpp + cuda paths only)
 
 ---
 
@@ -78,8 +77,8 @@ access).
 - **Defense in depth**: security is layered rather than singular. No single
   bypass grants useful access: bearer token auth → SHA-256 hashed token
   storage → timing-safe comparison → socket proxy allowlist → network none →
-  cap-drop ALL → no-new-privileges → seccomp whitelist → user 65534 → tmpfs
-  scratch space → output size cap → pids limit → memory/CPU limit.
+  cap-drop ALL → no-new-privileges → seccomp whitelist → user 65534 →
+  ulimit fsize cap → output size cap → pids limit → memory/CPU limit.
 
 - **Capability-aware routing**: the judge token declares what it can run
   (`cpp`, `cuda:13.0:sm_120`). Jobs requiring a higher CUDA version or
@@ -210,16 +209,15 @@ docker create  --name lc-build-<submissionId>-<tcIdx>
                --cap-drop ALL
                --security-opt no-new-privileges:true
                --security-opt seccomp=<build-seccomp>
-               --tmpfs /sandbox:size=64m,mode=0777
-               --tmpfs /tmp:size=64m,mode=1777
                --label leetscuda-judge=1
                --label leetscuda-phase=build
-               <image>  /bin/sh -c "<compile command>"
+               --entrypoint /bin/sh
+               <image>  -c "<compile command>"
 
-docker cp <tempCodePath>  lc-build-..:/sandbox/solution.{cu,cpp}
+docker cp <tempCodePath>  lc-build-...:/tmp/solution.{cu,cpp}
 docker start lc-build-...
 docker wait  lc-build-...           (30 s compile timeout)
-docker cp    lc-build-...:/sandbox/solution  <tempBinaryPath>
+docker cp    lc-build-...:/tmp/solution  <tempBinaryPath>
 docker rm -f lc-build-...
 ```
 
@@ -237,23 +235,23 @@ is present in this container.
 ```
 docker create  --name lc-eval-<submissionId>-<tcIdx>
                --network none
-               --memory 256m          (128m for cpp, 512m for cuda)
+               --memory 128m          (cpp) / 512m (cuda)
                --cpus 0.5
                --pids-limit 32        (binary should not fork much)
                --user 65534:65534
                --cap-drop ALL
                --security-opt no-new-privileges:true
                --security-opt seccomp=<eval-seccomp>
-               --tmpfs /sandbox:size=16m,mode=0777
-               --tmpfs /tmp:size=16m,mode=1777
+               --ulimit fsize=67108864   (64 MiB per-file write cap)
                --label leetscuda-judge=1
                --label leetscuda-phase=eval
                [--gpus device=0]      (cuda only)
                [--cap-add SYS_PTRACE] (cuda only — NVIDIA driver requires it)
-               <image>  /bin/sh -c "/sandbox/solution < /sandbox/input.txt"
+               --entrypoint /bin/sh
+               <image>  -c "/tmp/solution < /tmp/input.txt"
 
-docker cp <tempBinaryPath>  lc-eval-...:/sandbox/solution
-docker cp <tempInputPath>   lc-eval-...:/sandbox/input.txt
+docker cp <tempBinaryPath>  lc-eval-...:/tmp/solution
+docker cp <tempInputPath>   lc-eval-...:/tmp/input.txt
 docker start  lc-eval-...
 docker wait   lc-eval-...   (effectiveTimeout ms — race with sleep())
 docker logs   lc-eval-...   → stdout / stderr
@@ -303,11 +301,27 @@ via `docker cp` rather than host-path bind mounts. This is intentional:
   or symlink attack inside the container could reach host files outside the
   intended directory.
 - `docker cp` writes into the container's overlay filesystem layer. The
-  container process sees a flat `/sandbox` directory with no connection to
-  the host path where the files originated.
+  container process sees files under `/tmp` with no connection to the host
+  path where the files originated.
+
+**Why `/tmp` and not a dedicated `/sandbox` tmpfs?**
+`docker cp` writes to the container's overlay layer, not to any tmpfs mount.
+A tmpfs mount only activates when the container starts; before start the
+mountpoint does not exist in the overlay, so `docker cp` to `/sandbox` in a
+stopped container fails with "could not find the file". After start,
+the tmpfs *masks* the overlay layer — any files injected earlier via `docker
+cp` become invisible to the running process. The only way to write into a
+running container's tmpfs is via `docker exec`, which is blocked by the
+socket proxy (`EXEC: 0`). Using `/tmp` — which is a real directory in the
+base images (`gcc:14`, `nvidia/cuda`) — avoids this limitation entirely.
+
+The disk-DoS mitigation that tmpfs `size=` would have provided is replaced by
+`--ulimit fsize=67108864` (64 MiB per-file write cap) on eval containers.
 
 Temp files on the host are written to `os.tmpdir()` under unique names and
 deleted immediately after the `docker cp` completes (in a `finally` block).
+Binary files are `chmod 0o755` before injection so the execute bit is
+preserved through `docker cp`'s permission-copy semantics.
 
 ### 6.6 Timeout and two-phase kill
 
@@ -395,8 +409,7 @@ direct socket (acceptable in dev; forbidden in prod).
 | `--cap-drop` | `ALL` | Drop all Linux capabilities |
 | `--security-opt` | `no-new-privileges:true` | Prevent privilege escalation via setuid |
 | `--security-opt` | `seccomp=<build-seccomp>` | Syscall allowlist (build profile is slightly broader to accommodate compiler) |
-| `--tmpfs /sandbox` | `size=64m,mode=0777` | Source + binary scratch space |
-| `--tmpfs /tmp` | `size=64m,mode=1777` | Compiler temp files |
+| `--entrypoint` | `/bin/sh` | Bypasses NVIDIA wrapper entrypoint; CMD args become `-c <cmd>` directly |
 | `--label` | `leetscuda-judge=1` | Orphan cleanup fingerprint |
 
 ### 7.3 Container flags — eval phase
@@ -408,8 +421,7 @@ Same as build phase except:
 | `--memory` | `128m` (cpp) / `512m` (cuda) | Tighter for cpp; CUDA needs GPU memory headroom |
 | `--cpus` | `0.5` | Binary runs on half a core |
 | `--pids-limit` | `32` | Binary should not fork |
-| `--tmpfs /sandbox` | `size=16m` | Only binary + input; no compiler output needed |
-| `--tmpfs /tmp` | `size=16m` | Smaller; just runtime temp space |
+| `--ulimit fsize` | `67108864` (64 MiB) | Per-file write cap; primary guard against disk DoS from user code |
 
 ### 7.4 Seccomp profiles
 
@@ -636,9 +648,18 @@ Pre-pull the sandbox image on the host before starting the judge:
 docker pull gcc:14
 ```
 
-Seccomp profiles must be present at `/etc/judge/seccomp/cpp.json` and
-`/etc/judge/seccomp/cuda.json` on the host, bind-mounted read-only into the
-judge container at the same path.
+Seccomp profiles are bind-mounted read-only from the repo directory:
+
+```yaml
+volumes:
+  - ./seccomp/cpp.json:/etc/judge/seccomp/cpp.json:ro
+  - ./seccomp/cuda.json:/etc/judge/seccomp/cuda.json:ro
+```
+
+The source paths are relative to the `apps/judge-cuda-cpp/` directory so that
+local dev works without installing profiles system-wide. Production deployments
+may override by installing profiles under `/etc/judge/seccomp/` on the host
+and adjusting the source side of each mount.
 
 ### 13.2 GPU judge (cpp + cuda)
 
@@ -688,7 +709,7 @@ code, judge API token, other containers on the Docker host.
 | DoS via fork bomb | `--pids-limit 32` (eval), `128` (build) |
 | DoS via memory exhaustion | `--memory 128m / 512m` hard limit |
 | DoS via CPU spin | `--cpus 0.5 / 1.0` throttle + eval timeout |
-| DoS via disk fill | `--tmpfs` with `size=` limits |
+| DoS via disk fill | `--ulimit fsize=67108864` caps each individual file write at 64 MiB |
 | DoS via infinite output | Output truncation at 64 KiB per stream |
 | Persist between jobs | Containers removed with `docker rm -f` in `finally` |
 | Abuse Docker socket | Socket proxy allowlist; `EXEC: 0`, `IMAGES: 0`, `NETWORKS: 0` |

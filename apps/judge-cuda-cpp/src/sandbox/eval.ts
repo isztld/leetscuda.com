@@ -119,6 +119,12 @@ export async function runEvalContainer(
     '--security-opt', 'no-new-privileges:true',
     ...seccompArgs,
     ...cudaArgs,
+    // --ulimit fsize caps each individual file write at 64 MiB.
+    // This is the primary guard against disk DoS from malicious user code.
+    // docker cp into a stopped container cannot target a tmpfs (the mount
+    // only activates on start and masks overlay writes), so we use the
+    // container's overlay layer for /tmp and rely on ulimit + immediate rm.
+    '--ulimit',       'fsize=67108864',
     '--label',        'leetscuda-judge=1',
     '--label',        'leetscuda-phase=eval',
     '--entrypoint',   '/bin/sh',

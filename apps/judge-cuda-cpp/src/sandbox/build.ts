@@ -128,6 +128,8 @@ export async function runBuildContainer(
     )
 
     // ── Phase 2: inject source file (§6.5) ────────────────────────────────
+    // docker cp to a stopped container writes to the overlay layer.
+    // /tmp exists as a real directory in the base image so the cp succeeds.
     await docker(['cp', srcFile, `${containerName}:/tmp/solution.${ext}`])
 
     // Temp source file no longer needed on the host.
