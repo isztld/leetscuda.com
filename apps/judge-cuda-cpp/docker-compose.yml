@@ -99,12 +99,13 @@ services:
     tmpfs:
       - /tmp:size=512m,mode=1777
 
-    # Seccomp profiles bind-mounted read-only from the host so the operator
-    # can update them without rebuilding the judge image.  The Dockerfile also
-    # COPYs them as a fallback for offline/CI use.
+    # Seccomp profiles bind-mounted read-only from the repo so they can be
+    # updated without rebuilding the image.  Production deployments may
+    # override these paths by installing profiles under /etc/judge/seccomp/
+    # and adjusting the source side of each mount.
     volumes:
-      - /etc/judge/seccomp/cpp.json:/etc/judge/seccomp/cpp.json:ro
-      - /etc/judge/seccomp/cuda.json:/etc/judge/seccomp/cuda.json:ro
+      - ./seccomp/cpp.json:/etc/judge/seccomp/cpp.json:ro
+      - ./seccomp/cuda.json:/etc/judge/seccomp/cuda.json:ro
 
     environment:
       # Point the docker CLI inside the judge container at the socket proxy.
