@@ -648,7 +648,7 @@ Same as CPU judge plus:
 2. Build the custom CUDA sandbox image:
    ```bash
    docker build \
-     --build-arg CUDA_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu22.04 \
+     --build-arg CUDA_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu24.04 \
      -t leetscuda-cuda-sandbox:13.0 \
      -f Dockerfile.cuda-sandbox .
    ```
