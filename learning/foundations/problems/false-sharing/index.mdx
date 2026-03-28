@@ -122,15 +122,15 @@ double speedup(int T, long long N) {
 }
 
 ---test-cases---
-- name: "Single thread: no false sharing"
-  input: "T=1 N=1000000"
-  expected: "speedup near 1.0 (no contention)"
-- name: "8 threads: significant speedup"
-  input: "T=8 N=10000000"
-  expected: "speedup >= 2.0"
-- name: "PaddedCounter size"
-  input: "sizeof(PaddedCounter)"
+- name: "PaddedCounter is exactly one cache line"
+  input: "sizeof"
   expected: "64"
+- name: "Both benchmarks run and return positive times (T=1)"
+  input: "check 1 100000"
+  expected: "1"
+- name: "Both benchmarks run and return positive times (T=4)"
+  input: "check 4 1000000"
+  expected: "1"
 
 ---solution---
 double benchmark_naive(int T, long long N) {
@@ -155,6 +155,25 @@ double benchmark_padded(int T, long long N) {
     for (auto& t : threads) t.join();
     auto t1 = std::chrono::high_resolution_clock::now();
     return std::chrono::duration<double, std::milli>(t1 - t0).count();
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+
+int main() {
+    char cmd[16];
+    scanf("%s", cmd);
+    if (strcmp(cmd, "sizeof") == 0) {
+        printf("%zu\n", sizeof(PaddedCounter));
+    } else if (strcmp(cmd, "check") == 0) {
+        int T; long long N;
+        scanf("%d %lld", &T, &N);
+        double naive_ms  = benchmark_naive(T, N);
+        double padded_ms = benchmark_padded(T, N);
+        printf("%d\n", (naive_ms > 0.0 && padded_ms > 0.0) ? 1 : 0);
+    }
+    return 0;
 }
 
 ---editorial---

@@ -87,15 +87,15 @@ void flash_attention_forward(
 }
 
 ---test-cases---
-- name: "Identity keys match queries"
-  input: "seq=2 dim=2 block=1\nQ=K=I, V=[[1,2],[3,4]]"
-  expected: "standard attention output within 1e-4"
-- name: "Uniform attention"
-  input: "seq=4 dim=1 block=2\nAll Q=K=0 (uniform softmax), V=[1,2,3,4]"
-  expected: "each output row = mean(V) = 2.5"
-- name: "Block size equals seq len"
-  input: "seq=4 dim=4 block=4\nrandom Q,K,V"
-  expected: "matches naive attention"
+- name: "Uniform attention: Q=K=0 gives mean(V) for all rows"
+  input: "4 1 2\n0 0 0 0\n0 0 0 0\n1 2 3 4"
+  expected: "2.5000\n2.5000\n2.5000\n2.5000"
+- name: "Diagonal attention: strong diagonal keys route each query to its value"
+  input: "2 1 1\n1 -1\n1 -1\n3 5"
+  expected: "3.2384\n4.7616"
+- name: "2D head: symmetric Q=K=I routes rows to near-opposite V columns"
+  input: "2 2 1\n1 0 0 1\n1 0 0 1\n2 0 0 2"
+  expected: "1.3398 0.6602\n0.6602 1.3398"
 
 ---solution---
 void flash_attention_forward(
@@ -145,6 +145,37 @@ void flash_attention_forward(
         for (int d = 0; d < head_dim; ++d)
             out[d] = o_row[d] / l;
     }
+}
+
+---harness---
+#include <cstdio>
+#include <vector>
+#include <cmath>
+
+int main() {
+    int seq_len, head_dim, block_size;
+    scanf("%d %d %d", &seq_len, &head_dim, &block_size);
+
+    std::vector<float> Q(seq_len * head_dim);
+    std::vector<float> K(seq_len * head_dim);
+    std::vector<float> V(seq_len * head_dim);
+    std::vector<float> O(seq_len * head_dim, 0.0f);
+
+    for (int i = 0; i < seq_len * head_dim; i++) scanf("%f", &Q[i]);
+    for (int i = 0; i < seq_len * head_dim; i++) scanf("%f", &K[i]);
+    for (int i = 0; i < seq_len * head_dim; i++) scanf("%f", &V[i]);
+
+    flash_attention_forward(Q.data(), K.data(), V.data(), O.data(),
+                            seq_len, head_dim, block_size);
+
+    for (int i = 0; i < seq_len; i++) {
+        for (int d = 0; d < head_dim; d++) {
+            if (d) printf(" ");
+            printf("%.4f", O[i * head_dim + d]);
+        }
+        printf("\n");
+    }
+    return 0;
 }
 
 ---editorial---

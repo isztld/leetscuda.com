@@ -121,15 +121,15 @@ RooflineResult analyse_kernel(
 }
 
 ---test-cases---
-- name: "Memory-bound vector add"
-  input: "flops=2e9 bytes=24e9 peak_gflops=19500 peak_gbps=2000"
-  expected: "ai=0.083 compute_bound=false attainable≈166 GFLOP/s"
-- name: "Compute-bound matmul"
-  input: "flops=137e9 bytes=201e6 peak_gflops=19500 peak_gbps=2000"
-  expected: "ai≈682 compute_bound=true attainable=19500 GFLOP/s"
-- name: "Ridge point A100"
-  input: "peak_gflops=19500 peak_gbps=2000"
-  expected: "ridge=9.75 FLOP/byte"
+- name: "Ridge point (A100 FP32)"
+  input: "ridge 19500 2000"
+  expected: "9.7500"
+- name: "Memory-bound vector add (AI < ridge)"
+  input: "analyse 2e9 24e9 19500 2000"
+  expected: "0.0833\n0\n166.6667"
+- name: "Compute-bound matmul (AI >> ridge)"
+  input: "analyse 137e9 201e6 19500 2000"
+  expected: "681.5920\n1\n19500.0000"
 
 ---solution---
 double arithmetic_intensity(double flops, double bytes_moved) {
@@ -159,6 +159,28 @@ RooflineResult analyse_kernel(
         is_compute_bound(ai, peak_gflops, peak_gbps),
         ridge_point(peak_gflops, peak_gbps),
     };
+}
+
+---harness---
+#include <cstdio>
+#include <cstring>
+
+int main() {
+    char cmd[16];
+    scanf("%s", cmd);
+    if (strcmp(cmd, "ridge") == 0) {
+        double peak_gflops, peak_gbps;
+        scanf("%lf %lf", &peak_gflops, &peak_gbps);
+        printf("%.4f\n", ridge_point(peak_gflops, peak_gbps));
+    } else if (strcmp(cmd, "analyse") == 0) {
+        double flops, bytes, peak_gflops, peak_gbps;
+        scanf("%lf %lf %lf %lf", &flops, &bytes, &peak_gflops, &peak_gbps);
+        RooflineResult r = analyse_kernel(flops, bytes, peak_gflops, peak_gbps);
+        printf("%.4f\n", r.ai);
+        printf("%d\n", r.compute_bound ? 1 : 0);
+        printf("%.4f\n", r.attainable_gflops);
+    }
+    return 0;
 }
 
 ---editorial---

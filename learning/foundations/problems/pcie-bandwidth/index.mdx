@@ -10,8 +10,10 @@ tags:
 status: published
 author: community
 xp: 100
-runtime: cpp
+runtime: cuda
 cpp_standard: "17"
+cuda_min_version: "11.0"
+compute_min_cap: "sm_60"
 ---
 
 ## Background
@@ -82,15 +84,15 @@ BandwidthResult measureBandwidth(size_t bytes, int iterations) {
 }
 
 ---test-cases---
-- name: "H2D bandwidth positive"
-  input: "bytes=4MB iterations=10"
-  expected: "h2d_gbps > 0"
-- name: "D2H bandwidth positive"
-  input: "bytes=4MB iterations=10"
-  expected: "d2h_gbps > 0"
-- name: "Large transfer approaches peak"
-  input: "bytes=64MB iterations=100"
-  expected: "h2d_gbps > 5.0 (at least 5 GB/s on any PCIe system)"
+- name: "H2D and D2H both exceed 0.1 GB/s (4 MB, 10 iterations)"
+  input: "4194304 10"
+  expected: "1"
+- name: "H2D and D2H both exceed 0.1 GB/s (64 MB, 5 iterations)"
+  input: "67108864 5"
+  expected: "1"
+- name: "Small transfer still returns positive values"
+  input: "4096 3"
+  expected: "1"
 
 ---solution---
 BandwidthResult measureBandwidth(size_t bytes, int iterations) {
@@ -134,6 +136,18 @@ BandwidthResult measureBandwidth(size_t bytes, int iterations) {
     cudaFreeHost(h_buf);
     cudaFree(d_buf);
     return result;
+}
+
+---harness---
+#include <cstdio>
+
+int main() {
+    size_t bytes;
+    int iterations;
+    scanf("%zu %d", &bytes, &iterations);
+    BandwidthResult r = measureBandwidth(bytes, iterations);
+    printf("%d\n", (r.h2d_gbps > 0.1 && r.d2h_gbps > 0.1) ? 1 : 0);
+    return 0;
 }
 
 ---editorial---

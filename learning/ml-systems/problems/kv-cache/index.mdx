@@ -95,14 +95,14 @@ public:
 
 ---test-cases---
 - name: "Store and load single entry"
-  input: "layers=1 heads=1 seq=4 dim=2\nstore(0,0,0,k=[1,2],v=[3,4])"
-  expected: "load(0,0,0) → k=[1,2] v=[3,4]"
-- name: "Multiple heads"
-  input: "layers=1 heads=2 seq=4 dim=2\nstore(0,0,0,k=[1,2],v=[3,4])\nstore(0,1,0,k=[5,6],v=[7,8])"
-  expected: "load(0,1,0) → k=[5,6] v=[7,8]"
-- name: "Size tracking"
-  input: "layers=1 heads=1 seq=4 dim=2\nstore pos=0,1,2"
-  expected: "size()=3"
+  input: "1 1 4 2\n2\nstore 0 0 0 1.0 2.0 3.0 4.0\nload 0 0 0"
+  expected: "1.0 2.0 | 3.0 4.0"
+- name: "Size tracking after three stores"
+  input: "1 1 4 2\n4\nstore 0 0 0 0.0 0.0 0.0 0.0\nstore 0 0 1 0.0 0.0 0.0 0.0\nstore 0 0 2 0.0 0.0 0.0 0.0\nsize"
+  expected: "3"
+- name: "Multiple heads stored independently"
+  input: "1 2 4 2\n3\nstore 0 0 0 1.0 2.0 3.0 4.0\nstore 0 1 0 5.0 6.0 7.0 8.0\nload 0 1 0"
+  expected: "5.0 6.0 | 7.0 8.0"
 
 ---solution---
 KVCache(int num_layers, int num_heads, int max_seq_len, int head_dim)
@@ -128,6 +128,51 @@ void load(int layer, int head, int pos, float* k_out, float* v_out) const {
     size_t base = idx(layer, head, pos, 0);
     std::memcpy(k_out, &key_cache_[base],   head_dim_ * sizeof(float));
     std::memcpy(v_out, &value_cache_[base], head_dim_ * sizeof(float));
+}
+
+---harness---
+#include <cstdio>
+#include <vector>
+#include <cstring>
+
+int main() {
+    int num_layers, num_heads, max_seq_len, head_dim;
+    scanf("%d %d %d %d", &num_layers, &num_heads, &max_seq_len, &head_dim);
+
+    KVCache cache(num_layers, num_heads, max_seq_len, head_dim);
+
+    int num_ops;
+    scanf("%d", &num_ops);
+
+    std::vector<float> k_buf(head_dim), v_buf(head_dim);
+
+    for (int i = 0; i < num_ops; i++) {
+        char op[16];
+        scanf("%s", op);
+        if (strcmp(op, "store") == 0) {
+            int layer, head, pos;
+            scanf("%d %d %d", &layer, &head, &pos);
+            for (int d = 0; d < head_dim; d++) scanf("%f", &k_buf[d]);
+            for (int d = 0; d < head_dim; d++) scanf("%f", &v_buf[d]);
+            cache.store(layer, head, pos, k_buf.data(), v_buf.data());
+        } else if (strcmp(op, "load") == 0) {
+            int layer, head, pos;
+            scanf("%d %d %d", &layer, &head, &pos);
+            cache.load(layer, head, pos, k_buf.data(), v_buf.data());
+            for (int d = 0; d < head_dim; d++) {
+                if (d) printf(" ");
+                printf("%.1f", k_buf[d]);
+            }
+            printf(" |");
+            for (int d = 0; d < head_dim; d++) printf(" %.1f", v_buf[d]);
+            printf("\n");
+        } else if (strcmp(op, "size") == 0) {
+            printf("%d\n", cache.size());
+        } else if (strcmp(op, "clear") == 0) {
+            cache.clear();
+        }
+    }
+    return 0;
 }
 
 ---editorial---
