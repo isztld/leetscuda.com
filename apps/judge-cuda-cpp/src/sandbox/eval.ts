@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { writeFile, unlink } from 'node:fs/promises'
+import { writeFile, unlink, chmod } from 'node:fs/promises'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 
@@ -119,15 +119,15 @@ export async function runEvalContainer(
     '--security-opt', 'no-new-privileges:true',
     ...seccompArgs,
     ...cudaArgs,
-    '--tmpfs',        '/sandbox:size=16m,mode=0777',
-    '--tmpfs',        '/tmp:size=16m,mode=1777',
     '--label',        'leetscuda-judge=1',
     '--label',        'leetscuda-phase=eval',
+    '--entrypoint',   '/bin/sh',
     evalImage,
-    '/bin/sh', '-c', '/sandbox/solution < /sandbox/input.txt',
+    '-c', '/tmp/solution < /tmp/input.txt',
   ]
 
   await writeFile(binFile, binary)
+  await chmod(binFile, 0o755)
   await writeFile(inpFile, input, 'utf8')
 
   let containerCreated = false
@@ -138,8 +138,8 @@ export async function runEvalContainer(
     containerCreated = true
 
     // ── Inject binary and input via docker cp (§6.5) ────────────────────
-    await docker(['cp', binFile, `${containerName}:/sandbox/solution`])
-    await docker(['cp', inpFile, `${containerName}:/sandbox/input.txt`])
+    await docker(['cp', binFile, `${containerName}:/tmp/solution`])
+    await docker(['cp', inpFile, `${containerName}:/tmp/input.txt`])
 
     // Temp files no longer needed on the host after the cp.
     await unlink(binFile).catch(() => undefined)

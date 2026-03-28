@@ -75,8 +75,8 @@ export async function runBuildContainer(
   // Compile command executed inside the container.
   const compileCmd =
     runtime === 'cuda'
-      ? `nvcc -std=c++${cppStandard} -O2 -o /sandbox/solution /sandbox/solution.cu`
-      : `g++ -std=c++${cppStandard} -O2 -o /sandbox/solution /sandbox/solution.cpp`
+      ? `nvcc -std=c++${cppStandard} -O2 -o /tmp/solution /tmp/solution.cu`
+      : `g++ -std=c++${cppStandard} -O2 -o /tmp/solution /tmp/solution.cpp`
 
   // §7.4 — no dedicated build seccomp profile is defined; skip seccomp for
   // the build phase rather than mis-applying the eval profile (the compiler
@@ -106,12 +106,11 @@ export async function runBuildContainer(
     '--cap-drop',      'ALL',
     '--security-opt',  'no-new-privileges:true',
     ...seccompArgs,
-    '--tmpfs',         '/sandbox:size=64m,mode=0777',
-    '--tmpfs',         '/tmp:size=64m,mode=1777',
     '--label',         'leetscuda-judge=1',
     '--label',         'leetscuda-phase=build',
+    '--entrypoint',    '/bin/sh',
     buildImage,
-    '/bin/sh', '-c', compileCmd,
+    '-c', compileCmd,
   ]
 
   // Write code to a host temp file first so we can docker cp it in.
@@ -129,7 +128,7 @@ export async function runBuildContainer(
     )
 
     // ── Phase 2: inject source file (§6.5) ────────────────────────────────
-    await docker(['cp', srcFile, `${containerName}:/sandbox/solution.${ext}`])
+    await docker(['cp', srcFile, `${containerName}:/tmp/solution.${ext}`])
 
     // Temp source file no longer needed on the host.
     await unlink(srcFile).catch(() => undefined)
@@ -174,7 +173,7 @@ export async function runBuildContainer(
     }
 
     // ── Phase 6: extract binary via docker cp (§6.5) ────────────────────
-    await docker(['cp', `${containerName}:/sandbox/solution`, binFile])
+    await docker(['cp', `${containerName}:/tmp/solution`, binFile])
     const binary = await readFile(binFile)
 
     return { binary, stderr, exitCode, timedOut: false }
