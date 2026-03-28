@@ -1,0 +1,115 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# judge-cuda-cpp — docker-compose.yml
+#
+# Two services (§13.1):
+#   socket-proxy  — ghcr.io/tecnativa/docker-socket-proxy sidecar that exposes
+#                   only the Docker API verbs the judge needs.  The judge never
+#                   touches /var/run/docker.sock directly (§7.1).
+#   judge         — the judge worker process.
+#
+# Network topology:
+#   Both services use network_mode: host so that the judge can reach the
+#   proxy at tcp://127.0.0.1:2375 without a Docker bridge network.  Using
+#   a named bridge network would require DOCKER_HOST to use the service name
+#   (tcp://socket-proxy:2375), which only works when both containers share
+#   the same user-defined network — and that network would itself need Docker
+#   network management permissions.  host networking keeps the setup simple
+#   and avoids a circular dependency.
+#
+# Pre-requisites:
+#   1. Pre-pull the sandbox image(s) on the host before starting:
+#        docker pull gcc:14
+#        docker pull leetscuda-cuda-sandbox:13.0   # GPU judge only
+#   2. Seccomp profiles must exist on the host at the bind-mount source paths:
+#        /etc/judge/seccomp/cpp.json
+#        /etc/judge/seccomp/cuda.json
+#   3. Copy .env.example → .env and fill in JUDGE_API_URL, JUDGE_API_TOKEN,
+#      JUDGE_CAPABILITIES.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Docker socket proxy (§7.1) ─────────────────────────────────────────────
+  # Exposes a filtered subset of the Docker API on 127.0.0.1:2375.
+  # Only CONTAINERS + POST are enabled; all other API categories are blocked.
+  #
+  # CONTAINERS=1  allows: GET /containers/*, POST /containers/*/start,
+  #               POST /containers/*/stop, POST /containers/*/wait,
+  #               POST /containers/create, DELETE /containers/*,
+  #               GET /containers/*/logs, POST /containers/*/archive (cp)
+  # POST=1        required alongside CONTAINERS to permit mutating container
+  #               lifecycle calls (the proxy checks both the path and the verb)
+  # All others=0  explicitly blocked; the proxy denies with 403 rather than
+  #               forwarding to the daemon.
+  socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Allowed
+      CONTAINERS: 1
+      POST: 1
+      # Explicitly blocked
+      EXEC: 0
+      IMAGES: 0
+      NETWORKS: 0
+      BUILD: 0
+      VOLUMES: 0
+      INFO: 0
+      AUTH: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      EVENTS: 0
+      NODES: 0
+      PLUGINS: 0
+      SECRETS: 0
+      SERVICES: 0
+      SESSION: 0
+      SWARM: 0
+      SYSTEM: 0
+      TASKS: 0
+
+  # ── Judge worker ───────────────────────────────────────────────────────────
+  judge:
+    image: leetscuda-judge-cuda-cpp:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - socket-proxy
+    network_mode: host
+
+    # Immutable root filesystem — all runtime writes go to the tmpfs below.
+    # Combined with no bind mounts on the host filesystem this means a
+    # compromised judge process cannot persist changes to the host.
+    read_only: true
+
+    # /tmp is the only writable directory.  The judge writes temp source/binary
+    # files here before docker cp-ing them into sandbox containers (§6.5).
+    # 512 MiB is generous — individual temp files are deleted immediately after
+    # each docker cp; peak usage is at most 2-3 files concurrently.
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+
+    # Seccomp profiles bind-mounted read-only from the host so the operator
+    # can update them without rebuilding the judge image.  The Dockerfile also
+    # COPYs them as a fallback for offline/CI use.
+    volumes:
+      - /etc/judge/seccomp/cpp.json:/etc/judge/seccomp/cpp.json:ro
+      - /etc/judge/seccomp/cuda.json:/etc/judge/seccomp/cuda.json:ro
+
+    environment:
+      # Point the docker CLI inside the judge container at the socket proxy.
+      DOCKER_HOST: tcp://127.0.0.1:2375
+
+    # All other env vars (JUDGE_API_URL, JUDGE_API_TOKEN, JUDGE_CAPABILITIES,
+    # etc.) are read from the .env file.
+    env_file: .env

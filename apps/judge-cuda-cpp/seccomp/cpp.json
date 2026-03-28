@@ -1,0 +1,250 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"]
+    }
+  ],
+  "syscalls": [
+    {
+      "comment": "── Process & thread lifecycle ──────────────────────────────────────────────\n  execve/execveat: run the compiled binary (the shell invokes /sandbox/solution).\n  clone/clone3/fork/vfork: threading and subprocess creation (std::thread, OpenMP).\n  exit/exit_group: normal process termination.\n  wait4/waitid/waitpid: parent waits for child threads/processes.\n  getpid/getppid/gettid: self-identification, used by runtime libraries.\n  getpgid/getpgrp/getsid/setpgid/setsid: process-group management needed by\n    shell wrappers and signal delivery.",
+      "names": [
+        "execve", "execveat",
+        "clone", "clone3", "fork", "vfork",
+        "exit", "exit_group",
+        "wait4", "waitid", "waitpid",
+        "getpid", "getppid", "gettid",
+        "getpgid", "getpgrp", "getsid",
+        "setpgid", "setsid"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── File descriptor & I/O ────────────────────────────────────────────────────\n  read/write/readv/writev/pread64/pwrite64/preadv/pwritev/preadv2/pwritev2:\n    all vectored and positional I/O variants needed by libc and user code.\n  open/openat/openat2/creat: open files in /sandbox and /tmp (both tmpfs).\n  close/dup/dup2/dup3: fd management.\n  lseek/ftruncate/truncate/fallocate/fadvise64/readahead: file positioning and\n    advisory hints (used by fstream, mmap-backed containers).\n  stat/fstat/lstat/newfstatat/statx/statfs/fstatfs: metadata queries needed by\n    the C++ runtime, dynamic linker, and any code that opens files.\n  fcntl: file descriptor flags (O_NONBLOCK, FD_CLOEXEC), mandatory for pipe\n    and socket setup.\n  ioctl: required for terminal detection (isatty) and, in the CUDA profile,\n    for GPU device communication — kept here so the CUDA profile can inherit.\n  sendfile/splice/tee/vmsplice/copy_file_range: zero-copy I/O primitives.\n  sync/fsync/fdatasync/msync: data persistence (rarely needed but harmless).\n  flock: advisory file locking.\n  pipe/pipe2: anonymous pipes (std::process, shell redirects).\n  access/faccessat/faccessat2: file-existence checks by the dynamic linker.\n  readlink/readlinkat: symlink resolution (needed by /proc/self/exe lookups).",
+      "names": [
+        "read", "write", "readv", "writev",
+        "pread64", "pwrite64", "preadv", "pwritev", "preadv2", "pwritev2",
+        "open", "openat", "openat2", "creat",
+        "close", "dup", "dup2", "dup3",
+        "lseek", "ftruncate", "truncate", "fallocate", "fadvise64", "readahead",
+        "stat", "fstat", "lstat", "newfstatat", "statx", "statfs", "fstatfs",
+        "fcntl",
+        "ioctl",
+        "sendfile", "splice", "tee", "vmsplice", "copy_file_range",
+        "sync", "fsync", "fdatasync", "msync",
+        "flock",
+        "pipe", "pipe2",
+        "access", "faccessat", "faccessat2",
+        "readlink", "readlinkat"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Memory management ────────────────────────────────────────────────────────\n  brk: heap growth (malloc calls this before falling back to mmap).\n  mmap/munmap/mremap: virtual memory mapping and unmapping. Essential for\n    dynamic linking, stack growth, std::vector large allocations, and file-backed\n    maps. The CUDA profile additionally uses mmap for GPU BAR memory mappings.\n  mprotect: change page permissions (needed by JIT compilers and the linker\n    when marking text segments executable after relocation).\n  madvise: hint the kernel about access patterns (MADV_DONTNEED, etc.).\n  mincore: query which pages are resident (used by some allocators).\n  mlock/mlock2/mlockall/munlock/munlockall: pin pages in RAM (used by\n    cryptographic libraries; unlikely in contest code but harmless).\n  memfd_create: anonymous in-memory files (used by some runtimes for\n    JIT code emission).",
+      "names": [
+        "brk",
+        "mmap", "munmap", "mremap",
+        "mprotect",
+        "madvise", "mincore",
+        "mlock", "mlock2", "mlockall", "munlock", "munlockall",
+        "memfd_create"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Signals ──────────────────────────────────────────────────────────────────\n  rt_sig*/kill/tkill/tgkill: signal delivery, masking, and handling.\n    Needed for SIGFPE (FP exceptions), SIGSEGV handlers (stack overflow\n    detection), and SIGCHLD from forked children.\n  sigaltstack: alternate signal stack — required for catching SIGSEGV when\n    the main stack has overflowed.\n  signalfd/signalfd4: file-descriptor-based signal receipt (used by event loops\n    in some runtime libraries).\n  pause: sleep until signal arrives (used by simple wait loops).",
+      "names": [
+        "rt_sigaction", "rt_sigpending", "rt_sigprocmask",
+        "rt_sigqueueinfo", "rt_sigreturn", "rt_sigsuspend",
+        "rt_sigtimedwait", "rt_tgsigqueueinfo",
+        "kill", "tkill", "tgkill",
+        "sigaltstack", "signalfd", "signalfd4",
+        "pause"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Clocks & timers ──────────────────────────────────────────────────────────\n  clock_gettime/clock_getres/clock_nanosleep: POSIX clocks. Any code that\n    benchmarks its own runtime uses these; also used by libc sleep functions.\n  gettimeofday/time/times/adjtimex: legacy time interfaces, called by glibc\n    and various time-formatting functions.\n  nanosleep/alarm/getitimer/setitimer: interval timers.\n  timer_create/timer_delete/timer_gettime/timer_settime/timer_getoverrun:\n    POSIX per-process timers.\n  timerfd_create/timerfd_gettime/timerfd_settime: fd-based timers used by\n    event-driven runtimes.",
+      "names": [
+        "clock_gettime", "clock_getres", "clock_nanosleep",
+        "gettimeofday", "time", "times", "adjtimex",
+        "nanosleep", "alarm", "getitimer", "setitimer",
+        "timer_create", "timer_delete", "timer_gettime",
+        "timer_settime", "timer_getoverrun",
+        "timerfd_create", "timerfd_gettime", "timerfd_settime"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Scheduler & resource limits ──────────────────────────────────────────────\n  sched_*: query/set scheduler parameters and CPU affinity. Used by\n    std::thread, OpenMP, and TBB to pin threads to cores.\n  getrlimit/setrlimit/prlimit64: query/set resource limits. Some runtimes\n    query RLIMIT_STACK on startup to size their initial stack.\n  getpriority/setpriority: nice levels.\n  getcpu: identify which CPU core is currently executing (used by NUMA-aware\n    allocators).",
+      "names": [
+        "sched_getaffinity", "sched_setaffinity",
+        "sched_getattr", "sched_setattr",
+        "sched_getparam", "sched_setparam",
+        "sched_getscheduler", "sched_setscheduler",
+        "sched_get_priority_max", "sched_get_priority_min",
+        "sched_rr_get_interval", "sched_yield",
+        "getrlimit", "setrlimit", "prlimit64",
+        "getpriority", "setpriority",
+        "getcpu"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Credential queries ───────────────────────────────────────────────────────\n  getuid/geteuid/getgid/getegid/getgroups/getresgid/getresuid: identity\n    queries. glibc and PAM call these on startup. The container runs as\n    nobody (uid 65534) and these must not be blocked or glibc TLS init fails.\n  setuid/setgid/setreuid/setregid/setresuid/setresgid/setgroups:\n    credential mutations. Allowed so that shell wrappers can drop privileges\n    after execve (they have no effect anyway since we run as uid 65534 with\n    no capabilities).\n  setfsgid/setfsuid: filesystem credential overrides (called by some glibc\n    internals; no-op without CAP_SETUID).\n  capget/capset: capability queries. glibc reads the bounding set on startup.",
+      "names": [
+        "getuid", "geteuid", "getgid", "getegid",
+        "getgroups", "getresgid", "getresuid",
+        "setuid", "setgid", "setreuid", "setregid",
+        "setresuid", "setresgid", "setgroups",
+        "setfsgid", "setfsuid",
+        "capget", "capset"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Filesystem mutations ─────────────────────────────────────────────────────\n  mkdir/mkdirat/rmdir/unlink/unlinkat/rename/renameat/renameat2:\n    create and remove files inside /sandbox and /tmp (both tmpfs; changes\n    are discarded when the container is removed).\n  link/linkat/symlink/symlinkat: hard and symbolic links within the sandbox.\n  chmod/fchmod/fchmodat/chown/fchown/fchownat/lchown: permission changes\n    inside the sandbox (no effect outside the overlay FS layer).\n  chdir/fchdir: directory navigation.\n  getcwd: current-directory query.\n  umask: file creation mask.\n  mknod/mknodat: device node creation (allowed inside tmpfs; cannot affect\n    the host because no device numbers map to real devices in the container).\n  utime/utimes/futimesat/utimensat: timestamp updates.",
+      "names": [
+        "mkdir", "mkdirat", "rmdir",
+        "unlink", "unlinkat",
+        "rename", "renameat", "renameat2",
+        "link", "linkat", "symlink", "symlinkat",
+        "chmod", "fchmod", "fchmodat",
+        "chown", "fchown", "fchownat", "lchown",
+        "chdir", "fchdir", "getcwd",
+        "umask",
+        "mknod", "mknodat",
+        "utime", "utimes", "futimesat", "utimensat"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Directory iteration ──────────────────────────────────────────────────────\n  getdents/getdents64: iterate directory entries. Used by opendir/readdir in\n    glibc (e.g., scanning /proc/self/fd to close extra fds on exec).",
+      "names": [
+        "getdents", "getdents64"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Extended attributes ──────────────────────────────────────────────────────\n  [lf]getxattr/[lf]listxattr/[lf]setxattr/[lf]removexattr: xattr operations\n    on the overlay FS. Required by some glibc locale and SELinux label lookups;\n    harmless inside a tmpfs-backed container.",
+      "names": [
+        "getxattr", "lgetxattr", "fgetxattr",
+        "listxattr", "llistxattr", "flistxattr",
+        "setxattr", "lsetxattr", "fsetxattr",
+        "removexattr", "lremovexattr", "fremovexattr"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── IPC — futex & robust lists ───────────────────────────────────────────────\n  futex: the fundamental primitive behind all glibc mutex, condvar, and\n    semaphore operations. Blocking any thread-based C++ program without this\n    is impossible.\n  set_robust_list/set_tid_address: per-thread robust futex list, registered\n    by glibc's thread startup code.",
+      "names": [
+        "futex",
+        "set_robust_list", "set_tid_address"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── IPC — SysV ───────────────────────────────────────────────────────────────\n  semget/semctl/semop/semtimedop: SysV semaphores (used by some OpenMP\n    implementations and legacy parallel code).\n  msgget/msgctl/msgrcv/msgsnd: SysV message queues.\n  shmget/shmctl/shmat/shmdt: SysV shared memory. Needed by some MPI\n    implementations and parallel benchmarks.",
+      "names": [
+        "semget", "semctl", "semop", "semtimedop",
+        "msgget", "msgctl", "msgrcv", "msgsnd",
+        "shmget", "shmctl", "shmat", "shmdt"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── IPC — POSIX message queues ───────────────────────────────────────────────\n  mq_open/mq_unlink/mq_timedsend/mq_timedreceive/mq_notify/mq_getsetattr:\n    POSIX message queues. Rarely used in contest code but present in some\n    parallel C++ libraries.",
+      "names": [
+        "mq_open", "mq_unlink",
+        "mq_timedsend", "mq_timedreceive",
+        "mq_notify", "mq_getsetattr"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Networking (socket layer only — --network none blocks actual traffic) ─────\n  socket/socketpair: create socket file descriptors. Even with --network none\n    the container can still create AF_UNIX and AF_NETLINK sockets internally;\n    glibc's NSS and getaddrinfo code paths attempt socket creation.\n  bind/connect/listen/accept/accept4: socket lifecycle (connect will fail\n    because the network namespace has no interfaces other than lo).\n  getsockname/getpeername/getsockopt/setsockopt/shutdown: socket metadata.\n  send/sendto/sendmsg/sendmmsg/sendfile: send data on a socket.\n  recv/recvfrom/recvmsg/recvmmsg: receive data from a socket.\n  All actual outbound TCP/UDP traffic is impossible because the container\n  network namespace has no default route and no external interfaces.",
+      "names": [
+        "socket", "socketpair",
+        "bind", "connect", "listen", "accept", "accept4",
+        "getsockname", "getpeername", "getsockopt", "setsockopt", "shutdown",
+        "send", "sendto", "sendmsg", "sendmmsg",
+        "recv", "recvfrom", "recvmsg", "recvmmsg"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── epoll / poll / select / inotify / eventfd ────────────────────────────────\n  epoll_create/epoll_create1/epoll_ctl/epoll_pwait/epoll_wait: I/O event\n    multiplexing. Used by async runtimes and some parallel I/O libraries.\n  poll/ppoll/select/pselect6: legacy I/O multiplexing; called by glibc's\n    stdio implementation when mixing reads and writes on the same fd.\n  inotify_*: filesystem event watches (used by some file-watching runtimes).\n  eventfd/eventfd2: lightweight inter-thread notifications.",
+      "names": [
+        "epoll_create", "epoll_create1", "epoll_ctl",
+        "epoll_pwait", "epoll_wait",
+        "poll", "ppoll", "select", "pselect6",
+        "inotify_add_watch", "inotify_init", "inotify_init1", "inotify_rm_watch",
+        "eventfd", "eventfd2"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Async I/O ────────────────────────────────────────────────────────────────\n  io_setup/io_destroy/io_submit/io_cancel/io_getevents: Linux AIO interface.\n    Used by some high-performance I/O libraries as a fallback when io_uring\n    is unavailable.",
+      "names": [
+        "io_setup", "io_destroy", "io_submit",
+        "io_cancel", "io_getevents"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Process control & misc ───────────────────────────────────────────────────\n  prctl: process attribute control. Used by glibc to set the thread name\n    (PR_SET_NAME) and by some crash handlers to read the dumpable flag.\n  seccomp: allows the binary to install its own seccomp filter (additive only\n    due to no-new-privileges; cannot weaken the existing filter).\n  arch_prctl: x86-64 TLS segment setup. Required by glibc on every thread\n    start to set FS_BASE (the thread pointer).\n  getrandom: kernel CSPRNG (used by std::random_device, libssl, etc.).\n  restart_syscall: kernel-internal syscall used to restart interrupted calls\n    after a signal; cannot be blocked without breaking signal handling.\n  uname: system name query (some libraries call this to detect kernel version).\n  sysinfo: system-wide stats (total memory, uptime). Called by some allocators.\n  syslog: userspace syslog interface (unlikely in contest code but harmless).\n  ioprio_get/ioprio_set: I/O priority (used by some I/O-intensive runtimes).\n  getrusage (via wait4/getitimer path): resource accounting for child processes.",
+      "names": [
+        "prctl", "seccomp",
+        "arch_prctl",
+        "getrandom",
+        "restart_syscall",
+        "uname",
+        "sysinfo", "syslog",
+        "ioprio_get", "ioprio_set"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── personality — x86 compatibility layer ────────────────────────────────────\n  Allows only the specific values needed for x86/x32 ABI compatibility:\n    0          = PER_LINUX (native)\n    8          = PER_LINUX32 (32-bit syscall ABI)\n    0x20000    = ADDR_NO_RANDOMIZE flag\n    0x20008    = PER_LINUX32 | ADDR_NO_RANDOMIZE\n    0xffffffff = query-only (returns current persona without changing it)\n  Any other value is denied — this blocks attempts to switch to exotic\n  personalities (e.g. PER_BSD, PER_SOLARIS) that change syscall semantics.",
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 0,          "op": "SCMP_CMP_EQ"},
+        {"index": 0, "value": 8,          "op": "SCMP_CMP_EQ"},
+        {"index": 0, "value": 131072,     "op": "SCMP_CMP_EQ"},
+        {"index": 0, "value": 131080,     "op": "SCMP_CMP_EQ"},
+        {"index": 0, "value": 4294967295, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "comment": "── Explicitly blocked dangerous syscalls ────────────────────────────────────\n  These would be denied by the defaultAction anyway (SCMP_ACT_ERRNO), but\n  listing them here makes the intent explicit and allows grep-based audits.\n\n  ptrace           — process inspection / memory injection; potential escape\n                     vector. Allowed only in the CUDA profile because the\n                     NVIDIA driver requires it for GPU context management.\n  bpf              — load eBPF programs; could be used to subvert the host\n                     kernel or bypass seccomp itself.\n  perf_event_open  — hardware performance counters; enables cache-timing\n                     side-channel attacks against co-located workloads.\n  mount/umount/umount2 — filesystem mounting; could expose host paths.\n  unshare/setns    — namespace manipulation; could escape the container's\n                     namespace boundaries.\n  kexec_load/kexec_file_load — replace the running kernel.\n  init_module/finit_module/delete_module — load/unload kernel modules.\n  create_module/get_kernel_syms/query_module — legacy module interfaces.\n  pivot_root       — change the root filesystem (container escape vector).\n  open_by_handle_at/name_to_handle_at — bypass path-based access controls.\n  process_vm_readv/process_vm_writev — cross-process memory access.\n  add_key/request_key/keyctl — kernel keyring; could leak secrets from other\n                     processes on the host.\n  iopl/ioperm      — direct hardware port I/O (x86 only).\n  reboot           — reboot or halt the host.\n  settimeofday/stime/clock_adjtime — modify system time.\n  swapon/swapoff   — add/remove swap devices.\n  quotactl         — filesystem quota management.\n  kcmp             — compare kernel objects across processes (fd leakage).\n  userfaultfd      — user-space page-fault handling; can be used to\n                     stall the kernel indefinitely (DoS).\n  mbind/set_mempolicy/get_mempolicy/migrate_pages/move_pages — NUMA policy;\n                     can cause denial-of-service via memory migration storms.\n  nfsservctl/sysfs/lookup_dcookie/uselib/ustat — legacy interfaces.\n  vm86/vm86old     — x86 virtual-8086 mode (obsolete, attack surface).\n  modify_ldt       — modify local descriptor table (x86 privilege mechanism).",
+      "names": [
+        "ptrace",
+        "bpf",
+        "perf_event_open",
+        "mount", "umount", "umount2",
+        "unshare", "setns",
+        "kexec_load", "kexec_file_load",
+        "init_module", "finit_module", "delete_module",
+        "create_module", "get_kernel_syms", "query_module",
+        "pivot_root",
+        "open_by_handle_at", "name_to_handle_at",
+        "process_vm_readv", "process_vm_writev",
+        "add_key", "request_key", "keyctl",
+        "iopl", "ioperm",
+        "reboot",
+        "settimeofday", "stime", "clock_adjtime",
+        "swapon", "swapoff",
+        "quotactl",
+        "kcmp",
+        "userfaultfd",
+        "mbind", "set_mempolicy", "get_mempolicy", "migrate_pages", "move_pages",
+        "nfsservctl", "sysfs", "lookup_dcookie", "uselib", "ustat",
+        "vm86", "vm86old",
+        "modify_ldt"
+      ],
+      "action": "SCMP_ACT_ERRNO"
+    }
+  ]
+}
