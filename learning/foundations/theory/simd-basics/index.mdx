@@ -3,10 +3,6 @@ slug: simd-basics
 title: SIMD & Vectorisation
 track: foundations
 type: concept
-cluster: systems-fundamentals
-difficulty: beginner
-estimatedMinutes: 20
-interviewRelevance: medium
 tags:
   - simd
   - avx2
@@ -16,17 +12,9 @@ tags:
   - intrinsics
 status: published
 author: team
-sources:
-  - "intel.com/content/www/us/en/docs/intrinsics-guide — Intel Intrinsics Guide"
-  - "agner.org/optimize/optimizing_cpp.pdf — Agner Fog CPU Optimization Guide"
-  - "gcc.gnu.org/projects/tree-ssa/vectorization — GCC Auto-Vectorization documentation"
 ---
 
 # SIMD & Vectorisation
-
-## Why this matters for interviews
-
-SIMD is foundational for CPU performance engineering and provides the conceptual model for understanding GPU warp execution. Interviewers ask: "Why doesn't this loop auto-vectorize?" or "How would you implement a dot product using AVX2?" Understanding SIMD masking, alignment requirements, and the FMA throughput model is also essential for reading performance analysis of ML workloads on CPU inference engines (llama.cpp, ONNX Runtime).
 
 SIMD (Single Instruction, Multiple Data) is a CPU architecture feature that applies one instruction to multiple data elements simultaneously. Modern CPUs can process 8 float32 values, 16 int16 values, or 4 float64 values with a single instruction via AVX2. Understanding SIMD is essential for writing high-performance CPU code and for understanding why GPU programming is designed the way it is — CUDA's warp model is essentially SIMD taken to its logical extreme.
 
@@ -160,34 +148,6 @@ alignas(32) float buf[1024];
 AVX2 provides up to 8× throughput for float32 operations vs scalar code. Real-world speedup is often 4–6× due to memory bandwidth limits, loop overhead, and imperfect vectorisation. Combined with multithreading (OpenMP, std::thread), AVX2 + 96 cores can deliver ~10 TFLOP/s on a dual-socket server — within 2–5× of a data-centre GPU for specific workloads.
 
 Understanding SIMD helps you read profiler output, understand why loops don't vectorise, and appreciate the design trade-offs behind GPU warp execution.
-
-## Common misconceptions
-
-❌ **Wrong**: "Auto-vectorization always works for simple loops"
-
-✓ **Correct**: Auto-vectorization requires the compiler to prove several conditions: no pointer aliasing (use `__restrict__`), no loop-carried dependencies, and no complex control flow. Without `__restrict__`, the compiler must assume `a`, `b`, and `c` in `c[i] = a[i] + b[i]` could overlap — making vectorization unsafe. Always check with `-fopt-info-vec` (GCC) or `-Rpass=loop-vectorize` (Clang) to confirm vectorization happened.
-
-❌ **Wrong**: "Unaligned SIMD loads (`_mm256_loadu_ps`) are significantly slower than aligned loads"
-
-✓ **Correct**: On modern Intel CPUs (Haswell and later) and AMD Zen 2+, **unaligned loads have the same throughput as aligned loads** when the data happens to be aligned. The performance penalty only occurs on cache-line boundary crossings (when the 32 bytes span two 64-byte cache lines). Use `_mm256_loadu_ps` by default; only switch to aligned loads if you've verified the data is always 32-byte aligned.
-
-❌ **Wrong**: "SIMD and GPU warp execution are fundamentally different"
-
-✓ **Correct**: They are architecturally analogous. A GPU warp (32 threads) is SIMD with 32-wide lanes. Both execute a single instruction across multiple data elements simultaneously. Both handle conditional branches via masking — inactive lanes compute silently and their results are discarded. Understanding SIMD masking (blend operations) directly transfers to understanding warp divergence and predicated GPU instructions.
-
-## Interview patterns
-
-**Question 1**: "Why might a simple elementwise loop fail to auto-vectorize?"
-
-**Answer**: Common reasons: (1) pointer aliasing — if `a`, `b`, `c` could overlap in memory, add `__restrict__`; (2) loop-carried dependency — if `a[i]` depends on `a[i-1]`, vectorization is unsafe; (3) function calls — most function calls prevent vectorization (use `__attribute__((const))` or inline); (4) non-unit stride — `a[i*stride]` may not vectorize. Check with compiler flags and fix one issue at a time.
-
-**Question 2**: "What is the peak FLOP/s for an AVX2 FMA core at 3 GHz?"
-
-**Answer**: `1 core × 3 GHz × 2 FMA units × 2 FLOPs/FMA × 8 float32 lanes = 96 GFLOP/s`. The 2 FMA units (on most Intel designs) allow two FMAs to issue per cycle. Each FMA computes `a*b+c` (2 FLOPs). With 8 lanes (AVX2 256-bit / 32-bit per float), total is 96 GFLOP/s per core. A 96-core dual-socket server can theoretically reach ~9 TFLOP/s FP32.
-
-**Question 3**: "How does SIMD handle a conditional `if (a[i] > 0) c[i] = a[i]; else c[i] = 0`?"
-
-**Answer**: SIMD cannot branch per lane. Use a **blend**: (1) compute comparison `mask = _mm256_cmp_ps(va, zero, _CMP_GT_OQ)` — produces a bitmask of which lanes satisfy `a[i] > 0`; (2) blend `vc = _mm256_blendv_ps(zero, va, mask)` — selects `va` where mask is 1, `zero` elsewhere. All lanes compute both "branches" and the mask selects the result. This is identical to GPU predicated execution.
 
 ## Key Concepts
 

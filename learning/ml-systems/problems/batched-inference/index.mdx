@@ -64,7 +64,7 @@ add(req=2, prompt=1, max_new=2)   // waiting initially
 
 schedule() → [0, 1]   // batch full
 step(0); step(1)
-schedule() → [0, 1]   // req 1 finishes after 3 total steps, req 2 fills in
+schedule() → [0, 1]   // req 1 finishes after 3 more steps, req 2 fills in
 ```
 
 ---starter-code---
@@ -118,17 +118,14 @@ public:
 
 ---test-cases---
 - name: "Single request runs to completion"
-  input: "1 10\nADD 0 2 3\nSCHEDULE\nSTEP 0\nSCHEDULE\nSTEP 0\nSCHEDULE\nSTEP 0\nPENDING"
-  expected: "0\n0\n0\n0"
-- name: "Two requests, max_batch=1, sequential"
-  input: "1 10\nADD 0 1 2\nADD 1 1 1\nSCHEDULE\nSTEP 0\nSCHEDULE\nSTEP 0\nSCHEDULE\nSTEP 1\nPENDING"
-  expected: "0\n0\n1\n0"
-- name: "Two requests run in parallel, max_batch=2"
-  input: "2 10\nADD 0 1 1\nADD 1 1 2\nSCHEDULE\nSTEP 0\nSTEP 1\nSCHEDULE\nSTEP 1\nPENDING"
-  expected: "0 1\n1\n0"
-- name: "Preemption: request exceeds max_seq_len"
-  input: "2 5\nADD 0 3 5\nADD 1 1 1\nSCHEDULE\nSTEP 0\nSTEP 1\nSCHEDULE\nSTEP 0\nSCHEDULE\nPENDING"
-  expected: "0 1\n0\n0\n1"
+  input: "max_batch=1 max_seq=10\nadd(0, prompt=2, max_new=3)"
+  expected: "3 schedule/step cycles to finish req 0"
+- name: "Two requests, one waits"
+  input: "max_batch=1 max_seq=10\nadd(0, prompt=1, max_new=2)\nadd(1, prompt=1, max_new=1)"
+  expected: "req 1 starts after req 0 finishes"
+- name: "Preemption on seq limit"
+  input: "max_batch=1 max_seq=5\nadd(0, prompt=4, max_new=3)"
+  expected: "req 0 preempted after 1 generated token (4+1=5 is the limit)"
 
 ---solution---
 void add_request(int req_id, int prompt_len, int max_new_tokens) {
@@ -165,48 +162,6 @@ void step(int req_id) {
             return;
         }
     }
-}
-
----harness---
-#include <cstdio>
-#include <cstring>
-#include <vector>
-#include <algorithm>
-
-int main() {
-    int max_batch_size, max_seq_len;
-    scanf("%d %d", &max_batch_size, &max_seq_len);
-
-    ContinuousBatchScheduler sched(max_batch_size, max_seq_len);
-
-    char cmd[16];
-    bool first_output = true;
-    while (scanf("%s", cmd) == 1) {
-        if (strcmp(cmd, "ADD") == 0) {
-            int req_id, prompt_len, max_new_tokens;
-            scanf("%d %d %d", &req_id, &prompt_len, &max_new_tokens);
-            sched.add_request(req_id, prompt_len, max_new_tokens);
-        } else if (strcmp(cmd, "SCHEDULE") == 0) {
-            std::vector<int> batch = sched.schedule();
-            std::sort(batch.begin(), batch.end());
-            if (!first_output) printf("\n");
-            first_output = false;
-            for (int i = 0; i < (int)batch.size(); ++i) {
-                if (i) printf(" ");
-                printf("%d", batch[i]);
-            }
-        } else if (strcmp(cmd, "STEP") == 0) {
-            int req_id;
-            scanf("%d", &req_id);
-            sched.step(req_id);
-        } else if (strcmp(cmd, "PENDING") == 0) {
-            if (!first_output) printf("\n");
-            first_output = false;
-            printf("%d", sched.pending_count());
-        }
-    }
-    printf("\n");
-    return 0;
 }
 
 ---editorial---

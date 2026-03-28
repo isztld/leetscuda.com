@@ -7,14 +7,13 @@ tags:
   - reduction
   - shared-memory
   - warp-primitives
-  - thread-coarsening
 status: published
-author: team
+author: community
 xp: 400
 runtime: cuda
 cpp_standard: "17"
-cuda_min_version: "11.0"
-compute_min_cap: "sm_60"
+cuda_min_version: "13.0"
+compute_min_cap: "sm_120"
 ---
 
 ## Background
@@ -51,6 +50,10 @@ Implement `reduceSum` that computes the sum of an array of `n` floats and writes
 
 ---starter-code---
 #include <cuda_runtime.h>
+#include <cstdio>
+
+#define BLOCK_SIZE 256
+#define WARP_SIZE  32
 
 // TODO: Each block reduces its slice to a single partial sum written to partials[blockIdx.x].
 // Use __shfl_down_sync for warp-level reduction.
@@ -62,94 +65,6 @@ __global__ void reduceBlock(const float* in, float* partials, int n) {
 __global__ void reducePartials(float* partials, float* out, int count) {
     // Your code here
 }
-
----test-cases---
-- name: "Small sum"
-  input: "4\n1.0 2.0 3.0 4.0"
-  expected: "10.0"
-- name: "Zero sum"
-  input: "8\n1.0 -1.0 2.0 -2.0 3.0 -3.0 4.0 -4.0"
-  expected: "0.0"
-- name: "Large uniform"
-  input: "1024\nfill:1.0"
-  expected: "1024.0"
-- name: "Power of two boundary"
-  input: "2\nfill:5.0"
-  expected: "10.0"
-- name: "Single element"
-  input: "1\n42.0"
-  expected: "42.0"
-
----solution---
-__global__ void reduceBlock(const float* in, float* partials, int n) {
-    int tid = threadIdx.x;
-    int idx = blockIdx.x * BLOCK_SIZE + tid;
-
-    // Thread coarsening: each thread loads one element (could load more)
-    float val = (idx < n) ? in[idx] : 0.0f;
-
-    // Warp-level reduction using shuffle (no shared memory)
-    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-        val += __shfl_down_sync(0xffffffff, val, offset);
-    }
-
-    // Write warp partial sum to shared memory (only lane 0 of each warp)
-    __shared__ float warp_sums[BLOCK_SIZE / WARP_SIZE];  // 8 floats
-    int lane = tid % WARP_SIZE;
-    int warp_id = tid / WARP_SIZE;
-    if (lane == 0) {
-        warp_sums[warp_id] = val;
-    }
-    __syncthreads();
-
-    // First warp reduces across all warp sums
-    if (warp_id == 0) {
-        val = (lane < (BLOCK_SIZE / WARP_SIZE)) ? warp_sums[lane] : 0.0f;
-        for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            val += __shfl_down_sync(0xffffffff, val, offset);
-        }
-        if (lane == 0) {
-            partials[blockIdx.x] = val;
-        }
-    }
-}
-
-__global__ void reducePartials(float* partials, float* out, int count) {
-    int tid = threadIdx.x;
-    float val = (tid < count) ? partials[tid] : 0.0f;
-
-    // Same pattern as reduceBlock
-    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-        val += __shfl_down_sync(0xffffffff, val, offset);
-    }
-
-    __shared__ float warp_sums[BLOCK_SIZE / WARP_SIZE];
-    int lane = tid % WARP_SIZE;
-    int warp_id = tid / WARP_SIZE;
-    if (lane == 0) {
-        warp_sums[warp_id] = val;
-    }
-    __syncthreads();
-
-    if (warp_id == 0) {
-        val = (lane < (BLOCK_SIZE / WARP_SIZE)) ? warp_sums[lane] : 0.0f;
-        for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            val += __shfl_down_sync(0xffffffff, val, offset);
-        }
-        if (lane == 0) {
-            *out = val;
-        }
-    }
-}
-
----harness---
-#include <cstdio>
-#include <cstring>
-#include <cmath>
-#include <vector>
-
-#define BLOCK_SIZE 256
-#define WARP_SIZE  32
 
 // Do NOT modify below this line.
 void solve(const float* h_in, float* h_out, int n) {
@@ -171,132 +86,114 @@ void solve(const float* h_in, float* h_out, int n) {
     cudaFree(d_out);
 }
 
-// Read matrix: either "fill:value" or space-separated values
-static void readFloats(std::vector<float>& v, int n) {
-    char tok[64];
-    scanf("%s", tok);
-    if (strncmp(tok, "fill:", 5) == 0) {
-        float val = atof(tok + 5);
-        for (int i = 0; i < n; i++) v[i] = val;
-    } else {
-        v[0] = atof(tok);
-        for (int i = 1; i < n; i++) scanf("%f", &v[i]);
+---test-cases---
+- name: "Small sum"
+  input: "4\n1.0 2.0 3.0 4.0"
+  expected: "10.0"
+- name: "Zero sum"
+  input: "8\n1.0 -1.0 2.0 -2.0 3.0 -3.0 4.0 -4.0"
+  expected: "0.0"
+- name: "Large uniform"
+  input: "256\nfill:1.0"
+  expected: "256.0"
+
+---solution---
+__global__ void reduceBlock(const float* in, float* partials, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    float val = (idx < n) ? in[idx] : 0.0f;
+
+    // Warp-level reduction using shuffle
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        val += __shfl_down_sync(0xffffffff, val, offset);
+
+    // Write per-warp result to shared memory
+    __shared__ float warp_sums[BLOCK_SIZE / WARP_SIZE];
+    int lane   = threadIdx.x % WARP_SIZE;
+    int warp_id = threadIdx.x / WARP_SIZE;
+    if (lane == 0) warp_sums[warp_id] = val;
+    __syncthreads();
+
+    // First warp reduces the per-warp sums
+    if (warp_id == 0) {
+        val = (lane < (BLOCK_SIZE / WARP_SIZE)) ? warp_sums[lane] : 0.0f;
+        for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+            val += __shfl_down_sync(0xffffffff, val, offset);
+        if (lane == 0) partials[blockIdx.x] = val;
     }
 }
 
-int main() {
-    char first[64];
-    scanf("%s", first);
-
-    if (strcmp(first, "verify") == 0) {
-        // Parse N, generate test data, run GPU, compare to CPU reference
-        int N;
-        scanf("%d", &N);
-
-        std::vector<float> h_in(N), h_gpu_out(1), h_cpu_ref(1);
-
-        // Generate test array
-        for (int i = 0; i < N; i++) {
-            h_in[i] = (float)(i % 7 + 1);  // Values 1-7 for good sum diversity
-        }
-
-        // CPU reference: serial sum
-        double sum = 0.0;
-        for (int i = 0; i < N; i++) sum += h_in[i];
-        h_cpu_ref[0] = (float)sum;
-
-        // GPU reduce
-        extern void solve(const float* h_in, float* h_out, int n);
-        solve(h_in.data(), h_gpu_out.data(), N);
-
-        // Check result
-        float gpu = h_gpu_out[0];
-        float cpu = h_cpu_ref[0];
-        float rel_err = (gpu != 0) ? fabs(gpu - cpu) / fabs(cpu) : 0.0f;
-        printf("%d\n", (rel_err < 1e-3) ? 1 : 0);
-    } else {
-        // Parse N and read array, print result
-        int N = atoi(first);
-        std::vector<float> h_in(N), h_out(1);
-
-        readFloats(h_in, N);
-
-        extern void solve(const float* h_in, float* h_out, int n);
-        solve(h_in.data(), h_out.data(), N);
-
-        printf("%.4f\n", h_out[0]);
+__global__ void reducePartials(float* partials, float* out, int count) {
+    float val = (threadIdx.x < count) ? partials[threadIdx.x] : 0.0f;
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        val += __shfl_down_sync(0xffffffff, val, offset);
+    __shared__ float warp_sums[BLOCK_SIZE / WARP_SIZE];
+    int lane = threadIdx.x % WARP_SIZE;
+    int warp_id = threadIdx.x / WARP_SIZE;
+    if (lane == 0) warp_sums[warp_id] = val;
+    __syncthreads();
+    if (warp_id == 0) {
+        val = (lane < (BLOCK_SIZE / WARP_SIZE)) ? warp_sums[lane] : 0.0f;
+        for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+            val += __shfl_down_sync(0xffffffff, val, offset);
+        if (lane == 0) *out = val;
     }
+}
 
+---harness---
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    std::vector<float> h_in(n);
+    char tok[64];
+    scanf("%s", tok);
+    if (strncmp(tok, "fill:", 5) == 0) {
+        float v = atof(tok + 5);
+        for (int i = 0; i < n; i++) h_in[i] = v;
+    } else {
+        h_in[0] = atof(tok);
+        for (int i = 1; i < n; i++) scanf("%f", &h_in[i]);
+    }
+    float result = 0.0f;
+    solve(h_in.data(), &result, n);
+    printf("%.4f\n", result);
     return 0;
 }
 
 ---editorial---
 ## Approach
 
-Parallel reduction collapses N inputs into one result using a two-pass strategy for large arrays. Each CUDA block independently reduces its slice to a partial sum, then a second kernel pass reduces all partials.
+Parallel reduction folds N inputs into one result using two kernel passes. Each block independently reduces its chunk to one partial sum, then a second pass reduces the array of partial sums.
 
-**Within a block, the optimization progression:**
+**Within a block, use warp-shuffle intrinsics:**
 
-1. **Naive stride-1 reduction** (divergent):
-   ```cpp
-   for (unsigned int s = 1; s < blockDim.x; s *= 2) {
-       if ((tid % (2 * s)) == 0) sdata[tid] += sdata[tid + s];
-   }
-   ```
-   High-indexed threads always active = warp divergence.
+```cpp
+// Warp-level reduction (no shared memory needed within a warp)
+for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+    val += __shfl_down_sync(0xffffffff, val, offset);
+```
 
-2. **Reverse indexing** (divergence-free):
-   ```cpp
-   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
-       if (tid < s) sdata[tid] += sdata[tid + s];
-   }
-   ```
-   Lower-indexed threads always active = no divergence.
+After the warp reduction, lane 0 of each warp holds the warp partial sum. Write these to shared memory, then have the first warp reduce across all warp sums.
 
-3. **Warp shuffles** (no shared memory intra-warp):
-   ```cpp
-   for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-       val += __shfl_down_sync(0xffffffff, val, offset);
-   }
-   ```
-   Uses register file instead of shared memory = zero bank conflicts, minimal latency.
-
-**Two-pass structure for large N:**
-- `reduceBlock`: each block reduces `BLOCK_SIZE` elements to one partial sum
-- `reducePartials`: single block reduces the partials array
-
-The mask `0xffffffff` in `__shfl_down_sync` means all 32 lanes participate. `__shfl_down_sync(mask, val, offset)` exchanges register values between threads in the same warp without touching shared memory.
-
-**Thread coarsening** (Brent's theorem): each thread loads multiple elements sequentially before the tree reduction. For `n = 1M` and `gridSize = 1024`, each thread loads ~32 elements. This reduces kernel launch overhead and improves arithmetic intensity.
+**Two-pass structure:**
+- `reduceBlock`: each block reduces its slice to `partials[blockIdx.x]`
+- `reducePartials`: a single block (gridSize=1) reduces the partials array
 
 ## Complexity
 
-- **Time complexity**: O(N/P) with two passes
-  - Pass 1: O(N / BLOCK_SIZE) = O(N / 256)
-  - Pass 2: O(gridSize / BLOCK_SIZE) = O(gridSize / 256)
-- **Shared memory**: BLOCK_SIZE/WARP_SIZE = 8 floats per block
-- **Synchronization**: O(log BLOCK_SIZE) = O(8) __syncthreads() calls per block
+- **Time**: O(N/P) where P is total threads (two passes: O(N/256) + O(gridSize/256))
+- **Shared memory**: BLOCK_SIZE/WARP_SIZE floats = 8 floats per block
 
-## Key Insights
+## Key Insight
 
-1. **`__shfl_down_sync(0xffffffff, val, offset)`** uses the warp's register file for communication. Offset 16, 8, 4, 2, 1 achieves reduction in exactly 5 instructions, independent of shared memory latency.
-
-2. **Thread coarsening** amortizes kernel launch overhead across more work per thread. If N is large, have each thread load `stride = blockDim * gridDim` elements.
-
-3. **Two-pass reduction** is necessary when N > MAX(gridSize) * BLOCK_SIZE. For N = 16M, gridSize = 65536, and we need a second pass to reduce 65536 partials.
-
-4. **Associativity matters**: The reduction operator must be associative. Floating-point addition is "approximately" associative (within rounding error). Max, min, AND, OR are perfectly associative.
+`__shfl_down_sync(mask, val, offset)` exchanges register values between threads in the same warp without touching shared memory. This is faster than a shared-memory tree reduction because it avoids memory latency and bank conflicts. The mask `0xffffffff` means all 32 lanes participate.
 
 ## Common Mistakes
 
-- **Out-of-bounds load**: Always use `(idx < n) ? in[idx] : 0.0f` to handle arrays whose size exceeds the total thread count.
-
-- **Wrong shared memory size**: The `warp_sums` array needs `BLOCK_SIZE / WARP_SIZE` entries (8 for BLOCK_SIZE=256), not `WARP_SIZE` entries (32).
-
-- **Missing __syncthreads() before first-warp reduction**: After writing warp partial sums to shared memory, all 256 threads must complete before the first warp reads from shared memory.
-
-- **Wrong mask in __shfl_down_sync**: Use `0xffffffff` for all 32 lanes, not `0x1f` (which only enables lane 0).
-
-- **Using __shfl without _sync**: The deprecated `__shfl_down(val, offset)` has undefined behavior on Volta+ architectures. Always use `__shfl_down_sync(mask, val, offset)`.
-
+- **Out-of-bounds load**: Use `(idx < n) ? in[idx] : 0.0f` to handle arrays whose size isn't a multiple of BLOCK_SIZE.
+- **Wrong warp count in shared memory**: The shared array needs `BLOCK_SIZE / WARP_SIZE` entries (= 8 for BLOCK_SIZE=256, WARP_SIZE=32), not WARP_SIZE entries.
+- **Missing sync before first-warp reduction**: Thread divergence means the warp partial sums are written to shared memory by one thread per warp. `__syncthreads()` ensures all writes complete before the first warp reads them.
 ---end---

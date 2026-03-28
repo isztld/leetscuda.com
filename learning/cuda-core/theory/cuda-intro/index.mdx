@@ -1,0 +1,120 @@
+---
+slug: cuda-intro
+title: Introduction to CUDA
+track: cuda-core
+type: concept
+tags:
+  - gpu
+  - programming-model
+  - sm-architecture
+  - execution-model
+status: published
+author: team
+---
+
+# Introduction to CUDA
+
+CUDA (Compute Unified Device Architecture) is NVIDIA's parallel computing platform and programming model. It extends C/C++ with syntax and APIs that let you express data-parallel algorithms that run on the GPU, exploiting the thousands of arithmetic cores that modern GPUs contain.
+
+## The GPU Programming Model
+
+The GPU sits on the PCIe bus as a discrete accelerator with its own DRAM (called *device memory* or *global memory*). The CPU — referred to as the *host* — orchestrates work by allocating device memory, copying data over PCIe, launching *kernels* (GPU functions), and reading results back. A kernel is a C++ function annotated `__global__` that CUDA compiles for the GPU instruction set (PTX, then SASS).
+
+The fundamental observation behind GPU architecture is that graphics workloads — and many scientific workloads — are *embarrassingly parallel*: the same operation applies independently to millions of pixels, vertices, or array elements. GPUs achieve high throughput by committing most of their die area to ALUs rather than caches and out-of-order logic, trading single-thread latency for aggregate throughput.
+
+## Streaming Multiprocessors (SMs)
+
+A GPU is partitioned into a set of **Streaming Multiprocessors (SMs)**. An NVIDIA H100 SXM has 132 SMs; an A100 has 108; an RTX 4090 has 128. Each SM contains:
+
+- **CUDA Cores** (FP32/INT32 ALUs) — 128 per SM on Ampere/Ada/Hopper
+- **Tensor Cores** — matrix-multiply-accumulate units for mixed-precision GEMM
+- **Shared memory / L1 cache** — configurable SRAM on-chip (up to 228 KB per SM on H100)
+- **Register file** — 256 KB of 32-bit registers per SM, partitioned across resident warps
+- **Warp schedulers** — four dual-issue schedulers per SM on Ampere, each selecting a warp to issue every cycle
+
+SMs are the unit of resource allocation. When you launch a kernel, CUDA assigns each *thread block* to exactly one SM, where it runs to completion. Blocks do not migrate between SMs.
+
+## The CUDA Execution Model
+
+CUDA organises parallel work in a three-level hierarchy:
+
+```
+Grid
+└── Blocks (up to 2^31-1 × 65535 × 65535 in 3D)
+    └── Threads (up to 1024 per block, product limit)
+```
+
+When a kernel is launched, the **CUDA runtime** divides the grid of blocks across all available SMs. The SM's hardware schedulers then multiplex many *warps* (groups of 32 threads) on the available ALUs to hide memory latency. This is called **latency hiding through multithreading**: while a warp stalls waiting for a cache miss, the scheduler issues instructions from a different warp that is ready.
+
+A key implication: GPU programs are not optimised by reducing instruction count per thread the way CPU programs are. Instead, performance comes from maximising *occupancy* (warps resident per SM), keeping memory accesses *coalesced*, and minimising *warp divergence*.
+
+## CUDA Thread Hierarchy at a Glance
+
+| Term | Hardware mapping | Scope |
+|------|-----------------|-------|
+| Thread | One lane of a SIMD pipeline | Private registers |
+| Warp | 32 threads issued together | Instruction-level |
+| Block | Assigned to one SM | Shared memory, `__syncthreads()` |
+| Grid | Distributed across all SMs | Global memory |
+
+Within a block, threads can cooperate via **shared memory** (fast on-chip SRAM) and synchronise with `__syncthreads()`. Across blocks there is no synchronisation primitive during a kernel launch — inter-block coordination requires separate kernel launches or atomic operations in global memory.
+
+## Device Properties
+
+Every GPU exposes its capabilities through `cudaDeviceProp`. Key fields:
+
+```cpp
+cudaDeviceProp prop;
+cudaGetDeviceProperties(&prop, 0);
+printf("SMs: %d\n", prop.multiProcessorCount);
+printf("Max threads/block: %d\n", prop.maxThreadsPerBlock);
+printf("Shared mem/SM: %zu KB\n", prop.sharedMemPerMultiprocessor / 1024);
+printf("Global mem: %zu GB\n", prop.totalGlobalMem / (1ULL << 30));
+printf("Compute capability: %d.%d\n", prop.major, prop.minor);
+```
+
+**Compute capability** encodes the SM architecture generation. 8.x = Ampere (A100, RTX 3090), 9.0 = Hopper (H100), 8.9 = Ada (RTX 4090), 12.0 = Blackwell (RTX 5090). Higher compute capability generally means more features (Tensor Core generations, warp-level primitives, NVLink bandwidth).
+
+## A Minimal CUDA Program
+
+```cpp
+#include <cuda_runtime.h>
+#include <cstdio>
+
+__global__ void hello_kernel(int n, float* out) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = float(i) * 2.0f;
+}
+
+int main() {
+    const int N = 1 << 20; // 1M elements
+    float* d_out;
+    cudaMalloc(&d_out, N * sizeof(float));
+
+    // Launch 1024 blocks of 1024 threads
+    hello_kernel<<<(N + 1023) / 1024, 1024>>>(N, d_out);
+
+    cudaDeviceSynchronize(); // wait for GPU
+    cudaFree(d_out);
+}
+```
+
+The `<<<grid, block>>>` syntax is the *kernel launch configuration*. The GPU schedules all `(N+1023)/1024` blocks across its SMs, running each block's 1024 threads in 32 warps of 32.
+
+## Key Concepts
+
+- **Kernel**: a `__global__` function compiled for the GPU; launched with `<<<grid, block>>>` syntax.
+- **SM (Streaming Multiprocessor)**: the fundamental compute unit; each block is assigned to exactly one SM.
+- **Warp**: 32 threads that execute the same instruction in lock-step (SIMD); the atomic scheduling unit.
+- **Latency hiding**: SMs keep many warps resident so the warp scheduler can switch to a ready warp while others wait on memory.
+- **Compute capability**: version number that encodes the SM feature set (Tensor Cores, primitives, shared memory capacity).
+- **Host/Device split**: CPU (host) controls the GPU (device) via CUDA API calls; data must be explicitly transferred or allocated in device memory.
+
+## Further Reading
+
+- [CUDA C++ Programming Guide — Chapter 1 & 2](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html)
+- [NVIDIA Ampere Architecture Whitepaper](https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/nvidia-ampere-architecture-whitepaper.pdf)
+- [CUDA Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html)
+- [GPU Gems 3 — Chapter 31: Fast N-Body Simulation with CUDA](https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-31-fast-n-body-simulation-cuda)
+
+> Content adapted from the [Modal GPU Glossary](https://github.com/modal-labs/gpu-glossary) under MIT license.

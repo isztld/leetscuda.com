@@ -1,87 +1,71 @@
 ---
 slug: foundations
 title: "Foundations"
-shortTitle: Foundations
 description: "Core systems and hardware knowledge every AI infrastructure engineer needs."
 icon: "🏗"
 color: "#D97706"
-order: 6
-difficulty: easy
-estimatedHours: 8
-prerequisites: []
-previewNodes: 2
+order: 4
 nodes:
   - slug: memory-model
     title: "CPU Memory Hierarchy"
     description: "Understand L1/L2/L3 cache hierarchies, cache lines, TLBs, and NUMA topology and how they affect bandwidth."
     type: CONCEPT
-    cluster: systems-fundamentals
+    cluster: memory
     order: 1
     difficulty: easy
-    estimatedMinutes: 20
+    estimatedMinutes: 30
+    interviewRelevance: high
     prerequisites: []
-    interviewRelevance: medium
-
   - slug: simd-basics
     title: "SIMD & Vectorisation"
     description: "Use AVX2/SSE intrinsics and auto-vectorisation hints to accelerate data-parallel CPU loops."
     type: CONCEPT
-    cluster: systems-fundamentals
+    cluster: cpu
     order: 2
-    difficulty: easy
-    estimatedMinutes: 20
-    prerequisites:
-      - memory-model
+    difficulty: intermediate
+    estimatedMinutes: 30
     interviewRelevance: medium
-
+    prerequisites: [memory-model]
   - slug: pcie-bandwidth
     title: "PCIe Transfer Bandwidth"
     description: "Measure and optimise host-to-device and device-to-host transfer rates across the PCIe bus."
     type: PROBLEM
-    cluster: systems-fundamentals
+    cluster: memory
     order: 3
-    difficulty: intermediate
+    difficulty: easy
     estimatedMinutes: 45
-    prerequisites:
-      - memory-model
     interviewRelevance: medium
-
+    prerequisites: [memory-model]
   - slug: profiling-basics
     title: "Profiling GPU Code"
     description: "Use Nsight Systems and Nsight Compute to identify hotspots, memory bottlenecks, and warp stalls."
     type: CONCEPT
-    cluster: systems-fundamentals
+    cluster: profiling
     order: 4
     difficulty: intermediate
-    estimatedMinutes: 25
-    prerequisites:
-      - simd-basics
+    estimatedMinutes: 30
     interviewRelevance: high
-
-  - slug: roofline-analysis
+    prerequisites: [simd-basics]
+  - slug: roofline-model
     title: "Roofline Analysis"
     description: "Apply the roofline model to determine whether a kernel is compute-bound or memory-bandwidth-bound."
     type: PROBLEM
-    cluster: systems-fundamentals
+    cluster: profiling
     order: 5
     difficulty: intermediate
     estimatedMinutes: 60
-    prerequisites:
-      - profiling-basics
-      - simd-basics
     interviewRelevance: high
-
+    prerequisites: [profiling-basics, simd-basics]
   - slug: false-sharing
     title: "Eliminate False Sharing"
     description: "Identify and fix false sharing in a multithreaded accumulator by aligning per-thread data to cache line boundaries."
     type: PROBLEM
-    cluster: systems-fundamentals
+    cluster: cpu
     order: 6
-    difficulty: intermediate
-    estimatedMinutes: 45
-    prerequisites:
-      - memory-model
+    difficulty: advanced
+    estimatedMinutes: 60
     interviewRelevance: medium
+    prerequisites: [memory-model]
 ---
 
 Foundations problems and theory.

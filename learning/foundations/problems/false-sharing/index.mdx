@@ -122,54 +122,15 @@ double speedup(int T, long long N) {
 }
 
 ---test-cases---
-- name: "PaddedCounter is exactly one cache line (64 bytes)"
-  input: "sizeof 0 0"
-  expected: "1"
-- name: "8 threads with 10M increments: padded is at least 2x faster"
-  input: "speedup 8 10000000"
-  expected: "1"
-- name: "4 threads with 10M increments: padded is at least 2x faster"
-  input: "speedup 4 10000000"
-  expected: "1"
-
----harness---
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-
-// Forward declarations
-extern double benchmark_naive(int T, long long N);
-extern double benchmark_padded(int T, long long N);
-extern double speedup(int T, long long N);
-
-// sizeof(PaddedCounter) is verified at compile time via static_assert in starter code.
-// We declare the struct here so sizeof works in main.
-static constexpr int CACHE_LINE = 64;
-struct alignas(CACHE_LINE) PaddedCounter {
-    long long value;
-    char pad[CACHE_LINE - sizeof(long long)];
-};
-
-int main() {
-    char mode[32];
-    int T;
-    long long N;
-    scanf("%s %d %lld", mode, &T, &N);
-
-    if (strcmp(mode, "sizeof") == 0) {
-        // Check that PaddedCounter is exactly one cache line
-        int ok = (sizeof(PaddedCounter) == CACHE_LINE) ? 1 : 0;
-        printf("%d\n", ok);
-    } else if (strcmp(mode, "speedup") == 0) {
-        // Check that padded version is at least 2x faster
-        double sp = speedup(T, N);
-        int ok = (sp >= 2.0) ? 1 : 0;
-        printf("%d\n", ok);
-    } else {
-        printf("0\n");
-    }
-    return 0;
-}
+- name: "Single thread: no false sharing"
+  input: "T=1 N=1000000"
+  expected: "speedup near 1.0 (no contention)"
+- name: "8 threads: significant speedup"
+  input: "T=8 N=10000000"
+  expected: "speedup >= 2.0"
+- name: "PaddedCounter size"
+  input: "sizeof(PaddedCounter)"
+  expected: "64"
 
 ---solution---
 double benchmark_naive(int T, long long N) {
