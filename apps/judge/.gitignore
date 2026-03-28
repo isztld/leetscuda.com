@@ -1,5 +1,0 @@
-.env
-tmp/*
-!tmp/.gitkeep
-dist/
-node_modules/

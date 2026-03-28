@@ -1,0 +1,14 @@
+services:
+  judge-k8s:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: leetscuda-judge-k8s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    env_file: .env
+    # No Docker socket mount — judge-k8s requires none (§10)
+    # No socket-proxy sidecar
+    # No GPU devices

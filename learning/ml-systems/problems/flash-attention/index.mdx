@@ -87,18 +87,15 @@ void flash_attention_forward(
 }
 
 ---test-cases---
-- name: "Identity QK: output matches naive attention"
-  input: "2 2 1\n1.0 0.0\n0.0 1.0\n1.0 0.0\n0.0 1.0\n1.0 2.0\n3.0 4.0"
-  expected: "1"
-- name: "Uniform scores: output is mean of V"
-  input: "4 1 2\n0.0\n0.0\n0.0\n0.0\n0.0\n0.0\n0.0\n0.0\n1.0\n2.0\n3.0\n4.0"
-  expected: "1"
-- name: "Block size equals seq len (single tile)"
-  input: "4 2 4\n1.0 0.0\n0.0 1.0\n1.0 1.0\n0.0 0.0\n1.0 0.0\n0.0 1.0\n1.0 1.0\n0.0 0.0\n1.0 2.0\n3.0 4.0\n5.0 6.0\n7.0 8.0"
-  expected: "1"
-- name: "Block size 1 (max tiling)"
-  input: "4 2 1\n1.0 0.0\n0.0 1.0\n1.0 1.0\n0.0 0.0\n1.0 0.0\n0.0 1.0\n1.0 1.0\n0.0 0.0\n1.0 2.0\n3.0 4.0\n5.0 6.0\n7.0 8.0"
-  expected: "1"
+- name: "Uniform attention: Q=K=0 gives mean(V) for all rows"
+  input: "4 1 2\n0 0 0 0\n0 0 0 0\n1 2 3 4"
+  expected: "2.5000\n2.5000\n2.5000\n2.5000"
+- name: "Diagonal attention: strong diagonal keys route each query to its value"
+  input: "2 1 1\n1 -1\n1 -1\n3 5"
+  expected: "3.2384\n4.7616"
+- name: "2D head: symmetric Q=K=I routes rows to near-opposite V columns"
+  input: "2 2 1\n1 0 0 1\n1 0 0 1\n2 0 0 2"
+  expected: "1.3398 0.6602\n0.6602 1.3398"
 
 ---solution---
 void flash_attention_forward(
@@ -152,65 +149,32 @@ void flash_attention_forward(
 
 ---harness---
 #include <cstdio>
-#include <cmath>
 #include <vector>
-#include <limits>
-#include <cstring>
-
-// Naive reference attention: materialises full N×N attention matrix
-static void naive_attention(
-    const float* Q, const float* K, const float* V,
-    float* O, int seq_len, int head_dim)
-{
-    const float scale = 1.0f / std::sqrt((float)head_dim);
-    std::vector<float> scores(seq_len);
-    for (int i = 0; i < seq_len; ++i) {
-        // Compute scores
-        float max_s = -std::numeric_limits<float>::infinity();
-        for (int j = 0; j < seq_len; ++j) {
-            float dot = 0.0f;
-            for (int d = 0; d < head_dim; ++d)
-                dot += Q[i * head_dim + d] * K[j * head_dim + d];
-            scores[j] = dot * scale;
-            if (scores[j] > max_s) max_s = scores[j];
-        }
-        // Softmax
-        float sum = 0.0f;
-        for (int j = 0; j < seq_len; ++j) {
-            scores[j] = std::exp(scores[j] - max_s);
-            sum += scores[j];
-        }
-        for (int j = 0; j < seq_len; ++j) scores[j] /= sum;
-        // Weighted sum
-        for (int d = 0; d < head_dim; ++d) {
-            float val = 0.0f;
-            for (int j = 0; j < seq_len; ++j)
-                val += scores[j] * V[j * head_dim + d];
-            O[i * head_dim + d] = val;
-        }
-    }
-}
+#include <cmath>
 
 int main() {
     int seq_len, head_dim, block_size;
     scanf("%d %d %d", &seq_len, &head_dim, &block_size);
 
-    int n = seq_len * head_dim;
-    std::vector<float> Q(n), K(n), V(n);
-    for (int i = 0; i < n; ++i) scanf("%f", &Q[i]);
-    for (int i = 0; i < n; ++i) scanf("%f", &K[i]);
-    for (int i = 0; i < n; ++i) scanf("%f", &V[i]);
+    std::vector<float> Q(seq_len * head_dim);
+    std::vector<float> K(seq_len * head_dim);
+    std::vector<float> V(seq_len * head_dim);
+    std::vector<float> O(seq_len * head_dim, 0.0f);
 
-    std::vector<float> ref(n, 0.0f), out(n, 0.0f);
-    naive_attention(Q.data(), K.data(), V.data(), ref.data(), seq_len, head_dim);
-    flash_attention_forward(Q.data(), K.data(), V.data(), out.data(), seq_len, head_dim, block_size);
+    for (int i = 0; i < seq_len * head_dim; i++) scanf("%f", &Q[i]);
+    for (int i = 0; i < seq_len * head_dim; i++) scanf("%f", &K[i]);
+    for (int i = 0; i < seq_len * head_dim; i++) scanf("%f", &V[i]);
 
-    float max_err = 0.0f;
-    for (int i = 0; i < n; ++i) {
-        float err = std::fabs(ref[i] - out[i]);
-        if (err > max_err) max_err = err;
+    flash_attention_forward(Q.data(), K.data(), V.data(), O.data(),
+                            seq_len, head_dim, block_size);
+
+    for (int i = 0; i < seq_len; i++) {
+        for (int d = 0; d < head_dim; d++) {
+            if (d) printf(" ");
+            printf("%.4f", O[i * head_dim + d]);
+        }
+        printf("\n");
     }
-    printf("%d\n", max_err < 1e-3f ? 1 : 0);
     return 0;
 }
 

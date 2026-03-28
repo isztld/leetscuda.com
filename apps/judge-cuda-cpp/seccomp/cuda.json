@@ -1,0 +1,258 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"]
+    }
+  ],
+  "syscalls": [
+    {
+      "comment": "── [INHERITED] Process & thread lifecycle ───────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "execve", "execveat",
+        "clone", "clone3", "fork", "vfork",
+        "exit", "exit_group",
+        "wait4", "waitid", "waitpid",
+        "getpid", "getppid", "gettid",
+        "getpgid", "getpgrp", "getsid",
+        "setpgid", "setsid"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] File descriptor & I/O ────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "read", "write", "readv", "writev",
+        "pread64", "pwrite64", "preadv", "pwritev", "preadv2", "pwritev2",
+        "open", "openat", "openat2", "creat",
+        "close", "dup", "dup2", "dup3",
+        "lseek", "ftruncate", "truncate", "fallocate", "fadvise64", "readahead",
+        "stat", "fstat", "lstat", "newfstatat", "statx", "statfs", "fstatfs",
+        "fcntl",
+        "ioctl",
+        "sendfile", "splice", "tee", "vmsplice", "copy_file_range",
+        "sync", "fsync", "fdatasync", "msync",
+        "flock",
+        "pipe", "pipe2",
+        "access", "faccessat", "faccessat2",
+        "readlink", "readlinkat"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Memory management ────────────────────────────────────────────\n  Identical to cpp.json.  CUDA additionally uses mmap for:\n    • GPU BAR1 framebuffer regions mapped into the process address space\n      (cuMemMap / cuMemAllocManaged unified-memory paths).\n    • The NVIDIA UVM driver maps /dev/nvidia-uvm into the process for\n      managed-memory page migrations.\n  mprotect is also called by the CUDA JIT to mark compiled cubin pages\n  executable after they are loaded from the .fatbin section.",
+      "names": [
+        "brk",
+        "mmap", "munmap", "mremap",
+        "mprotect",
+        "madvise", "mincore",
+        "mlock", "mlock2", "mlockall", "munlock", "munlockall",
+        "memfd_create"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Signals ──────────────────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "rt_sigaction", "rt_sigpending", "rt_sigprocmask",
+        "rt_sigqueueinfo", "rt_sigreturn", "rt_sigsuspend",
+        "rt_sigtimedwait", "rt_tgsigqueueinfo",
+        "kill", "tkill", "tgkill",
+        "sigaltstack", "signalfd", "signalfd4",
+        "pause"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Clocks & timers ──────────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "clock_gettime", "clock_getres", "clock_nanosleep",
+        "gettimeofday", "time", "times", "adjtimex",
+        "nanosleep", "alarm", "getitimer", "setitimer",
+        "timer_create", "timer_delete", "timer_gettime",
+        "timer_settime", "timer_getoverrun",
+        "timerfd_create", "timerfd_gettime", "timerfd_settime"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Scheduler & resource limits ──────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "sched_getaffinity", "sched_setaffinity",
+        "sched_getattr", "sched_setattr",
+        "sched_getparam", "sched_setparam",
+        "sched_getscheduler", "sched_setscheduler",
+        "sched_get_priority_max", "sched_get_priority_min",
+        "sched_rr_get_interval", "sched_yield",
+        "getrlimit", "setrlimit", "prlimit64",
+        "getpriority", "setpriority",
+        "getcpu"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Credential queries ───────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "getuid", "geteuid", "getgid", "getegid",
+        "getgroups", "getresgid", "getresuid",
+        "setuid", "setgid", "setreuid", "setregid",
+        "setresuid", "setresgid", "setgroups",
+        "setfsgid", "setfsuid",
+        "capget", "capset"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Filesystem mutations ─────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "mkdir", "mkdirat", "rmdir",
+        "unlink", "unlinkat",
+        "rename", "renameat", "renameat2",
+        "link", "linkat", "symlink", "symlinkat",
+        "chmod", "fchmod", "fchmodat",
+        "chown", "fchown", "fchownat", "lchown",
+        "chdir", "fchdir", "getcwd",
+        "umask",
+        "mknod", "mknodat",
+        "utime", "utimes", "futimesat", "utimensat"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Directory iteration ──────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "getdents", "getdents64"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Extended attributes ──────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "getxattr", "lgetxattr", "fgetxattr",
+        "listxattr", "llistxattr", "flistxattr",
+        "setxattr", "lsetxattr", "fsetxattr",
+        "removexattr", "lremovexattr", "fremovexattr"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] IPC — futex & robust lists ───────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "futex",
+        "set_robust_list", "set_tid_address"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] IPC — SysV ───────────────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "semget", "semctl", "semop", "semtimedop",
+        "msgget", "msgctl", "msgrcv", "msgsnd",
+        "shmget", "shmctl", "shmat", "shmdt"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] IPC — POSIX message queues ───────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "mq_open", "mq_unlink",
+        "mq_timedsend", "mq_timedreceive",
+        "mq_notify", "mq_getsetattr"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Networking ───────────────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "socket", "socketpair",
+        "bind", "connect", "listen", "accept", "accept4",
+        "getsockname", "getpeername", "getsockopt", "setsockopt", "shutdown",
+        "send", "sendto", "sendmsg", "sendmmsg",
+        "recv", "recvfrom", "recvmsg", "recvmmsg"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] epoll / poll / select / inotify / eventfd ────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "epoll_create", "epoll_create1", "epoll_ctl",
+        "epoll_pwait", "epoll_wait",
+        "poll", "ppoll", "select", "pselect6",
+        "inotify_add_watch", "inotify_init", "inotify_init1", "inotify_rm_watch",
+        "eventfd", "eventfd2"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Async I/O ────────────────────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "io_setup", "io_destroy", "io_submit",
+        "io_cancel", "io_getevents"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] Process control & misc ───────────────────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": [
+        "prctl", "seccomp",
+        "arch_prctl",
+        "getrandom",
+        "restart_syscall",
+        "uname",
+        "sysinfo", "syslog",
+        "ioprio_get", "ioprio_set"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [INHERITED] personality — x86 compatibility layer ────────────────────────\n  Identical to cpp.json.  See that file for rationale.",
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 0,          "op": "SCMP_CMP_EQ"},
+        {"index": 0, "value": 8,          "op": "SCMP_CMP_EQ"},
+        {"index": 0, "value": 131072,     "op": "SCMP_CMP_EQ"},
+        {"index": 0, "value": 131080,     "op": "SCMP_CMP_EQ"},
+        {"index": 0, "value": 4294967295, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "comment": "── [CUDA-ONLY] ptrace — NVIDIA userspace driver requirement ─────────────────\n  The NVIDIA kernel module (nv.ko) and the CUDA runtime library (libcuda.so)\n  use ptrace-based memory introspection to manage GPU context state:\n\n  1. GPU context initialisation: when cuInit() is called for the first time,\n     libcuda.so forks a helper process and uses PTRACE_ATTACH to map a shared\n     region between the helper and the calling process. This is how the driver\n     sets up the per-context 'control page' that maps GPU registers into\n     user-space.\n\n  2. Unified Virtual Addressing (UVA): the NVIDIA UVM driver (/dev/nvidia-uvm)\n     uses ptrace to walk the calling process's page tables and install GPU TLB\n     shootdowns when managed memory pages migrate between CPU and GPU.\n\n  3. CUDA Error recovery: on a GPU fault (e.g. illegal memory access) the\n     driver attaches via ptrace to capture a backtrace for the error report\n     before killing the context.\n\n  Without ptrace, cuInit() fails immediately with CUDA_ERROR_UNKNOWN and the\n  program cannot initialise the GPU at all.\n\n  The corresponding Docker-level flag --cap-add SYS_PTRACE is also required\n  (seccomp alone is insufficient; the capability must also be granted).\n  Both are set in eval.ts for cuda containers (§7.5).\n\n  Risk: an attacker could use ptrace to inspect co-located processes in the\n  same PID namespace. Mitigation: --pids-limit 32 and --user 65534 mean\n  there are no other user processes visible in the container's PID namespace\n  to attach to.",
+      "names": ["ptrace"],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── [CUDA-ONLY] perf_event_open — NVIDIA performance counter access ──────────\n  The CUDA Profiling Tools Interface (CUPTI) and nvperf backend call\n  perf_event_open to read hardware performance counters (instruction counts,\n  cache misses, memory bandwidth) for GPU kernel profiling.\n\n  This syscall is not required for plain CUDA execution (cudaMalloc,\n  cudaMemcpy, kernel launches work without it). It is needed only when the\n  CUDA program links against CUPTI or calls cudaProfilerStart().\n\n  It is allowed here because:\n    a) Some standard CUDA benchmarks include profiling instrumentation.\n    b) Blocking it causes a non-obvious EPERM that is hard to diagnose.\n    c) The hardware counter data is not useful for container-escape attacks\n       (it describes the current process's own hardware events).\n\n  Risk: perf_event_open can enable some cache-timing side-channel attacks.\n  On bare-metal machines this is a known limitation (§14 of ARCHITECTURE);\n  on hypervisors the PMU is typically virtualised and the risk is lower.\n  If profiling support is not needed, this entry can be removed.",
+      "names": ["perf_event_open"],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "── Explicitly blocked dangerous syscalls (CUDA profile) ─────────────────────\n  Same set as cpp.json minus ptrace and perf_event_open, which are allowed\n  above for the NVIDIA driver.  See cpp.json for per-syscall rationale.",
+      "names": [
+        "bpf",
+        "mount", "umount", "umount2",
+        "unshare", "setns",
+        "kexec_load", "kexec_file_load",
+        "init_module", "finit_module", "delete_module",
+        "create_module", "get_kernel_syms", "query_module",
+        "pivot_root",
+        "open_by_handle_at", "name_to_handle_at",
+        "process_vm_readv", "process_vm_writev",
+        "add_key", "request_key", "keyctl",
+        "iopl", "ioperm",
+        "reboot",
+        "settimeofday", "stime", "clock_adjtime",
+        "swapon", "swapoff",
+        "quotactl",
+        "kcmp",
+        "userfaultfd",
+        "mbind", "set_mempolicy", "get_mempolicy", "migrate_pages", "move_pages",
+        "nfsservctl", "sysfs", "lookup_dcookie", "uselib", "ustat",
+        "vm86", "vm86old",
+        "modify_ldt"
+      ],
+      "action": "SCMP_ACT_ERRNO"
+    }
+  ]
+}

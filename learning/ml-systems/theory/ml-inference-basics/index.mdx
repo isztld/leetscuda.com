@@ -3,10 +3,6 @@ slug: ml-inference-basics
 title: Inference Fundamentals
 track: ml-systems
 type: concept
-cluster: inference-systems
-difficulty: intermediate
-estimatedMinutes: 25
-interviewRelevance: high
 tags:
   - inference
   - latency
@@ -15,17 +11,9 @@ tags:
   - serving
 status: published
 author: team
-sources:
-  - "papers/PagedAttention (Kwon et al., 2023) — vLLM KV cache memory management"
-  - "papers/FlashAttention (Dao et al., 2022) — memory-efficient attention"
-  - "Orca: Distributed Serving System for LLMs (Yu et al., 2022)"
 ---
 
 # Inference Fundamentals
-
-## Why this matters for interviews
-
-LLM inference is one of the most common system design topics at AI infrastructure roles. Interviewers ask: "How would you serve a 70B model to 1000 concurrent users?" or "Why does decode latency grow with sequence length?" Understanding the prefill/decode split, KV cache memory growth, and the memory-bandwidth bottleneck is essential for answering these questions at a principal level.
 
 Running a trained model to generate predictions is called **inference**. While training is typically a batch process tolerant of high latency, inference must often meet strict latency SLOs (service level objectives) while serving many concurrent users. Understanding the inference pipeline from model loading to first token is the foundation for all ML systems engineering work.
 
@@ -87,34 +75,6 @@ Cold-start latency (time to load weights before serving the first request) is ty
 - **TensorRT-LLM**: NVIDIA's production serving framework; compiles models to fused CUDA kernels.
 - **Triton Inference Server**: model-agnostic serving layer for batching, versioning, and health checks.
 - **SGLang**: structured generation framework optimized for multi-turn and branching workloads.
-
-## Common misconceptions
-
-❌ **Wrong**: "Prefill and decode have the same latency characteristics"
-
-✓ **Correct**: Prefill is **compute-bound** (processes all prompt tokens in parallel via batched GEMM). Decode is **memory-bandwidth-bound** (processes one token at a time via GEMV — weight reads dominate). Optimizations for one phase rarely help the other.
-
-❌ **Wrong**: "KV cache is small compared to model weights"
-
-✓ **Correct**: At long contexts, KV cache can dominate. Llama-3 70B with GQA at 128K context: ~32 GB KV cache vs ~140 GB weights. At 32K context with batch=4, KV cache alone fills an 80 GB GPU. Memory planning must account for both.
-
-❌ **Wrong**: "Larger batch size always improves GPU utilization"
-
-✓ **Correct**: Larger batches improve throughput (higher arithmetic intensity) but increase latency (requests wait for the batch to fill). The optimal batch size depends on your SLO: a 50 ms inter-token latency target may only allow batches of 8–16 at typical decode speeds.
-
-## Interview patterns
-
-**Question**: "Why is LLM decode memory-bandwidth-bound?"
-
-**Answer**: During decode, only one new token is processed per step (batch size = 1 per sequence). This reduces the matrix multiplies in linear layers to GEMV (matrix-vector multiply). GEMV arithmetic intensity is O(1 FLOP/byte) — for each weight byte read, we do ~1 FLOP. Modern GPUs can compute far faster than memory can deliver, so the bottleneck is HBM bandwidth.
-
-**Question**: "How does KV cache work, and why is it necessary?"
-
-**Answer**: The KV cache stores K and V projections for all previously generated tokens. Without it, computing attention at decode step t would require recomputing K and V for all t-1 previous tokens — O(t²) total work. With the cache, step t adds only one new K/V entry (O(1) compute), then reads all N cached entries for attention (O(N) memory). The cache enables O(N) decode instead of O(N²).
-
-**Question**: "Design an inference system to serve Llama-3 70B to 100 concurrent users."
-
-**Answer**: Use vLLM with paged attention (avoids KV cache fragmentation). With GQA (8 KV heads), KV cache is ~2 GB/sequence at 8K context, so 100 users fit in ~200 GB — requires 3 A100-80GB or 2 H100-80GB with tensor parallelism. Set continuous batching to maximize GPU utilization. Monitor TTFT (< 200 ms) and ITL (< 50 ms) as SLOs.
 
 ## Key Concepts
 

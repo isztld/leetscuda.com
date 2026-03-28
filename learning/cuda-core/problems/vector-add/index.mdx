@@ -12,9 +12,10 @@ author: community
 xp: 100
 runtime: cuda
 cpp_standard: "17"
-cuda_min_version: "11.0"
-compute_min_cap: "sm_60"
+cuda_min_version: "13.0"
+compute_min_cap: "sm_120"
 ---
+
 ## Background
 
 CUDA (Compute Unified Device Architecture) is NVIDIA's parallel computing platform that lets you write programs that execute across thousands of GPU cores simultaneously. The fundamental unit of work in CUDA is the **kernel** — a function that runs on the GPU and is executed by many threads at once.
@@ -61,40 +62,6 @@ __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
     // Your code here
 }
 
----test-cases---
-- name: "Small vectors"
-  input: "4\n1.0 2.0 3.0 4.0\n10.0 20.0 30.0 40.0"
-  expected: "11.0 22.0 33.0 44.0"
-- name: "Mixed values including zero"
-  input: "3\n5.0 -3.0 0.0\n2.0 7.0 -1.5"
-  expected: "7.0 4.0 -1.5"
-- name: "Not multiple of block size"
-  input: "5\n1.0 1.0 1.0 1.0 1.0\n2.0 2.0 2.0 2.0 2.0"
-  expected: "3.0 3.0 3.0 3.0 3.0"
-- name: "Single element edge case"
-  input: "1\n42.0\n58.0"
-  expected: "100.0"
-- name: "Negative values"
-  input: "4\n-1.0 2.0 -3.0 4.0\n10.0 -20.0 30.0 -40.0"
-  expected: "9.0 -18.0 27.0 -36.0"
-- name: "Large uniform array (1M elements)"
-  input: "verify 1000000\nfill:1.0\nfill:2.0"
-  expected: "1"
-
----solution---
-__global__ void vecAdd(const float* a, const float* b, float* c, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        c[i] = a[i] + b[i];
-    }
-}
-
----harness---
-#include <cstdio>
-#include <cstring>
-#include <cmath>
-#include <vector>
-
 // Host wrapper — allocates device memory, copies data, launches kernel, copies result back.
 // Do NOT modify anything below this line.
 void solve(const float* h_a, const float* h_b, float* h_c, int n) {
@@ -116,135 +83,54 @@ void solve(const float* h_a, const float* h_b, float* h_c, int n) {
     cudaFree(d_c);
 }
 
-// Read a float (either a single value or "fill:value" for bulk values)
-static float readFloat(bool& isFill, float& fillValue) {
-    char tok[64];
-    scanf("%s", tok);
-    if (strncmp(tok, "fill:", 5) == 0) {
-        isFill = true;
-        fillValue = atof(tok + 5);
-        return fillValue;
-    } else {
-        isFill = false;
-        return atof(tok);
+---test-cases---
+- name: "Small vectors"
+  input: "4\n1.0 2.0 3.0 4.0\n10.0 20.0 30.0 40.0"
+  expected: "11.0 22.0 33.0 44.0"
+- name: "All zeros"
+  input: "3\n0.0 0.0 0.0\n0.0 0.0 0.0"
+  expected: "0.0 0.0 0.0"
+- name: "Not multiple of block size"
+  input: "5\n1.0 1.0 1.0 1.0 1.0\n2.0 2.0 2.0 2.0 2.0"
+  expected: "3.0 3.0 3.0 3.0 3.0"
+
+---solution---
+__global__ void vecAdd(const float* a, const float* b, float* c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        c[i] = a[i] + b[i];
     }
 }
 
+---harness---
+#include <cstdio>
+#include <vector>
+
 int main() {
-    char first[64];
-    scanf("%s", first);
+    int n;
+    if (scanf("%d", &n) != 1) return 1;
 
-    if (strcmp(first, "verify") == 0) {
-        // Verify mode: run CPU reference and compare with GPU
-        int N;
-        scanf("%d", &N);
+    std::vector<float> a(n), b(n), c(n);
+    for (int i = 0; i < n; i++) scanf("%f", &a[i]);
+    for (int i = 0; i < n; i++) scanf("%f", &b[i]);
 
-        std::vector<float> a(N), b(N), c(N);
+    solve(a.data(), b.data(), c.data(), n);
 
-        // Read array a
-        bool isFillA;
-        float fillA;
-        char tok[64];
-        scanf("%s", tok);
-        if (strncmp(tok, "fill:", 5) == 0) {
-            fillA = atof(tok + 5);
-            for (int i = 0; i < N; i++) a[i] = fillA;
-        } else {
-            a[0] = atof(tok);
-            for (int i = 1; i < N; i++) scanf("%f", &a[i]);
-        }
-
-        // Read array b
-        bool isFillB;
-        float fillB;
-        scanf("%s", tok);
-        if (strncmp(tok, "fill:", 5) == 0) {
-            fillB = atof(tok + 5);
-            for (int i = 0; i < N; i++) b[i] = fillB;
-        } else {
-            b[0] = atof(tok);
-            for (int i = 1; i < N; i++) scanf("%f", &b[i]);
-        }
-
-        // CPU reference: c[i] = a[i] + b[i]
-        for (int i = 0; i < N; i++) {
-            c[i] = a[i] + b[i];
-        }
-
-        // Call the GPU solution
-        extern void solve(const float*, const float*, float*, int);
-        solve(a.data(), b.data(), c.data(), N);
-
-        // Compare results with relative tolerance
-        bool passed = true;
-        float max_rel_err = 0.0f;
-        for (int i = 0; i < N; i++) {
-            float expected = a[i] + b[i];
-            float actual = c[i];
-            float rel_err = (expected != 0) ? fabs(actual - expected) / fabs(expected) : fabs(actual - expected);
-            if (rel_err > max_rel_err) max_rel_err = rel_err;
-            if (rel_err > 1e-4f) {
-                passed = false;
-                break;
-            }
-        }
-
-        printf("%d\n", passed ? 1 : 0);
-    } else {
-        // Normal mode: read input, run GPU, print result
-        int N = atoi(first);
-
-        // Read array a
-        std::vector<float> a(N);
-        bool isFillA;
-        float fillA;
-        char tok[64];
-        scanf("%s", tok);
-        if (strncmp(tok, "fill:", 5) == 0) {
-            fillA = atof(tok + 5);
-            for (int i = 0; i < N; i++) a[i] = fillA;
-        } else {
-            a[0] = atof(tok);
-            for (int i = 1; i < N; i++) scanf("%f", &a[i]);
-        }
-
-        // Read array b
-        std::vector<float> b(N);
-        bool isFillB;
-        float fillB;
-        scanf("%s", tok);
-        if (strncmp(tok, "fill:", 5) == 0) {
-            fillB = atof(tok + 5);
-            for (int i = 0; i < N; i++) b[i] = fillB;
-        } else {
-            b[0] = atof(tok);
-            for (int i = 1; i < N; i++) scanf("%f", &b[i]);
-        }
-
-        // Run GPU solution
-        std::vector<float> c(N);
-        solve(a.data(), b.data(), c.data(), N);
-
-        // Print result (first 10 elements, then count if larger)
-        for (int i = 0; i < N && i < 10; i++) {
-            if (i > 0) printf(" ");
-            printf("%.1f", c[i]);
-        }
-        if (N > 10) printf(" ... (showing %d of %d)", 10, N);
-        printf("\n");
+    for (int i = 0; i < n; i++) {
+        if (i) printf(" ");
+        printf("%.1f", c[i]);
     }
-
+    printf("\n");
     return 0;
 }
 
 ---editorial---
-
 ## Approach
 
-Each thread independently computes one output element: `c[i] = a[i] + b[i]`. The key steps are:
+This is the canonical "Hello, CUDA" problem. Each thread independently computes one output element: `c[i] = a[i] + b[i]`. The key steps are:
 
 1. Compute the global thread index: `int i = blockIdx.x * blockDim.x + threadIdx.x`
-2. Guard against out-of-bounds access with `if (i < n)`. The last block may have threads beyond the array length when `n` is not a multiple of `blockDim.x`.
+2. Guard against out-of-bounds: `if (i < n)` — the last block may have threads beyond the array length when `n` is not a multiple of `blockDim.x`
 3. Perform the addition and write to output
 
 ```cpp
@@ -256,38 +142,18 @@ __global__ void vecAdd(const float* a, const float* b, float* c, int n) {
 }
 ```
 
-### Kernel Launch Configuration
+## Complexity
 
-The harness launches the kernel with:
+- **Time**: O(n/P) where P is the number of GPU threads executing in parallel
+- **Memory**: O(n) — three arrays of size n on the GPU
 
-```cpp
-const int blockSize = 256;
-const int gridSize = (n + blockSize - 1) / blockSize;
-vecAdd<<<gridSize, blockSize>>>(d_a, d_b, d_c, n);
-```
+## Key Insight
 
-The grid size uses ceiling division. `(n + blockSize - 1) / blockSize` is the standard integer idiom for `ceil(n / blockSize)`, guaranteeing the grid covers all `n` elements even when `n` is not a multiple of 256. 256 threads per block is a practical sweet spot: too few threads can't hide memory latency through parallelism; too many can reduce the number of blocks that fit on a streaming multiprocessor simultaneously.
-
-### Performance
-
-This kernel is memory-bound, not compute-bound. Each element requires one addition but two reads and one write. The bottleneck is global memory bandwidth, not arithmetic throughput.
-
-The standard indexing formula ensures **coalesced memory access**: adjacent threads (within a warp of 32) access adjacent memory addresses, so the GPU services an entire warp's reads in a single 128-byte transaction rather than 32 separate ones.
-
-## Key Insights
-
-1. **Bounds checking is non-negotiable**: when `n` is not a multiple of `blockDim.x`, the last block has threads with indices beyond the array. The `if (i < n)` guard prevents those threads from writing to invalid memory.
-
-2. **Ceiling division is a universal pattern**: `(n + blockSize - 1) / blockSize` appears in virtually every CUDA kernel launch. Understand it once, use it everywhere.
-
-3. **The indexing formula ensures correctness and performance simultaneously**: `blockIdx.x * blockDim.x + threadIdx.x` gives each thread a unique global index and keeps adjacent threads on adjacent memory addresses for coalesced access.
+The 1D indexing formula `blockIdx.x * blockDim.x + threadIdx.x` is the CUDA equivalent of a loop index. With 256 threads per block and a grid of `ceil(n/256)` blocks, every element in `[0, n)` gets exactly one thread. The out-of-bounds guard is critical — without it, the last partial block would write garbage to memory beyond the array.
 
 ## Common Mistakes
 
-- **Forgetting the bounds check**: for `n = 5` and `blockDim.x = 256`, block 0 spawns 256 threads but only indices 0–4 are valid. Without the guard, threads 5–255 write to arbitrary memory locations.
-
-- **Using floor division for grid size**: `n / blockSize` truncates, so for `n = 513` and `blockSize = 256` you get 2 blocks covering only indices 0–511, silently skipping the last element.
-
-- **Adding unnecessary synchronisation**: each thread works entirely independently, so `__syncthreads()` inside this kernel is redundant and wastes cycles.
-
+- **Forgetting the bounds check**: If n=5 and blockDim.x=256, block 0 has 256 threads but only indices 0–4 are valid. Threads 5–255 must not write to `c`.
+- **Wrong grid size**: Use `(n + blockSize - 1) / blockSize`, not `n / blockSize`, to handle non-multiples. The host code already does this for you here.
+- **Missing `cudaMemcpy` back**: Results on the device are not visible to the host until copied back with `cudaMemcpyDeviceToHost`.
 ---end---

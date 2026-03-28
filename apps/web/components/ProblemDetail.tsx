@@ -549,11 +549,6 @@ export function ProblemDetail({
     onSuccess(data) {
       setSubmissionId(data.submissionId)
       setIsPolling(true)
-      setDrawerOpen(true)
-      setSubmitError(null)
-      setPollError(null)
-      setCancelError(null)
-      setInfoMsg(null)
       consecutivePollFailures.current = 0
     },
     onError(err) {
@@ -561,8 +556,6 @@ export function ProblemDetail({
         router.push(`/signin?callbackUrl=/problems/${problem.slug}`)
         return
       }
-
-      setDrawerOpen(true)
 
       let parsed: { code?: string; submissionId?: string; message?: string } = {}
       try {
@@ -603,6 +596,7 @@ export function ProblemDetail({
       {
         enabled: !!submissionId && isPolling,
         refetchInterval: isPolling ? POLL_INTERVAL_MS : false,
+        refetchIntervalInBackground: true,
         retry: false,
       },
     )
@@ -650,7 +644,7 @@ export function ProblemDetail({
     }
   }, [submissionStatus])
 
-  // Track consecutive poll failures
+  // Track consecutive poll failures; reset on any successful response
   useEffect(() => {
     if (!isPolling) return
     if (statusIsError) {
@@ -659,6 +653,8 @@ export function ProblemDetail({
         setIsPolling(false)
         setPollError('Lost connection to judge. Please check your submission history.')
       }
+    } else {
+      consecutivePollFailures.current = 0
     }
   }, [statusIsError, isPolling])
 
@@ -683,6 +679,10 @@ export function ProblemDetail({
       return
     }
     setInfoMsg(null)
+    setSubmitError(null)
+    setPollError(null)
+    setCancelError(null)
+    setDrawerOpen(true)
     createMutation.mutate({
       problemSlug: problem.slug,
       code,

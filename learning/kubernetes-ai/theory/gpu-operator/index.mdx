@@ -3,10 +3,6 @@ slug: gpu-operator
 title: NVIDIA GPU Operator
 track: kubernetes-ai
 type: concept
-cluster: gpu-infrastructure
-difficulty: intermediate
-estimatedMinutes: 25
-interviewRelevance: medium
 tags:
   - gpu
   - nvidia
@@ -16,17 +12,9 @@ tags:
   - kubernetes
 status: published
 author: team
-sources:
-  - "docs.nvidia.com/datacenter/cloud-native/gpu-operator — Official GPU Operator documentation"
-  - "github.com/NVIDIA/k8s-device-plugin — NVIDIA Device Plugin source"
-  - "docs.nvidia.com/datacenter/tesla/mig-user-guide — MIG User Guide"
 ---
 
 # NVIDIA GPU Operator
-
-## Why this matters for interviews
-
-GPU Operator questions appear in MLOps and platform engineering interviews at cloud providers and AI-first companies. Interviewers ask: "How do you provision GPU nodes in Kubernetes?" or "How would you expose GPU metrics to Prometheus?" Understanding the GPU Operator's DaemonSet architecture and the device plugin model is fundamental knowledge for anyone managing GPU infrastructure at scale.
 
 Running GPU workloads on Kubernetes requires several system-level components: GPU drivers, the CUDA runtime, the container toolkit, and a device plugin that exposes GPUs as Kubernetes resources. Managing these components manually across a fleet of nodes is error-prone and operationally expensive. The **NVIDIA GPU Operator** automates this entire stack using the Kubernetes Operator pattern.
 
@@ -190,34 +178,6 @@ DCGM_FI_DEV_PCIE_RX_THROUGHPUT
 ```
 
 These metrics are essential for autoscaling (HPA based on GPU utilization), capacity planning, and detecting thermal throttling.
-
-## Common misconceptions
-
-❌ **Wrong**: "The GPU Operator installs drivers into the host OS"
-
-✓ **Correct**: The GPU Operator installs the NVIDIA kernel driver **from within a privileged container** (the `nvidia-driver-daemonset`). The driver is compiled and loaded as a kernel module without modifying the host OS image. This enables driver upgrades via container image updates rather than node reimaging.
-
-❌ **Wrong**: "You can request fractional GPUs with `nvidia.com/gpu: 0.5`"
-
-✓ **Correct**: The NVIDIA device plugin does **not** support fractional GPU allocation. `nvidia.com/gpu` requests must be whole integers and limits must equal requests. For fractional allocation, use **MIG** (hardware-partitioned GPU slices, e.g., `nvidia.com/mig-1g.10gb`) or **GPU time-slicing** (software multiplexing, lower isolation).
-
-❌ **Wrong**: "DCGM Exporter is optional and rarely used in production"
-
-✓ **Correct**: DCGM Exporter is essential for GPU fleet observability. Without it, Kubernetes has no visibility into GPU utilization, memory usage, or thermal state. Production clusters use DCGM metrics for autoscaling (HPA triggered by GPU utilization) and for detecting idle or throttled GPUs.
-
-## Interview patterns
-
-**Question 1**: "How do you expose GPUs as Kubernetes resources?"
-
-**Answer**: The NVIDIA Device Plugin (`nvidia-device-plugin-daemonset`) runs on each GPU node and registers `nvidia.com/gpu` as an extended resource with the Kubernetes API server via the device plugin gRPC interface. Pods can then request GPUs via `resources.limits.nvidia.com/gpu: N`. The plugin also allocates specific GPU device files (`/dev/nvidia0`, etc.) to the container.
-
-**Question 2**: "How would you configure MIG on an A100 to run multiple inference workloads?"
-
-**Answer**: Use the GPU Operator's MIG Manager. Configure the MIG strategy (e.g., `7 × 1g.10gb` for maximum multi-tenancy on A100 80GB) via the `nvidia.com/mig.config` node label. After MIG Manager applies the profile, each MIG instance appears as a separate schedulable resource (`nvidia.com/mig-1g.10gb`). Pods request a specific MIG slice instead of a full GPU.
-
-**Question 3**: "How do you monitor GPU health in a Kubernetes cluster?"
-
-**Answer**: Deploy DCGM Exporter (included in GPU Operator) which scrapes GPU metrics via the Data Center GPU Manager API and exposes them as Prometheus metrics. Key metrics: `DCGM_FI_DEV_GPU_UTIL` (utilization), `DCGM_FI_DEV_FB_USED` (memory used), `DCGM_FI_DEV_GPU_TEMP` (temperature), `DCGM_FI_DEV_POWER_USAGE` (power). Create Grafana dashboards and alerts on thermal throttling or high memory pressure.
 
 ## Key Concepts
 

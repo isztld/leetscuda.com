@@ -1,0 +1,139 @@
+---
+slug: cuda-memory
+title: Memory Hierarchy
+track: cuda-core
+type: concept
+tags:
+  - memory
+  - shared-memory
+  - global-memory
+  - registers
+  - coalescing
+  - bank-conflicts
+status: published
+author: team
+---
+
+# Memory Hierarchy
+
+Memory access is the dominant bottleneck in nearly every GPU kernel. Understanding CUDA's memory hierarchy — and how each level trades off latency, bandwidth, capacity, and scope — is essential for writing kernels that saturate the hardware.
+
+## The Five Memory Spaces
+
+CUDA exposes five distinct memory spaces, each with different characteristics:
+
+| Memory | Location | Scope | Latency | Bandwidth | Capacity |
+|--------|----------|-------|---------|-----------|----------|
+| Registers | On-chip | Per-thread | ~1 cycle | — | 256 KB / SM |
+| Shared memory | On-chip | Per-block | ~5–30 cycles | ~15 TB/s | Up to 228 KB / SM (H100) |
+| L1 / Texture cache | On-chip | Per-SM | ~30 cycles | — | ~256 KB / SM |
+| L2 cache | On-chip | GPU-global | ~200 cycles | ~5 TB/s | Up to 60 MB (H100) |
+| Global memory (HBM) | Off-chip | GPU-global | ~700 cycles | ~3.35 TB/s (H100) | Up to 80 GB |
+
+*(Latencies are approximate for H100; vary by workload and access pattern.)*
+
+## Registers
+
+Registers are the fastest storage on the GPU. Each thread has its own private register file — variables declared inside a kernel are automatically allocated to registers by the compiler. Accessing a register takes ~1 cycle with no overhead.
+
+The SM has a fixed-size register file (65,536 32-bit registers on Ampere/Ada). This pool is partitioned among all resident threads. A thread that uses 64 registers leaves room for 1,024 threads on an SM; a thread that uses 128 registers leaves room for only 512. When a kernel uses too many registers, some variables *spill* to local memory (which resides in global DRAM and has high latency). Inspect register usage with:
+
+```bash
+nvcc -Xptxas -v mykernel.cu
+# Reports: registers, shared mem, local mem per kernel
+```
+
+## Global Memory (HBM)
+
+Global memory is the large off-chip DRAM — High Bandwidth Memory (HBM3 on H100) — visible to all threads and all kernel launches. Data allocated with `cudaMalloc` lives here.
+
+Global memory has ~700-cycle latency. The GPU tolerates this latency through latency hiding: if enough warps are resident, another warp can execute while the first waits for its memory request. However, the *pattern* of accesses matters enormously for throughput.
+
+### Coalesced Access
+
+The memory controller services global memory requests in *transactions* of 32, 64, or 128 bytes aligned to their size. A **coalesced** access occurs when all 32 threads in a warp access consecutive addresses that fall within the same 128-byte transaction — the hardware merges all 32 requests into one transaction, maximising bytes transferred per transaction.
+
+**Coalesced** (1 transaction for 32 threads):
+```cpp
+// threadIdx.x = 0..31 → accesses data[0..31]
+float val = data[threadIdx.x]; // stride-1, coalesced
+```
+
+**Strided / non-coalesced** (up to 32 separate transactions):
+```cpp
+// Each thread accesses a different cache line
+float val = data[threadIdx.x * 32]; // stride-32, non-coalesced
+```
+
+For 2D kernels, map `threadIdx.x` to the column (innermost) dimension so adjacent threads access adjacent addresses — the standard convention for row-major matrices.
+
+## Shared Memory
+
+Shared memory is a fast, explicitly managed SRAM on each SM. It is shared among all threads in the same block and persists for the lifetime of the block. Access latency is typically 5–30 cycles depending on bank conflict patterns.
+
+Shared memory enables important optimisation patterns:
+
+1. **Tiling**: load a tile of global memory into shared memory, operate on it multiple times, write back once. Reduces global memory traffic by the tile reuse factor.
+2. **Transpose / reorganisation**: load data in a layout that coalesces global reads, reorder in shared memory, write back in a layout that coalesces global writes.
+3. **Reductions**: accumulate partial sums in shared memory using `__syncthreads()` barriers.
+
+### Bank Conflicts
+
+Shared memory is divided into 32 banks (on Ampere+). Addresses map to banks as `bank = (address / 4) % 32`. When multiple threads in the same warp access different addresses in the same bank, the accesses are *serialised* — this is a **bank conflict**.
+
+To avoid bank conflicts in a transpose:
+
+```cpp
+__shared__ float tile[32][33]; // +1 padding avoids bank conflicts
+// Without the +1, threads in a column access the same bank
+```
+
+The extra column shifts each row's starting bank, spreading accesses across all 32 banks.
+
+## Constant Memory
+
+Constant memory is a read-only region (64 KB total) cached in a dedicated constant cache per SM. It is optimised for **broadcast** access: when all threads in a warp read the *same* address, the constant cache serves all threads in a single cycle.
+
+```cpp
+__constant__ float filterCoeffs[128];
+
+// In host code:
+cudaMemcpyToSymbol(filterCoeffs, h_coeffs, 128 * sizeof(float));
+```
+
+Constant memory is ideal for kernel parameters (filter weights, lookup tables, configuration values) that all threads read uniformly. If threads read *different* addresses in constant memory, the accesses are serialised and constant memory becomes slower than L2.
+
+## L1 / L2 Cache
+
+Unlike CPUs, the GPU L1/L2 caches are not the primary latency-hiding mechanism — that role belongs to multithreading. However, they do reduce pressure on global memory bandwidth when data is reused across warps.
+
+On Ampere, the L1 and shared memory share a 192 KB SRAM pool per SM. You can configure the split with `cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes)`. The L2 cache (up to 60 MB on H100) is shared across all SMs and caches global memory accesses.
+
+## Memory Access Optimisation Checklist
+
+1. **Coalesce global memory accesses**: map `threadIdx.x` to the innermost (contiguous) dimension.
+2. **Use shared memory for reuse**: if data is accessed more than once in a block, load to shared memory first.
+3. **Avoid bank conflicts**: pad shared memory arrays by 1 element per row when doing transposes.
+4. **Minimise register spill**: check `-Xptxas -v` output; reduce register usage by splitting kernels or using `__launch_bounds__`.
+5. **Use `__ldg()`** for read-only global arrays to route through the read-only cache (texture cache):
+   ```cpp
+   float v = __ldg(&data[i]); // hint: this pointer is read-only
+   ```
+
+## Key Concepts
+
+- **Registers**: fastest, private to each thread; spill to global memory when exhausted.
+- **Shared memory**: on-chip SRAM shared within a block; the programmer's L1 for tiling and reductions.
+- **Bank conflicts**: shared memory serialisation when multiple warp threads hit the same bank; avoid with padding.
+- **Global memory (HBM)**: high bandwidth, high latency; coalesced access is essential.
+- **Coalescing**: merging 32-thread warp accesses into one cache line transaction; requires stride-1 access along `threadIdx.x`.
+- **Constant memory**: read-only broadcast cache; fast when all threads read the same address.
+
+## Further Reading
+
+- [CUDA C++ Programming Guide — Memory Hierarchy](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#memory-hierarchy)
+- [CUDA Best Practices Guide — Memory Optimizations](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#memory-optimizations)
+- [Efficient Matrix Transpose (CUDA Samples)](https://github.com/NVIDIA/cuda-samples/tree/master/Samples/2_Concepts_and_Techniques/transpose)
+- [Dissecting the NVIDIA Volta GPU Architecture through Microbenchmarking (Jia et al.)](https://arxiv.org/abs/1804.06826)
+
+> Content adapted from the [Modal GPU Glossary](https://github.com/modal-labs/gpu-glossary) under MIT license.

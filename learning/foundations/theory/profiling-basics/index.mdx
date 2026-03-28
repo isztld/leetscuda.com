@@ -3,10 +3,6 @@ slug: profiling-basics
 title: Profiling GPU Code
 track: foundations
 type: concept
-cluster: systems-fundamentals
-difficulty: intermediate
-estimatedMinutes: 25
-interviewRelevance: high
 tags:
   - profiling
   - nsight
@@ -16,17 +12,9 @@ tags:
   - bottlenecks
 status: published
 author: team
-sources:
-  - "docs.nvidia.com/nsight-systems — Nsight Systems User Guide"
-  - "docs.nvidia.com/nsight-compute — Nsight Compute Profiling Guide"
-  - "docs.nvidia.com/cuda/cuda-c-best-practices-guide — Performance Metrics chapter"
 ---
 
 # Profiling GPU Code
-
-## Why this matters for interviews
-
-Profiling is the most critical practical skill for GPU performance engineering. Interviewers ask: "Your kernel is 5× slower than expected — how do you find the bottleneck?" Without a systematic profiling workflow (nsys → ncu → roofline → warp stalls), you're guessing. Understanding how to interpret roofline position and warp stall breakdowns is expected at senior and above.
 
 Writing a correct CUDA kernel is the first step. Making it fast requires measurement. NVIDIA provides two primary profiling tools: **Nsight Systems** for system-level timeline analysis and **Nsight Compute** for kernel-level roofline and micro-architectural analysis. Using them together reveals whether your kernel is memory-bandwidth-bound, compute-bound, or suffering from latency penalties, warp stalls, or occupancy problems.
 
@@ -104,7 +92,7 @@ Nsight Compute replays the kernel **multiple times** (once per metric collection
 
 The **roofline chart** in Nsight Compute plots your kernel's achieved FLOP/s against its arithmetic intensity (FLOP/byte). Two roof lines bound performance:
 
-- **Compute roof**: peak FLOP/s of the GPU (e.g., 989 TFLOPS FP16/BF16 on H100, 312 TFLOPS on A100)
+- **Compute roof**: peak FLOP/s of the GPU (e.g., 312 TFLOP/s FP16 on H100)
 - **Memory bandwidth roof**: peak_FLOP/s = peak_BW × arithmetic_intensity (e.g., 3.35 TB/s × intensity)
 
 If your kernel sits below the memory bandwidth roof, it is **memory-bound** — increasing compute (more FMAs) won't help; you need to reduce bytes read or increase data reuse. If it sits below the compute roof, it is **compute-bound** — increase arithmetic intensity or reduce wasted arithmetic.
@@ -163,34 +151,6 @@ Low occupancy (< 25%) is often a red flag. Check:
    - Check Tensor Core utilization (use WMMA/cuBLAS for GEMM)
 5. Iterate: change kernel, re-profile, verify improvement
 ```
-
-## Common misconceptions
-
-❌ **Wrong**: "Nsight Systems and Nsight Compute are interchangeable"
-
-✓ **Correct**: They serve distinct purposes. **Nsight Systems** (`nsys`) profiles the whole application timeline — it shows which kernel is slow, whether the CPU is the bottleneck, and whether H2D/D2H transfers overlap with compute. **Nsight Compute** (`ncu`) dives into a single kernel's microarchitecture. Always start with `nsys` to identify the bottleneck, then use `ncu` on that specific kernel.
-
-❌ **Wrong**: "High SM throughput means the kernel is well-optimized"
-
-✓ **Correct**: A memory-bound kernel can show high SM activity while being far from its bandwidth ceiling. Look at the **roofline position**: if the kernel sits below the memory bandwidth roof, it's memory-bound regardless of SM utilization. The relevant metric is `l1tex__data_pipe_lsu_wavefronts_mem_global_op_ld.rate` vs peak HBM bandwidth, not just SM throughput.
-
-❌ **Wrong**: "Nsight Compute gives accurate wall-clock timing"
-
-✓ **Correct**: Nsight Compute introduces **3–10× replay overhead** by replaying the kernel multiple times to collect different hardware counter groups. Use **CUDA events** (`cudaEventRecord`, `cudaEventElapsedTime`) for accurate wall-clock timing, and use `ncu` only for identifying the nature of the bottleneck (memory vs compute) and relative comparisons between kernel variants.
-
-## Interview patterns
-
-**Question 1**: "Your matrix multiply is slower than cuBLAS. How do you debug it?"
-
-**Answer**: First, `nsys profile` to confirm the kernel is the bottleneck (not data transfers). Then `ncu --set full` on the kernel: check roofline position (memory-bound or compute-bound?), SM throughput vs peak, warp stall breakdown (Long Scoreboard = memory-bound), and occupancy. For GEMM, common issues are: not using Tensor Cores, misaligned tile sizes, bank conflicts in shared memory staging, or insufficient occupancy for latency hiding.
-
-**Question 2**: "Global Load Efficiency is 50%. What does this mean and how do you fix it?"
-
-**Answer**: 50% efficiency means you're reading 2× more data than needed due to uncoalesced accesses. Each warp (32 threads) is accessing non-contiguous addresses, causing 2 memory transactions where 1 would suffice. Fix: ensure adjacent threads access adjacent memory addresses (stride = 1 in the innermost dimension). Check your thread index mapping — if threads access `input[row * N + col]` where `col` varies per thread, this is coalesced. If `row` varies per thread, this is strided and uncoalesced.
-
-**Question 3**: "How do you reduce Long Scoreboard stall cycles?"
-
-**Answer**: Long Scoreboard stalls mean warps are waiting for global memory loads. Strategies: (1) increase occupancy — more warps per SM means more warps available to issue while others wait; (2) use async prefetch (`cp.async`) to issue loads early and overlap with computation; (3) use shared memory tiling to load once and reuse many times, reducing global memory traffic; (4) vectorize loads (use `float4` instead of `float`) to reduce the number of load instructions.
 
 ## Key Concepts
 

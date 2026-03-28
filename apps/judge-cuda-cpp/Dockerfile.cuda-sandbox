@@ -1,0 +1,55 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dockerfile.cuda-sandbox
+#
+# Builds the CUDA eval-container image used by the judge (§6.2, §13.2).
+#
+# Usage:
+#   docker build \
+#     --build-arg CUDA_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu24.04 \
+#     -t leetscuda-cuda-sandbox:13.0 \
+#     -f Dockerfile.cuda-sandbox .
+#
+# Why a custom image?
+# -------------------
+# The stock nvidia/cuda images run as root.  The eval container is launched
+# with --user 65534:65534 (nobody:nogroup).  Without a real home directory
+# for uid 65534, glibc's TLS (Thread Local Storage) initialisation fails
+# during program startup — before main() is even called — because:
+#
+#   1. glibc reads /etc/passwd to resolve the home directory for uid 65534.
+#   2. The CUDA runtime's dynamic initialisation code (executed via
+#      __attribute__((constructor)) before main()) calls into glibc routines
+#      that touch the home directory path.
+#   3. If the path does not exist, glibc sets errno and TLS setup fails,
+#      causing an immediate SIGABRT.
+#
+# Adding a real /home/nobody directory (and the /etc/passwd entry) resolves
+# this without granting any additional privileges.
+#
+# No CMD / ENTRYPOINT
+# -------------------
+# This image is used via "docker create + docker cp + docker start" (§6.2),
+# not "docker run".  The command is injected by the judge at create time:
+#   /bin/sh -c "/sandbox/solution < /sandbox/input.txt"
+# A CMD here would be overridden anyway, but omitting it makes the intent
+# explicit and prevents accidental interactive use.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ARG CUDA_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu24.04
+FROM ${CUDA_IMAGE}
+
+# Add a real home directory for nobody (uid 65534) so glibc TLS init works.
+# The stock Ubuntu nobody entry in /etc/passwd has no home directory
+# (/nonexistent) and the path does not exist, which causes CUDA's constructor
+# code to crash before main() runs.
+RUN mkdir -p /home/nobody && \
+    chown 65534:65534 /home/nobody && \
+    chmod 0700 /home/nobody && \
+    # Update /etc/passwd so getpwuid(65534)->pw_dir returns /home/nobody.
+    # sed: replace the home-dir field (field 6, colon-delimited) for uid 65534.
+    sed -i 's|^\(nobody:x:65534:[^:]*:[^:]*:\)[^:]*:|\1/home/nobody:|' /etc/passwd
+
+# Verify the passwd entry was updated (fails the build if sed found nothing).
+RUN grep -E '^nobody:.*:/home/nobody:' /etc/passwd
+
+# No CMD — the judge injects the command at container creation time.
