@@ -382,12 +382,12 @@ Judge worker
   ├── [if runtime === 'cpp' or 'cuda']
   │     for each testCase:
   │       runInSandbox(code + '\n' + harness, testCase.input, opts)
-  │         → mkdirSync /app/apps/judge/tmp/{submissionId}-{tcIdx}/
-  │         → writeFileSync solution.cpp / solution.cu
-  │         → runDocker() or runDirect()
+  │         → writeFileSync /tmp/{submissionId}-source  (judge tmpfs, in RAM)
+  │         → docker cp source → {container}:/sandbox/solution.cpp
+  │         → unlink /tmp/{submissionId}-source  (immediately after cp)
+  │         → runDocker()
   │             compile: g++ / nvcc
   │             run:     ./solution < input (with timeout)
-  │         → rmSync (finally block)
   │       verify(stdout, expected)
   │       if TIME_LIMIT or RUNTIME_ERROR → break early
   │
@@ -1206,16 +1206,29 @@ The refund logic decrements the daily counter so a cancelled submission does not
 
 ### 9.4 Environment variables reference
 
-**Judge process (`apps/judge/.env`):**
+**C++/CUDA judge (`apps/judge-cuda-cpp/.env`):**
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `JUDGE_API_URL` | required | Web app base URL (e.g. `https://www.leetscuda.com`) |
 | `JUDGE_API_TOKEN` | required | Bearer token (`jt_...`) for authenticating with the web app |
-| `JUDGE_CAPABILITIES` | required | Comma-separated capability list (e.g. `cpp,cuda:13.0`) |
-| `JUDGE_HOST_TMP_DIR` | unset | Host-side path of `apps/judge/tmp/` — required for DinD setups |
+| `JUDGE_CAPABILITIES` | required | Comma-separated capability list (e.g. `cpp` or `cpp,cuda:13.0:sm_120`) |
 | `JUDGE_MAX_TIMEOUT_MS` | `60000` | Hard ceiling on execution timeout (ms) |
 | `JUDGE_MAX_CODE_BYTES` | `16384` | Hard ceiling on code payload size (bytes) |
+| `JUDGE_GPU_DEVICE` | `0` | GPU device index for `--gpus device=<N>` (CUDA only) |
+| `JUDGE_HEALTH_PORT` | `8080` | Port for the liveness probe HTTP server |
+
+**K8s judge (`apps/judge-k8s/.env`):**
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `JUDGE_API_URL` | required | Web app base URL (e.g. `https://www.leetscuda.com`) |
+| `JUDGE_API_TOKEN` | required | Bearer token (`jt_...`) for authenticating with the web app |
+| `JUDGE_CAPABILITIES` | `k8s` | Must include `k8s` |
+| `JUDGE_MAX_TIMEOUT_MS` | `30000` | Hard ceiling on kubeconform execution time (ms) |
+| `JUDGE_MAX_MANIFEST_BYTES` | `131072` | Hard ceiling on YAML manifest size (bytes) |
+| `JUDGE_MAX_CHECKS` | `64` | Hard ceiling on number of checks per job |
+| `JUDGE_HEALTH_PORT` | `8081` | Port for the liveness probe HTTP server (avoids collision with judge-cuda-cpp) |
 
 **Web app (`apps/web` / root `.env`):**
 
@@ -1359,29 +1372,29 @@ docker pull gcc:14
 docker pull ghcr.io/tecnativa/docker-socket-proxy:latest
 
 # 3. Configure judge environment
-cp apps/judge/.env.example apps/judge/.env
-# Edit apps/judge/.env:
+cp apps/judge-cuda-cpp/.env.example apps/judge-cuda-cpp/.env
+# Edit apps/judge-cuda-cpp/.env:
 #   JUDGE_API_URL=https://www.leetscuda.com
 #   JUDGE_API_TOKEN=jt_...your-token...
 #   JUDGE_CAPABILITIES=cpp
-#   (DOCKER_HOST is set automatically by docker-compose.judge.yml)
+#   (DOCKER_HOST is set automatically by docker-compose.yml)
 
 # 4. Build the judge image
-docker build -t leetscuda-judge -f apps/judge/Dockerfile .
+docker build -t leetscuda-judge-cuda-cpp -f apps/judge-cuda-cpp/Dockerfile apps/judge-cuda-cpp
 
 # 5. Start judge with socket proxy (recommended — hardened deployment)
-docker compose -f apps/judge/docker-compose.judge.yml up -d
+docker compose -f apps/judge-cuda-cpp/docker-compose.yml up -d
 
 # Check logs
-docker compose -f apps/judge/docker-compose.judge.yml logs -f judge
+docker compose -f apps/judge-cuda-cpp/docker-compose.yml logs -f judge
 
 # Stop
-docker compose -f apps/judge/docker-compose.judge.yml down
+docker compose -f apps/judge-cuda-cpp/docker-compose.yml down
 ```
 
-The `docker-compose.judge.yml` starts two services:
-- `socket-proxy` — mounts the host Docker socket read-only, exposes a filtered API on `tcp://socket-proxy:2375`
-- `judge` — the judge process, configured with `DOCKER_HOST=tcp://socket-proxy:2375`, no socket mount, read-only filesystem
+The `docker-compose.yml` starts two services:
+- `socket-proxy` — mounts the host Docker socket read-only, exposes a filtered API on `tcp://127.0.0.1:2375`
+- `judge` — the judge process, configured with `DOCKER_HOST=tcp://127.0.0.1:2375`, no socket mount, read-only root filesystem with a `/tmp` tmpfs
 
 ### 11.2 GPU judge setup
 
@@ -1408,7 +1421,7 @@ docker run --rm --gpus device=0 nvidia/cuda:13.0.0-devel-ubuntu24.04 nvidia-smi
 # Should print GPU information
 
 # 5. Start judge with socket proxy
-docker compose -f apps/judge/docker-compose.judge.yml up -d
+docker compose -f apps/judge-cuda-cpp/docker-compose.yml up -d
 ```
 
 The judge container itself does not need GPU access — only the spawned sandbox containers get `--gpus device=0` when created. The socket proxy forwards the CUDA container create/start calls to the host daemon, which has access to the GPU through `nvidia-container-toolkit`.
@@ -1421,15 +1434,15 @@ The K8s judge uses a separate Dockerfile (`Dockerfile.k8s`) that installs `kubec
 # 1. Generate a token with k8s capability
 
 # 2. Build the K8s judge image (includes kubeconform)
-docker build -t leetscuda-judge-k8s -f apps/judge/Dockerfile.k8s .
+docker build -t leetscuda-judge-k8s -f apps/judge-k8s/Dockerfile apps/judge-k8s
 
 # 3. Configure
+cp apps/judge-k8s/.env.example apps/judge-k8s/.env
 #   JUDGE_CAPABILITIES=k8s
-#   (JUDGE_HOST_TMP_DIR is not needed — K8s judge uses os.tmpdir() directly)
 
 # 4. Run (no Docker socket needed)
 docker run \
-  --env-file apps/judge/.env \
+  --env-file apps/judge-k8s/.env \
   --restart unless-stopped \
   leetscuda-judge-k8s
 ```

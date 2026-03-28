@@ -118,8 +118,7 @@ async function processJob(job: CppJudgeJob, env: Env): Promise<void> {
   const { buildImage, evalImage } = resolveImages(job, env)
 
   // Combine user code with the test harness. The harness provides main() and
-  // the test driver; user code provides the solution function (same convention
-  // as apps/judge).
+  // the test driver; user code provides the solution function.
   const fullCode = `${code}\n${harness}`
 
   const testResults: SubmissionTestResult[] = []
