@@ -67,7 +67,7 @@ No formal test framework is configured. Testing is manual via local dev and judg
 ## Important Constraints
 - **Security**: Docker sandboxes use seccomp profiles, non-root execution, memory/CPU limits, network isolation, and SIGTERM→SIGKILL timeouts
 - **Environment**: Judge requires host Docker socket access; GPU judges need NVIDIA Docker runtime
-- **Env file**: `apps/web/.env` symlinks to `../../.env` at the repo root
+- **Env file**: `apps/web/.env` (copy from `apps/web/.env.example`)
 - **At least one OAuth provider** (GitHub or Google) must be configured
 - **Node.js 20+** required
 

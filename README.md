@@ -41,10 +41,10 @@ pnpm install
 ### 2. Configure environment
 
 ```bash
-cp .env.example .env
+cp apps/web/.env.example apps/web/.env
 ```
 
-Edit `.env` and fill in:
+Edit `apps/web/.env` and fill in:
 
 ```
 NEXTAUTH_SECRET=<generate with: openssl rand -base64 32>
@@ -59,8 +59,6 @@ GOOGLE_CLIENT_SECRET=
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/leetscuda
 REDIS_URL=redis://localhost:6379
 ```
-
-> The `.env` file lives at the repo root. `apps/web/.env` is a symlink to it — create the symlink if it doesn't exist: `ln -s ../../.env apps/web/.env`
 
 ### 3. Start Postgres and Redis
 
