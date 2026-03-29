@@ -6,8 +6,6 @@ AI Infrastructure Interview Prep Platform — practice CUDA/GPU programming, ML 
 
 Targeted at senior/staff-level interviews at GPU-cloud and AI infrastructure companies (Nebius, Groq, Crusoe, Lambda Labs, Anyscale, etc.).
 
-**Contributing content?** See [`learning/README.md`](learning/README.md) for the full contribution guide — problems, theory articles, and track definitions are open for community PRs.
-
 ---
 
 ## What it is
@@ -82,9 +80,10 @@ docker run -d --name leetscuda-redis \
 pnpm --filter @leetscuda/web db:migrate   # apply schema migrations
 pnpm --filter @leetscuda/web db:seed      # seed tracks + roadmap nodes
 pnpm --filter @leetscuda/web db:sync      # sync problems from MDX files
+pnpm --filter @leetscuda/web theory:sync  # sync theory from MDX files
 ```
 
-`db:sync` must run after `db:seed` because problems reference track IDs created by the seed.
+`db:sync` and `theory:sync` must run after `db:seed` because problems reference track IDs created by the seed.
 
 ### 5. Start the dev server
 
@@ -118,365 +117,36 @@ App runs at http://localhost:3000.
 ```
 leetscuda/
 ├── apps/
-│   ├── web/                    Next.js 16 app (App Router)
+│   ├── web/                    Next.js app (App Router)
 │   │   ├── app/
 │   │   │   ├── (auth)/         Sign-in, username setup pages
 │   │   │   ├── (platform)/     Roadmap, problems list, problem detail
-│   │   │   └── api/judge/      Judge HTTP API (poll + result endpoints)
-│   │   ├── lib/                Prisma client, Redis, auth, runtime maps, streak
+│   │   │   └── api/judge/      Judge HTTP API (poll, result, recover)
+│   │   ├── lib/                Prisma client, Redis, auth, streak helpers
 │   │   ├── scripts/            CLI scripts (create-judge-token, db-sync, theory-sync)
 │   │   ├── server/
-│   │   │   └── routers/        tRPC routers (user, roadmap, problems, submissions)
+│   │   │   └── routers/        tRPC routers (user, roadmap, problems, submissions, profile)
 │   │   └── prisma/
 │   │       ├── schema.prisma
 │   │       ├── seed.ts         Reads learning/*/track.mdx to seed tracks + nodes
 │   │       └── migrations/
-│   ├── judge-cuda-cpp/         C++/CUDA judge worker (HTTP client, no DB/Redis)
-│   │   └── src/
-│   │       ├── main.ts         Main poll loop
-│   │       ├── api-client.ts   HTTP client for poll + result endpoints
-│   │       ├── sandbox/        Docker-based code execution (docker cp approach)
-│   │       ├── verifier.ts     Output comparison with float tolerance + fill expansion
-│   │       ├── env.ts          Environment validation
-│   │       └── types.ts        Shared types and Zod schemas
+│   ├── judge-cuda-cpp/         C++/CUDA judge worker
+│   │   └── ARCHITECTURE.md     Implementation reference
 │   └── judge-k8s/              Kubernetes manifest validation judge
-│       └── src/
-│           ├── main.ts         Main poll loop
-│           ├── api-client.ts   HTTP client for poll + result endpoints
-│           ├── validator/      kubeconform-based manifest validation pipeline
-│           ├── env.ts          Environment validation
-│           └── types.ts        Shared types and Zod schemas
-└── learning/                   All content — one folder per track (open for contributions)
-    ├── cuda/
+│       └── ARCHITECTURE.md     Implementation reference
+├── docs/
+│   ├── architecture.md         System architecture, DB schema, tRPC, auth
+│   ├── judge.md                Judge deployment and operations guide
+│   └── content.md              Problem format and content contribution guide
+└── learning/                   All content (open for community PRs)
+    ├── cuda-core/              CUDA & GPU Programming track
     │   ├── track.mdx           Track metadata + roadmap node definitions
-    │   ├── problems/
-    │   │   ├── vector-add/index.mdx
-    │   │   ├── matrix-multiply/index.mdx
-    │   │   ├── matrix-transpose/index.mdx
-    │   │   └── reduce-sum/index.mdx
-    │   └── theory/
-    │       ├── cuda-intro/index.mdx
-    │       ├── cuda-threads/index.mdx
-    │       ├── cuda-memory/index.mdx
-    │       └── cuda-streams/index.mdx
-    ├── ml-systems/
-    │   ├── track.mdx
-    │   ├── problems/  (kv-cache, batched-inference, flash-attention)
-    │   └── theory/    (ml-inference-basics, quantization-intro)
-    ├── kubernetes-ai/
-    │   ├── track.mdx
-    │   ├── problems/  (deploy-inference-server, hpa-gpu, multi-node-training)
-    │   └── theory/    (k8s-basics, gpu-operator)
-    └── foundations/
-        ├── track.mdx
-        ├── problems/  (pcie-bandwidth, roofline-model, false-sharing)
-        └── theory/    (memory-model, simd-basics, profiling-basics)
+    │   ├── problems/           vector-add, matrix-transpose, matrix-multiply, reduce-sum
+    │   └── theory/             cuda-intro, cuda-threads, cuda-memory, cuda-streams
+    ├── ml-systems/             ML Systems & Inference track
+    ├── kubernetes-ai/          Kubernetes for AI track
+    └── foundations/            Foundations track
 ```
-
----
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js 16 (App Router), React 19 |
-| Language | TypeScript |
-| Styling | Tailwind CSS v4 |
-| API | tRPC v11 |
-| Auth | NextAuth.js v5 (GitHub + Google OAuth) |
-| ORM | Prisma 7 |
-| Database | PostgreSQL |
-| Queue | Redis (ioredis) |
-| Code editor | Monaco Editor |
-| Markdown | marked + highlight.js |
-| Judge sandbox | Docker — `gcc:14` (C++), `nvidia/cuda:13.0.0-devel-ubuntu24.04` (CUDA) |
-
----
-
-## Architecture
-
-### Submission flow
-
-```
-Browser
-  └─ trpc.submission.create
-       └─ Validates: code size, empty, language, duplicate pending, daily limit, rate limit
-       └─ Creates Submission (PENDING) in Postgres
-       └─ Pushes job to Redis queue
-            ├─ judge:queue:cpp        (C++ problems)
-            └─ judge:queue:cuda:13.0  (CUDA problems)
-
-Browser (cancel path)
-  └─ trpc.submission.cancel
-       └─ LREM from Redis queue — if count=0 judge already picked it up
-       └─ Sets status CANCELLED on success
-
-Judge worker (HTTP poll loop)
-  └─ On startup: kills orphaned containers (label: leetscuda-judge)
-  └─ GET /api/judge/poll  →  job + test cases
-  └─ Guards code size; clamps timeout to JUDGE_MAX_TIMEOUT_MS
-  └─ Compiles + runs code in named Docker container with SIGTERM→SIGKILL on timeout
-  └─ POST /api/judge/result  →  status, runtimeMs, output
-       └─ Web API updates Submission in Postgres
-       └─ Awards XP + updates streak on first ACCEPTED solve
-
-Browser
-  └─ On mount: trpc.submission.getLatestForProblem — auto-resumes polling if PENDING/RUNNING
-  └─ Polls trpc.submission.getStatus every 1.5s until terminal status
-  └─ Shows live code size indicator (KB) and daily submission count
-```
-
-### Judge architecture
-
-Judge nodes are stateless HTTP clients. Each node declares its capabilities (e.g. `cpp` or `cpp,cuda:13.0`) when its token is created. The web API uses those capabilities to determine which queues to offer during polling — CPU judges only receive C++ jobs, GPU judges receive both.
-
-Judges have no direct access to the database or Redis. All state transitions happen through the web API.
-
-### Authentication
-
-NextAuth.js v5 with GitHub and Google providers. Sessions are JWTs stored in httpOnly cookies. On first sign-in, users are redirected to `/setup-username` before reaching any platform page.
-
-Public routes: `/`, `/signin`, `/roadmap`, `/problems`, `/problems/*`
-Protected: everything else, plus tRPC mutations using `protectedProcedure`
-
-### tRPC routers
-
-| Router | Procedures |
-|---|---|
-| `user` | `me`, `setUsername` |
-| `roadmap` | `getTracks`, `getUserProgress` |
-| `problems` | `list`, `getBySlug` |
-| `submissions` | `create`, `getStatus`, `getLatestForProblem`, `getDailyCount`, `cancel` |
-| `profile` | `getByUsername` |
-
-### Database schema
-
-```
-User           id, email, username, xp, streakDays, role
-Track          id, slug, title, color, order
-Problem        id, slug, title, difficulty, trackId, tags[], xpReward,
-               executionRuntime, cppStandard, cudaVersion, computeCap
-Submission     id, userId, problemId, code, language, status,
-               runtimeMs, output, errorMsg,
-               cppStandard, cudaVersion, computeCap
-UserProgress   userId, problemId, trackId, solvedAt, attempts
-RoadmapNode    id, slug, title, type, trackId, prerequisites[]
-Comment        id, userId, problemId, body, upvotes
-JudgeToken     id, name, token (SHA-256), capabilities[], isActive, lastSeenAt
-```
-
-Key enums: `ExecutionRuntime { CPP CUDA }` · `CppStandard { CPP14 CPP17 CPP20 CPP23 }` · `CudaVersion { CUDA_13_0 }` · `ComputeCap { SM_86 SM_120 }` · `SubmissionStatus { PENDING RUNNING ACCEPTED WRONG_ANSWER RUNTIME_ERROR TIME_LIMIT CANCELLED }`
-
----
-
-## Problem format (MDX)
-
-Every problem lives at `learning/{track}/problems/{slug}/index.mdx` with five sections:
-
-```
----
-[YAML frontmatter]
----
-
-[Markdown description — rendered to HTML with syntax highlighting]
-
----starter-code---
-[C++ / CUDA starter code shown in Monaco editor]
-
----test-cases---
-[YAML array of {name, input, expected} test cases]
-
----solution---
-[Reference solution — never sent to the client]
-
----harness---
-[C++ main() that parses stdin, calls solve(), prints result to stdout]
-```
-
-The harness is appended to the user's submitted code before compilation, supplying the `main()` entry point. Users write only the kernel(s) and `solve()` — the harness wires everything up and handles I/O.
-
-### Test case format
-
-Test case `input` is fed verbatim to the compiled binary via stdin. `expected` is compared against stdout using float-tolerant line-by-line matching (tolerance ±0.001).
-
-Harnesses support a compact `fill:X` input shorthand for uniform arrays (e.g. `fill:1.0` fills N elements with 1.0). Expected values support `fill:N:X` shorthand (e.g. `fill:256:16.0` expands to 256 space-separated `16.0` values before comparison).
-
-Self-verifying test cases output `1` (pass) or `0` (fail) — the harness computes the CPU reference internally and compares against the GPU result.
-
-### Frontmatter fields
-
-MDX frontmatter is the **single source of truth** for all problem metadata. The database is a derived cache populated by `db:sync`.
-
-```yaml
-slug: vector-add           # lowercase alphanumeric + hyphens; must match directory name
-title: Vector Addition
-difficulty: easy           # easy | medium | hard
-track: cuda                # cuda | ml-systems | kubernetes-ai | foundations
-tags:
-  - memory
-  - threads
-status: published          # published | draft
-xp: 100
-author: community
-
-# Execution runtime (determines which judge queue receives this problem)
-runtime: cuda              # cpp | cuda
-cpp_standard: "17"         # "14" | "17" | "20" | "23"
-cuda_version: "13.0"       # cuda only
-compute_cap: "sm_120"      # cuda only
-```
-
-For C++ problems omit `cuda_version` and `compute_cap`.
-
-### Adding a problem
-
-1. Create `learning/{track}/problems/{slug}/index.mdx` following the frontmatter schema above
-2. Write the description, starter code, test cases, and solution sections
-3. Open a PR — CI validates frontmatter on merge
-4. On merge to main, GitHub Actions automatically syncs the problem to the DB
-
-```bash
-# Manual sync for local development
-pnpm --filter @leetscuda/web db:sync
-```
-
----
-
-## Adding theory content
-
-Theory pages live at `/learn/{slug}` and are powered by MDX files in `learning/{track}/theory/` at the monorepo root.
-
-### Directory structure
-
-```
-learning/
-  cuda/theory/
-    cuda-intro/index.mdx
-    cuda-threads/index.mdx
-    cuda-memory/index.mdx
-    cuda-streams/index.mdx
-  ml-systems/theory/
-    ml-inference-basics/index.mdx
-    quantization-intro/index.mdx
-  kubernetes-ai/theory/
-    k8s-basics/index.mdx
-    gpu-operator/index.mdx
-  foundations/theory/
-    memory-model/index.mdx
-    simd-basics/index.mdx
-    profiling-basics/index.mdx
-```
-
-### Frontmatter schema
-
-```yaml
----
-slug: cuda-intro
-title: Introduction to CUDA
-track: cuda
-type: concept
-tags:
-  - gpu
-  - programming-model
-status: published
-author: team
----
-```
-
-Required fields: `slug`, `title`, `track`, `type` (must be `concept`), `status` (`published` or `draft`).
-
-### Adding a new theory page
-
-1. Create `learning/{track}/theory/{slug}/index.mdx` with the correct frontmatter
-2. The `slug` must match an existing `CONCEPT` node defined in `learning/{track}/track.mdx`
-3. Run `pnpm theory:sync` to validate frontmatter and verify all CONCEPT nodes are covered
-4. On merge to main, the page is immediately available at `/learn/{slug}`
-
-```bash
-pnpm --filter @leetscuda/web theory:sync
-```
-
----
-
-## Judge node setup
-
-Judge nodes are standalone processes that poll the web API for jobs, compile and run code in an isolated Docker sandbox, and POST results back. They have **zero** direct database or Redis access.
-
-### 1. Generate a token
-
-Run from the repo root (requires `DATABASE_URL` in your environment):
-
-```bash
-# CPU-only judge
-pnpm --filter @leetscuda/web judge:token --name "cpu-worker-1" --capabilities "cpp"
-
-# GPU judge (CUDA 13.0)
-pnpm --filter @leetscuda/web judge:token --name "gpu-helsinki" --capabilities "cpp,cuda:13.0"
-```
-
-The token is printed **once** to stdout and never retrievable again. Store it in a secret manager immediately.
-
-### 2. Configure the C++/CUDA judge
-
-```bash
-cp apps/judge-cuda-cpp/.env.example apps/judge-cuda-cpp/.env
-```
-
-```
-JUDGE_API_URL=https://leetscuda.com
-JUDGE_API_TOKEN=jt_...
-JUDGE_CAPABILITIES=cpp,cuda:13.0:sm_120
-```
-
-### 3. Pre-pull sandbox images (once per machine)
-
-```bash
-docker pull gcc:14
-docker pull nvidia/cuda:13.0.0-devel-ubuntu24.04
-```
-
-### 4. Run
-
-```bash
-# Local dev (C++/CUDA judge)
-cd apps/judge-cuda-cpp && pnpm dev
-
-# Production — CPU judge (using docker-compose with socket proxy)
-docker build -t leetscuda-judge-cuda-cpp -f apps/judge-cuda-cpp/Dockerfile apps/judge-cuda-cpp
-docker compose -f apps/judge-cuda-cpp/docker-compose.yml up -d
-
-# Production — GPU judge (same compose file — pass --gpus via JUDGE_CAPABILITIES env)
-# On a GPU host, set JUDGE_CAPABILITIES=cpp,cuda:13.0:sm_120 in .env
-docker compose -f apps/judge-cuda-cpp/docker-compose.yml up -d
-```
-
-GPU hosts additionally require NVIDIA drivers with CUDA 13.0 and `nvidia-container-toolkit`.
-
-### Job routing
-
-| Problem `executionRuntime` | Redis queue |
-|---|---|
-| `CPP` | `judge:queue:cpp` |
-| `CUDA` (version 13.0) | `judge:queue:cuda:13.0` |
-
-CPU judges (capabilities: `cpp`) only dequeue from `judge:queue:cpp`.
-GPU judges (capabilities: `cpp,cuda:13.0`) dequeue from both.
-
-### Sandbox behaviour
-
-| Runtime | Docker image | Compile command |
-|---|---|---|
-| C++ | `gcc:14` | `g++ -std=c++{N} -O2 -o solution solution.cpp` |
-| CUDA | `nvidia/cuda:13.0.0-devel-ubuntu24.04` | `nvcc -std=c++{N} -arch={cap} -O2 -o solution solution.cu` |
-
-C++ containers: `--memory 256m --cpus 0.5 --ulimit nproc=64 --network none`
-CUDA containers: `--memory 512m --gpus device=0 --ulimit nproc=128 --network none`
-
-All run containers are labeled `leetscuda-judge=1` so orphan cleanup on worker restart can find and stop them with `docker stop --time 5` (SIGTERM → 5s grace → SIGKILL).
-
-### Revoke a judge node
-
-Set `isActive = false` on the `JudgeToken` row in the database. The next poll attempt returns 401 and the process exits.
 
 ---
 
@@ -493,9 +163,10 @@ cd apps/judge-cuda-cpp && pnpm dev          # C++/CUDA judge (watch mode)
 cd apps/judge-k8s && pnpm dev              # K8s judge (watch mode)
 
 # Database
-pnpm --filter @leetscuda/web db:migrate     # apply pending migrations
 pnpm --filter @leetscuda/web db:generate    # regenerate Prisma client after schema changes
+pnpm --filter @leetscuda/web db:migrate     # apply pending migrations
 pnpm --filter @leetscuda/web db:seed        # seed tracks + roadmap nodes from learning/*/track.mdx
+pnpm --filter @leetscuda/web db:sync        # sync problems from MDX files
 pnpm --filter @leetscuda/web db:studio      # open Prisma Studio
 
 # Token management
@@ -504,124 +175,10 @@ pnpm --filter @leetscuda/web judge:token --name <name> --capabilities <csv>
 
 ---
 
-## Environment variables
+## Documentation
 
-### Web app (`apps/web/.env`)
+- **[docs/architecture.md](docs/architecture.md)** — Submission flow, tech stack, database schema, tRPC routers, authentication, environment variables
+- **[docs/judge.md](docs/judge.md)** — Setting up and operating judge nodes (CPU, GPU, K8s)
+- **[docs/content.md](docs/content.md)** — Problem and theory content format; contributing new problems
 
-| Variable | Required | Description |
-|---|---|---|
-| `NEXTAUTH_SECRET` | Yes | JWT signing secret — `openssl rand -base64 32` |
-| `NEXTAUTH_URL` | Yes | Full public URL, e.g. `http://localhost:3000` |
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `REDIS_URL` | Yes | Redis connection string |
-| `GITHUB_CLIENT_ID` | Yes* | GitHub OAuth app client ID |
-| `GITHUB_CLIENT_SECRET` | Yes* | GitHub OAuth app client secret |
-| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
-| `SUBMISSION_DAILY_LIMIT_FREE` | No | Daily submission cap for free users (default: `10`) |
-| `SUBMISSION_DAILY_LIMIT_PAID` | No | Daily cap for paid/admin users — `0` = unlimited (default: `0`) |
-| `SUBMISSION_MAX_CODE_BYTES` | No | Maximum code payload in bytes (default: `16384`) |
-| `SUBMISSION_RATE_LIMIT_PER_MIN` | No | Per-user per-minute submission rate limit (default: `5`) |
-| `SUBMISSION_TIMEOUT_MS` | No | Default judge timeout in ms (default: `30000`) |
-| `SUBMISSION_MAX_TIMEOUT_MS` | No | Hard ceiling on judge timeout in ms (default: `60000`) |
-
-\* At least one OAuth provider must be configured.
-
-### C++/CUDA judge (`apps/judge-cuda-cpp/.env`)
-
-| Variable | Required | Description |
-|---|---|---|
-| `JUDGE_API_URL` | Yes | Base URL of the web app, e.g. `https://leetscuda.com` |
-| `JUDGE_API_TOKEN` | Yes | Token generated by `judge:token` (starts with `jt_`) |
-| `JUDGE_CAPABILITIES` | Yes | Comma-separated list, e.g. `cpp` or `cpp,cuda:13.0:sm_120` |
-| `JUDGE_MAX_TIMEOUT_MS` | No | Hard ceiling on execution timeout — job payloads cannot exceed this (default: `60000`) |
-| `JUDGE_MAX_CODE_BYTES` | No | Hard ceiling on code payload size in bytes (default: `16384`) |
-
-### K8s judge (`apps/judge-k8s/.env`)
-
-| Variable | Required | Description |
-|---|---|---|
-| `JUDGE_API_URL` | Yes | Base URL of the web app, e.g. `https://leetscuda.com` |
-| `JUDGE_API_TOKEN` | Yes | Token generated by `judge:token` (starts with `jt_`) |
-| `JUDGE_CAPABILITIES` | Yes | Must include `k8s` |
-| `JUDGE_MAX_TIMEOUT_MS` | No | Hard ceiling on kubeconform execution time (default: `30000`) |
-| `JUDGE_MAX_MANIFEST_BYTES` | No | Hard ceiling on YAML manifest size in bytes (default: `131072`) |
-
----
-
-## Build phases
-
-| Phase | Status | What was built |
-|---|---|---|
-| 1 | Done | Monorepo scaffold, Prisma schema, NextAuth, tRPC, middleware |
-| 2 | Done | Sign-in page, username setup, session management |
-| 3 | Done | Roadmap page with prerequisite graph |
-| 4 | Done | Problems listing with track/difficulty/tag filters |
-| 5 | Done | Problem detail — Monaco editor, MDX rendering, submission polling |
-| 6 | Done | Judge worker — Docker sandbox, test case verification, XP + streak |
-| 6.5 | Done | Error boundaries, skeletons, submission hardening, env validation, observability |
-| 7 | Done | Profile page, tRPC profile router, streak logic |
-| 9 | Done | Mobile layout, metadata, favicon, copy-code button, submit spinner |
-| 10 | Done | Distributed judge — HTTP API, capability-aware queue routing, JudgeToken, runtime enums |
-| 10.5 | Done | Judge end-to-end fix — DinD volume path, harness pipeline, CUDA banner bypass; all CUDA problems judged |
-| 12 | Done | MDX as single source of truth — `db:sync` script, seed cleaned up |
-| 13 | Done | Submission hardening — rate limiting, daily caps, code size guard, duplicate prevention, cancel flow, SIGTERM/SIGKILL timeout, orphan cleanup; all limits env-var driven |
-| 14 | Done | Submission experience overhaul — rich result panel, editorials, history tab, stats |
-| 15 | Done | Content restructure — `problems/` + `theory/` merged into `learning/{track}/{problems,theory}/`; track metadata + node definitions moved from `seed.ts` into `learning/{track}/track.mdx` |
-| 16 | Done | K8s manifest validation — new `K8S` execution mode, `---k8s-checks---` MDX section, K8s judge node with kubectl, YAML Monaco editor, checklist result panel |
-
----
-
-## K8s judge node
-
-The K8s judge validates Kubernetes manifest submissions without Docker-in-Docker. It requires `kubectl` in PATH.
-
-### Generate a k8s-capable token
-
-```bash
-pnpm --filter @leetscuda/web judge:token --name "k8s-validator-1" --capabilities "k8s"
-```
-
-### Build the k8s judge image
-
-```bash
-docker build -t leetscuda-judge-k8s -f apps/judge-k8s/Dockerfile apps/judge-k8s
-```
-
-### Run (no GPU, no Docker socket needed)
-
-```bash
-cp apps/judge-k8s/.env.example apps/judge-k8s/.env
-# Edit .env: set JUDGE_API_URL, JUDGE_API_TOKEN, JUDGE_CAPABILITIES=k8s
-
-docker run \
-  --env-file apps/judge-k8s/.env \
-  leetscuda-judge-k8s
-
-# Or with docker-compose:
-docker compose -f apps/judge-k8s/docker-compose.yml up -d
-```
-
-### Pre-flight check — kubectl must be available
-
-```bash
-kubectl version --client
-```
-
-### Job routing
-
-| Problem `executionRuntime` | Redis queue |
-|---|---|
-| `CPP` | `judge:queue:cpp` |
-| `CUDA` (version 13.0) | `judge:queue:cuda:13.0` |
-| `K8S` | `judge:queue:k8s` |
-
-K8s judges (capabilities: `k8s`) only dequeue from `judge:queue:k8s`. No GPU or Docker socket is needed.
-
-### K8s check types
-
-| Type | Description |
-|---|---|
-| `schema` | Verifies a resource of the specified `kind` and `apiVersion` exists |
-| `assertion` | Evaluates a JSONPath-style path with operators: `exists`, `eq`, `neq`, `contains`, `matches`, `gte`, `lte`, `gt`, `lt` |
-| `kubectl-dry-run` | Runs `kubectl apply --dry-run=client -f manifest.yaml` and checks exit code 0 |
+**Contributing content?** See [`docs/content.md`](docs/content.md) — problems, theory articles, and track definitions are open for community PRs.
