@@ -167,6 +167,7 @@ pnpm --filter @leetscuda/web db:generate    # regenerate Prisma client after sch
 pnpm --filter @leetscuda/web db:migrate     # apply pending migrations
 pnpm --filter @leetscuda/web db:seed        # seed tracks + roadmap nodes from learning/*/track.mdx
 pnpm --filter @leetscuda/web db:sync        # sync problems from MDX files
+pnpm --filter @leetscuda/web theory:sync  # sync theory from MDX files
 pnpm --filter @leetscuda/web db:studio      # open Prisma Studio
 
 # Token management
@@ -175,10 +176,15 @@ pnpm --filter @leetscuda/web judge:token --name <name> --capabilities <csv>
 
 ---
 
+## Contributing content
+
+Problems, theory articles, and track definitions are open for community PRs — this is a core strength of the platform. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guide.
+
+---
+
 ## Documentation
 
 - **[docs/architecture.md](docs/architecture.md)** — Submission flow, tech stack, database schema, tRPC routers, authentication, environment variables
 - **[docs/judge.md](docs/judge.md)** — Setting up and operating judge nodes (CPU, GPU, K8s)
-- **[docs/content.md](docs/content.md)** — Problem and theory content format; contributing new problems
-
-**Contributing content?** See [`docs/content.md`](docs/content.md) — problems, theory articles, and track definitions are open for community PRs.
+- **[docs/content.md](docs/content.md)** — Problem and theory content format reference
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — Full contribution guide for content authors
