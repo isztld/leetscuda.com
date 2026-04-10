@@ -6,7 +6,13 @@ import { prisma } from '@/lib/prisma'
 
 const providers: NextAuthConfig['providers'] = []
 if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET)
-  providers.push(GitHub({ clientId: process.env.GITHUB_CLIENT_ID, clientSecret: process.env.GITHUB_CLIENT_SECRET }))
+  providers.push(GitHub({
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    // GitHub sends `iss=https://github.com/login/oauth` in callbacks (RFC 9207).
+    // Auth.js validates this against the provider issuer — set it to match.
+    issuer: 'https://github.com/login/oauth',
+  }))
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)
   providers.push(Google({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET }))
 

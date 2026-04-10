@@ -2,8 +2,8 @@ import { z } from 'zod'
 
 // Critical: must be present for the app to start.
 const criticalSchema = z.object({
-  NEXTAUTH_SECRET: z.string().min(1, 'NEXTAUTH_SECRET is required'),
-  NEXTAUTH_URL: z.string().url('NEXTAUTH_URL must be a valid URL'),
+  AUTH_SECRET: z.string().min(1, 'AUTH_SECRET is required'),
+  AUTH_URL: z.string().url('AUTH_URL must be a valid URL'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
 })
